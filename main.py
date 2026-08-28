@@ -1,0 +1,320 @@
+"""透明弹性下班计时器：桌面置顶小窗，点一下录入 8:30–9:30 到岗时间。"""
+from __future__ import annotations
+
+import ctypes
+import os
+import time
+import tkinter as tk
+from datetime import datetime
+from pathlib import Path
+from tkinter import messagebox, ttk
+
+from PIL import Image, ImageDraw, ImageFont
+
+import flex_time
+import layered_win
+import store
+import updater
+from version import APP_VERSION
+
+WIN_W = 360
+WIN_H = 132
+FPS = 12
+
+
+def _font(size: int) -> ImageFont.ImageFont:
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    for name in ("msyhbd.ttc", "msyh.ttc", "msyh.ttf", "simhei.ttf"):
+        try:
+            return ImageFont.truetype(str(windir / name), size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
+    w, h = img.size
+    raw = img.tobytes("raw", "RGBA")
+    bgra = bytearray(w * h * 4)
+    mask = bytearray(w * h)
+    for i in range(w * h):
+        r = raw[i * 4 + 0]
+        g = raw[i * 4 + 1]
+        b = raw[i * 4 + 2]
+        a = raw[i * 4 + 3]
+        bgra[i * 4 + 0] = (b * a) // 255
+        bgra[i * 4 + 1] = (g * a) // 255
+        bgra[i * 4 + 2] = (r * a) // 255
+        bgra[i * 4 + 3] = a
+        mask[i] = a
+    return bytes(bgra), bytes(mask)
+
+
+def _ask_start_time(parent: tk.Tk | None, preset: tuple[int, int] | None) -> tuple[int, int] | None:
+    result: list[tuple[int, int] | None] = [None]
+    dlg = tk.Toplevel(parent)
+    dlg.title("上班时间")
+    dlg.resizable(False, False)
+    dlg.attributes("-topmost", True)
+    dlg.configure(bg="#1b1e26")
+    dlg.geometry("340x220")
+    dlg.grab_set()
+
+    ph, pm = preset or (9, 0)
+    var = tk.StringVar(value=f"{ph}:{pm:02d}")
+    preview = tk.StringVar()
+
+    def refresh_preview(*_a) -> None:
+        parsed = flex_time.parse_start(var.get())
+        if parsed is None:
+            preview.set("请输入 8:30–9:30 之间的时间")
+            return
+        oh, om = flex_time.offwork_hm(*parsed)
+        preview.set(f"弹性下班：{flex_time.format_hm(oh, om)}")
+
+    var.trace_add("write", refresh_preview)
+    refresh_preview()
+
+    tk.Label(
+        dlg,
+        text="今天几点到岗？",
+        fg="#f4f6fb",
+        bg="#1b1e26",
+        font=("Microsoft YaHei UI", 13, "bold"),
+    ).pack(pady=(18, 4))
+    tk.Label(
+        dlg,
+        text="弹性区间 8:30–9:30，对应下班 18:00–19:00",
+        fg="#9aa3b5",
+        bg="#1b1e26",
+        font=("Microsoft YaHei UI", 9),
+    ).pack()
+
+    entry = ttk.Entry(dlg, textvariable=var, font=("Microsoft YaHei UI", 16), justify="center", width=12)
+    entry.pack(pady=14)
+    entry.select_range(0, tk.END)
+    entry.focus_set()
+
+    tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg="#1b1e26", font=("Microsoft YaHei UI", 10)).pack()
+
+    def ok() -> None:
+        parsed = flex_time.parse_start(var.get())
+        if parsed is None:
+            messagebox.showwarning("上班时间", "请输入 8:30 到 9:30 之间的时间，例如 8.45 或 9:10", parent=dlg)
+            return
+        result[0] = parsed
+        dlg.destroy()
+
+    def cancel() -> None:
+        dlg.destroy()
+
+    bar = tk.Frame(dlg, bg="#1b1e26")
+    bar.pack(pady=16)
+    tk.Button(bar, text="开始计时", command=ok, width=10, bg="#3d7eff", fg="white", relief="flat").pack(
+        side="left", padx=8
+    )
+    tk.Button(bar, text="取消", command=cancel, width=8, bg="#3a3f4b", fg="white", relief="flat").pack(
+        side="left", padx=8
+    )
+    dlg.bind("<Return>", lambda _e: ok())
+    dlg.bind("<Escape>", lambda _e: cancel())
+    dlg.wait_window()
+    return result[0]
+
+
+class WorkTimer:
+    def __init__(self) -> None:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+        updater.cleanup_update_artifacts()
+        self.cfg = store.load_config()
+        self.running = True
+        self._menu_pos: tuple[int, int] | None = None
+        self._need_dialog = False
+        self._tk: tk.Tk | None = None
+
+        self.win = layered_win.LayeredPetWindow(WIN_W, WIN_H, "弹性下班")
+        self.win.set_left_click_handler(self._on_click)
+        self.win.set_right_click_handler(self._request_menu)
+
+        area = layered_win.work_area()
+        x = self.cfg.get("win_x")
+        y = self.cfg.get("win_y")
+        if not isinstance(x, int) or not isinstance(y, int):
+            x = int(area.right - WIN_W - 24)
+            y = int(area.top + 24)
+        self.win.move(x, y)
+
+        self._font_title = _font(15)
+        self._font_big = _font(28)
+        self._font_sub = _font(12)
+        self._last_key = ""
+
+    def _has_start(self) -> bool:
+        h, m = self.cfg.get("start_h"), self.cfg.get("start_m")
+        return isinstance(h, int) and isinstance(m, int)
+
+    def _start_hm(self) -> tuple[int, int] | None:
+        if not self._has_start():
+            return None
+        return int(self.cfg["start_h"]), int(self.cfg["start_m"])
+
+    def _on_click(self) -> None:
+        self._need_dialog = True
+
+    def _request_menu(self, sx: int, sy: int) -> None:
+        self._menu_pos = (sx, sy)
+
+    def _tk_root(self) -> tk.Tk:
+        if self._tk is None:
+            root = tk.Tk()
+            root.withdraw()
+            self._tk = root
+        return self._tk
+
+    def _open_time_dialog(self) -> None:
+        preset = self._start_hm()
+        picked = _ask_start_time(self._tk_root(), preset)
+        if picked is None:
+            return
+        self.cfg["start_h"], self.cfg["start_m"] = picked
+        store.save_config(self.cfg)
+        self._last_key = ""
+
+    def _handle_menu(self, sx: int, sy: int) -> None:
+        op = self.win.popup_menu(sx, sy)
+        if op == "quit":
+            self.running = False
+        elif op == "update":
+            self._check_update()
+        elif op == "set_time":
+            self._open_time_dialog()
+
+    def _check_update(self) -> None:
+        self.cfg = store.load_config()
+        status, info = updater.check_update(self.cfg)
+        root = self._tk_root()
+        if status == "no_repo":
+            messagebox.showinfo(
+                "检查更新",
+                f"还没配置 GitCode 仓库。\n当前版本：{APP_VERSION}\n\n"
+                f"写入 {store.config_path()} 的 gitcode_repo 字段。",
+                parent=root,
+            )
+            return
+        if status.startswith("error:"):
+            messagebox.showerror("检查更新", status[6:], parent=root)
+            return
+        if status == "latest":
+            messagebox.showinfo(
+                "检查更新",
+                f"已是最新版。\n当前：{APP_VERSION}\n远端：{info.version if info else '-'}",
+                parent=root,
+            )
+            return
+        if status != "available" or info is None:
+            return
+        body = (info.body or "").strip()
+        tip = body[:300] + ("…" if len(body) > 300 else "")
+        ok = messagebox.askyesno(
+            "发现新版本",
+            f"当前：{APP_VERSION}\n最新：{info.version}（{info.tag}）\n\n{tip}\n\n是否下载并更新？",
+            parent=root,
+        )
+        if not ok:
+            return
+        if updater.current_exe_path() is None:
+            messagebox.showinfo("检查更新", "源码运行请重新打包 exe，或手动下载 Release 附件。", parent=root)
+            return
+        try:
+            path = updater.download_update(info, self.cfg)
+            updater.apply_update_and_restart(path)
+            updater.force_exit_for_update()
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("更新失败", str(e), parent=root)
+
+    def _paint(self) -> None:
+        start = self._start_hm()
+        now = datetime.now()
+        if start is None:
+            key = "idle"
+            title = "弹性下班计时器"
+            big = "点击开始"
+            sub = "录入今天 8:30–9:30 的到岗时间"
+            accent = (90, 168, 255, 255)
+        else:
+            oh, om = flex_time.offwork_hm(*start)
+            td = flex_time.remaining_to(now, oh, om)
+            mins, secs, done = flex_time.split_min_sec(td)
+            if done:
+                key = f"done-{mins}-{secs}"
+                title = "已经到点"
+                big = f"{mins}分 {secs:02d}秒"
+                sub = f"上班 {flex_time.format_hm(*start)}  →  下班 {flex_time.format_hm(oh, om)}"
+                accent = (88, 214, 141, 255)
+            else:
+                key = f"run-{mins}-{secs}"
+                title = "距离您下班还有"
+                big = f"{mins}分 {secs:02d}秒"
+                sub = f"上班 {flex_time.format_hm(*start)}  →  下班 {flex_time.format_hm(oh, om)}"
+                accent = (255, 214, 102, 255) if mins < 30 else (244, 246, 251, 255)
+
+        if key == self._last_key:
+            return
+        self._last_key = key
+
+        img = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, fill=(18, 22, 32, 168))
+        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, outline=(255, 255, 255, 40), width=1)
+        d.text((24, 16), title, font=self._font_title, fill=(186, 196, 214, 230))
+        d.text((24, 44), big, font=self._font_big, fill=accent)
+        d.text((24, 92), sub, font=self._font_sub, fill=(154, 163, 181, 220))
+        bgra, mask = _rgba_to_bgra(img)
+        self.win.present_bgra(bgra, mask)
+
+    def _persist_pos(self) -> None:
+        if self.cfg.get("win_x") == self.win.x and self.cfg.get("win_y") == self.win.y:
+            return
+        self.cfg["win_x"] = self.win.x
+        self.cfg["win_y"] = self.win.y
+        store.save_config(self.cfg)
+
+    def run(self) -> None:
+        self._paint()
+        last_save = time.monotonic()
+        while self.running and not self.win.closed:
+            self.win.pump()
+            if self._menu_pos is not None:
+                sx, sy = self._menu_pos
+                self._menu_pos = None
+                self._handle_menu(sx, sy)
+            if self._need_dialog:
+                self._need_dialog = False
+                self._open_time_dialog()
+            self._paint()
+            now = time.monotonic()
+            if now - last_save > 1.5:
+                self._persist_pos()
+                last_save = now
+            time.sleep(1.0 / FPS)
+        self._persist_pos()
+        self.win.destroy()
+        if self._tk is not None:
+            self._tk.destroy()
+
+
+def main() -> None:
+    try:
+        WorkTimer().run()
+    except Exception as e:  # noqa: BLE001
+        try:
+            messagebox.showerror("弹性下班计时器", str(e))
+        except Exception:
+            raise SystemExit(str(e)) from e
+
+
+if __name__ == "__main__":
+    main()
