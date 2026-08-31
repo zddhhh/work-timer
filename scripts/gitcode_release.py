@@ -108,7 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 窗口收窄，拖到右侧时空白可以探出屏幕，不再整块卡住"
+                    "- 组件区域内点击不再穿到后面的窗口\n"
+                    "- 拖拽改回整窗留在屏幕内，尺寸不变"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

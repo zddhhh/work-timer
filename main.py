@@ -46,11 +46,14 @@ def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
         g = raw[i * 4 + 1]
         b = raw[i * 4 + 2]
         a = raw[i * 4 + 3]
+        # 分层窗 alpha=0 的像素系统会点穿到后面的程序；整块区域至少留 1，肉眼看不出。
+        if a < 1:
+            a = 1
         bgra[i * 4 + 0] = (b * a) // 255
         bgra[i * 4 + 1] = (g * a) // 255
         bgra[i * 4 + 2] = (r * a) // 255
         bgra[i * 4 + 3] = a
-        mask[i] = a
+        mask[i] = 255
     return bytes(bgra), bytes(mask)
 
 

@@ -43,14 +43,10 @@ SC_MINIMIZE = 0xF020
 SC_MAXIMIZE = 0xF030
 SC_SIZE = 0xF000
 SC_MASK = 0xFFF0
+WM_MOUSEACTIVATE = 0x0021
+MA_ACTIVATE = 1
 SW_RESTORE = 9
 MONITOR_DEFAULTTONEAREST = 2
-SM_XVIRTUALSCREEN = 76
-SM_YVIRTUALSCREEN = 77
-SM_CXVIRTUALSCREEN = 78
-SM_CYVIRTUALSCREEN = 79
-# 水平方向至少留这么宽在屏上，空白可以探出右边缘
-MIN_VISIBLE_X = 72
 HTCLIENT = 1
 HTTRANSPARENT = -1
 PM_REMOVE = 0x0001
@@ -377,8 +373,9 @@ class LayeredPetWindow:
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == WM_NCHITTEST:
-            # 整块卡片都可点。按像素穿透在高 DPI 下会整窗点穿。
             return HTCLIENT
+        if msg == WM_MOUSEACTIVATE:
+            return MA_ACTIVATE
         if msg == WM_SYSCOMMAND:
             cmd = int(wparam) & SC_MASK
             if cmd in (SC_MINIMIZE, SC_MAXIMIZE, SC_SIZE):
@@ -394,6 +391,8 @@ class LayeredPetWindow:
             self._press_y = pt.y
             self._drag_dx = pt.x - self.x
             self._drag_dy = pt.y - self.y
+            user32.SetForegroundWindow(hwnd)
+            self.keep_topmost()
             user32.SetCapture(hwnd)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
@@ -542,14 +541,10 @@ def monitor_work_at(x: int, y: int) -> RECT:
 
 
 def clamp_pos(x: int, y: int, w: int, h: int) -> tuple[int, int]:
-    """水平允许空白探出屏幕；垂直仍卡在工作区，避免钻进任务栏。"""
-    vx = int(user32.GetSystemMetrics(SM_XVIRTUALSCREEN))
-    vw = int(user32.GetSystemMetrics(SM_CXVIRTUALSCREEN))
-    keep = min(int(w), MIN_VISIBLE_X)
-    min_x = vx
-    max_x = vx + vw - keep
-    area = monitor_work_at(int(x) + min(40, w // 3), int(y) + h // 2)
-    min_y = int(area.top)
+    """整窗夹在当前显示器工作区内，不探出屏幕、不钻进任务栏。"""
+    area = monitor_work_at(int(x) + int(w) // 2, int(y) + int(h) // 2)
+    min_x, min_y = int(area.left), int(area.top)
+    max_x = int(area.right) - int(w)
     max_y = int(area.bottom) - int(h)
     if max_x < min_x:
         max_x = min_x
