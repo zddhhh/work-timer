@@ -59,9 +59,8 @@ def api(method: str, path: str, tok: str, data: dict | None = None):
 
 def ensure_exe() -> Path:
     exe = ROOT / "dist" / "WorkTimer.exe"
-    if not exe.exists():
-        print("打包 exe…")
-        subprocess.check_call([sys.executable, str(ROOT / "scripts" / "build_release.py")], cwd=ROOT)
+    print("打包 exe…")
+    subprocess.check_call([sys.executable, str(ROOT / "scripts" / "build_release.py")], cwd=ROOT)
     if not exe.exists():
         raise SystemExit("找不到 dist/WorkTimer.exe")
     return exe
@@ -109,9 +108,10 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 拖拽改走分层窗位移，切显示不再把窗口弹走\n"
+                    "- 拖拽改走系统移动循环，跟手不再卡\n"
                     "- 左右键不再切换倒计时格式（改用右键「显示方式」）\n"
-                    "- ESC 切换广告弹窗伪装，再按 ESC 或点广告关闭恢复"
+                    "- Esc 切换广告弹窗伪装，再按 Esc 或点广告关闭恢复\n"
+                    "- 切显示方式只改画面、不改位置"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
