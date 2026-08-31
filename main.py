@@ -258,6 +258,8 @@ class WorkTimer:
             self._check_update()
         elif op == "set_time":
             self._open_time_dialog()
+        elif op == "disguise":
+            self._toggle_disguise()
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":
@@ -377,11 +379,12 @@ class WorkTimer:
                 self._need_dialog = False
                 self._open_time_dialog()
             dragging = self.win.dragging
+            moved = self.win.just_moved
             if dragging:
                 was_dragging = True
                 time.sleep(0.001)
                 continue
-            if was_dragging:
+            if was_dragging or moved:
                 self._persist_pos()
                 last_save = time.monotonic()
                 was_dragging = False

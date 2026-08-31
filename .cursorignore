@@ -1,0 +1,9 @@
+# Cursor index / agent context: skip venv and build artifacts
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+*.exe
+*.log
+.gitcode_token

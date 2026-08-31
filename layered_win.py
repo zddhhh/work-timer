@@ -34,6 +34,8 @@ WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
 WM_MOUSEMOVE = 0x0200
 WM_NCHITTEST = 0x0084
+WM_SYSCOMMAND = 0x0112
+SC_MOVE_CAPTION = 0xF012
 HTCLIENT = 1
 HTTRANSPARENT = -1
 PM_REMOVE = 0x0001
@@ -52,6 +54,7 @@ SWP_NOZORDER = 0x0004
 ID_QUIT = 1
 ID_CHECK_UPDATE = 2
 ID_SET_TIME = 3
+ID_DISGUISE = 4
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
@@ -145,6 +148,10 @@ user32.UpdateLayeredWindow.argtypes = [
     ctypes.POINTER(BLENDFUNCTION),
     wintypes.DWORD,
 ]
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
+user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
+user32.SendMessageW.restype = LRESULT
 
 
 class LayeredPetWindow:
@@ -173,6 +180,7 @@ class LayeredPetWindow:
         self._hit_mask = None
         self.drag_enabled = True
         self._has_pixels = False
+        self._just_moved = False
 
         self._hinst = kernel32.GetModuleHandleW(None)
         self._class_name = class_name
@@ -271,6 +279,13 @@ class LayeredPetWindow:
             ULW_ALPHA,
         )
 
+    def _sync_rect(self) -> None:
+        if not self.hwnd:
+            return
+        r = RECT()
+        if user32.GetWindowRect(self.hwnd, ctypes.byref(r)):
+            self.x, self.y = int(r.left), int(r.top)
+
     def move(self, x: int, y: int) -> None:
         self.x, self.y = int(x), int(y)
         if self._has_pixels:
@@ -278,12 +293,12 @@ class LayeredPetWindow:
             return
         user32.SetWindowPos(
             self.hwnd,
-            HWND_TOPMOST,
+            None,
             self.x,
             self.y,
-            self.width,
-            self.height,
-            SWP_SHOWWINDOW | SWP_NOACTIVATE,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         )
 
     def keep_topmost(self) -> None:
@@ -321,24 +336,27 @@ class LayeredPetWindow:
             self._drag_moved = False
             self._press_x = pt.x
             self._press_y = pt.y
-            self._drag_dx = pt.x - self.x
-            self._drag_dy = pt.y - self.y
             user32.SetCapture(hwnd)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
-            if abs(pt.x - self._press_x) > 6 or abs(pt.y - self._press_y) > 6:
+            if abs(pt.x - self._press_x) > 4 or abs(pt.y - self._press_y) > 4:
                 self._drag_moved = True
-            if self._drag_moved:
-                self.move(pt.x - self._drag_dx, pt.y - self._drag_dy)
+                self._dragging = False
+                user32.ReleaseCapture()
+                # 交给系统移动循环，分层窗逐帧 SetWindowPos/ULW 都会卡
+                user32.SendMessageW(hwnd, WM_SYSCOMMAND, SC_MOVE_CAPTION, 0)
+                self._sync_rect()
+                if self._has_pixels:
+                    self._blit(move=True)
+                self._just_moved = True
             return 0
         if msg == WM_LBUTTONUP and self._dragging:
-            moved = self._drag_moved
             self._dragging = False
             self._drag_moved = False
             user32.ReleaseCapture()
-            if not moved and self._on_left_click:
+            if self._on_left_click:
                 self._on_left_click()
             return 0
         if msg == WM_RBUTTONUP:
@@ -368,6 +386,7 @@ class LayeredPetWindow:
         )
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_TIME, "设置上班时间")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
+        user32.AppendMenuW(hmenu, MF_STRING, ID_DISGUISE, "伪装成广告 (Esc)")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
@@ -394,6 +413,8 @@ class LayeredPetWindow:
             return "update"
         if cmd == ID_SET_TIME:
             return "set_time"
+        if cmd == ID_DISGUISE:
+            return "disguise"
         if cmd == ID_FMT_HMS:
             return "fmt_hms"
         if cmd == ID_FMT_MIN:
@@ -405,6 +426,12 @@ class LayeredPetWindow:
     @property
     def dragging(self) -> bool:
         return self._dragging
+
+    @property
+    def just_moved(self) -> bool:
+        flag = self._just_moved
+        self._just_moved = False
+        return flag
 
     def pump(self) -> None:
         msg = MSG()
