@@ -11,6 +11,7 @@ from tkinter import messagebox, ttk
 
 from PIL import Image, ImageDraw, ImageFont
 
+import ad_disguise
 import flex_time
 import layered_win
 import store
@@ -155,6 +156,10 @@ class WorkTimer:
         self.win = layered_win.LayeredPetWindow(WIN_W, WIN_H, "弹性下班")
         self.win.set_left_click_handler(self._on_click)
         self.win.set_right_click_handler(self._request_menu)
+        self.ad = ad_disguise.AdDisguise()
+        self.ad.set_dismiss_handler(self._toggle_disguise)
+        self._disguised = False
+        self._esc_held = False
 
         area = layered_win.work_area()
         x = self.cfg.get("win_x")
@@ -196,16 +201,32 @@ class WorkTimer:
         store.save_config(self.cfg)
         self._last_key = ""
 
-    def _cycle_display(self) -> None:
-        self._set_display_mode(flex_time.next_display_mode(self._display_mode()))
-
     def _on_click(self) -> None:
-        if self._has_start():
-            self._cycle_display()
+        if self._disguised:
             return
-        self._need_dialog = True
+        if not self._has_start():
+            self._need_dialog = True
+
+    def _toggle_disguise(self) -> None:
+        if self._disguised:
+            self.ad.hide()
+            self.win.show()
+            self._disguised = False
+            self._last_key = ""
+            return
+        self.win.hide()
+        self.ad.show()
+        self._disguised = True
+
+    def _poll_esc(self) -> None:
+        down = bool(layered_win.user32.GetAsyncKeyState(0x1B) & 0x8000)
+        if down and not self._esc_held:
+            self._toggle_disguise()
+        self._esc_held = down
 
     def _request_menu(self, sx: int, sy: int) -> None:
+        if self._disguised:
+            return
         self._menu_pos = (sx, sy)
 
     def _tk_root(self) -> tk.Tk:
@@ -343,6 +364,11 @@ class WorkTimer:
         was_dragging = False
         while self.running and not self.win.closed:
             self.win.pump()
+            self.ad.pump()
+            self._poll_esc()
+            if self._disguised:
+                time.sleep(0.008)
+                continue
             if self._menu_pos is not None:
                 sx, sy = self._menu_pos
                 self._menu_pos = None
@@ -366,6 +392,7 @@ class WorkTimer:
                 last_save = now
             time.sleep(1.0 / FPS)
         self._persist_pos()
+        self.ad.destroy()
         self.win.destroy()
         if self._tk is not None:
             self._tk.destroy()

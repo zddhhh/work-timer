@@ -148,7 +148,15 @@ user32.UpdateLayeredWindow.argtypes = [
 
 
 class LayeredPetWindow:
-    def __init__(self, width: int, height: int, title: str = "弹性下班") -> None:
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        title: str = "弹性下班",
+        class_name: str = "WorkTimerLayeredWnd",
+        *,
+        visible: bool = True,
+    ) -> None:
         self.width = width
         self.height = height
         self.x = 0
@@ -164,9 +172,10 @@ class LayeredPetWindow:
         self._closed = False
         self._hit_mask = None
         self.drag_enabled = True
+        self._has_pixels = False
 
         self._hinst = kernel32.GetModuleHandleW(None)
-        self._class_name = "WorkTimerLayeredWnd"
+        self._class_name = class_name
         self._wndproc = WNDPROC(self._wnd_proc)
 
         wc = WNDCLASSW()
@@ -190,7 +199,8 @@ class LayeredPetWindow:
         if not self.hwnd:
             raise RuntimeError("CreateWindowEx 失败")
 
-        user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
+        if visible:
+            user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
         self._hdc_screen = user32.GetDC(None)
         self._hdc_mem = gdi32.CreateCompatibleDC(self._hdc_screen)
         self._bits = None
@@ -234,39 +244,25 @@ class LayeredPetWindow:
             user32.DestroyWindow(self.hwnd)
             self.hwnd = 0
 
-    def move(self, x: int, y: int) -> None:
-        self.x, self.y = int(x), int(y)
-        user32.SetWindowPos(
-            self.hwnd,
-            HWND_TOPMOST,
-            self.x,
-            self.y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        )
+    def hide(self) -> None:
+        if self.hwnd:
+            user32.ShowWindow(self.hwnd, 0)
 
-    def keep_topmost(self) -> None:
-        user32.SetWindowPos(
-            self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | SWP_NOACTIVATE | SWP_SHOWWINDOW
-        )
-        user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
+    def show(self) -> None:
+        if self.hwnd:
+            user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
 
-    def present_bgra(self, bgra: bytes, alpha_mask: bytes) -> None:
-        expected = self.width * self.height * 4
-        if len(bgra) != expected:
-            raise ValueError("像素长度不对")
-        ctypes.memmove(self._bits, bgra, expected)
-        self._hit_mask = alpha_mask
-
+    def _blit(self, *, move: bool) -> None:
+        if not self.hwnd or not self._has_pixels:
+            return
         pt_dst = POINT(self.x, self.y)
         size = SIZE(self.width, self.height)
         pt_src = POINT(0, 0)
         blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
-        ok = user32.UpdateLayeredWindow(
+        user32.UpdateLayeredWindow(
             self.hwnd,
             self._hdc_screen,
-            ctypes.byref(pt_dst),
+            ctypes.byref(pt_dst) if move else None,
             ctypes.byref(size),
             self._hdc_mem,
             ctypes.byref(pt_src),
@@ -274,8 +270,36 @@ class LayeredPetWindow:
             ctypes.byref(blend),
             ULW_ALPHA,
         )
-        if not ok:
-            self.keep_topmost()
+
+    def move(self, x: int, y: int) -> None:
+        self.x, self.y = int(x), int(y)
+        if self._has_pixels:
+            self._blit(move=True)
+            return
+        user32.SetWindowPos(
+            self.hwnd,
+            HWND_TOPMOST,
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            SWP_SHOWWINDOW | SWP_NOACTIVATE,
+        )
+
+    def keep_topmost(self) -> None:
+        user32.SetWindowPos(
+            self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | SWP_NOACTIVATE | SWP_SHOWWINDOW
+        )
+
+    def present_bgra(self, bgra: bytes, alpha_mask: bytes) -> None:
+        """只更新画面，不改窗口位置（避免切显示时乱跳）。"""
+        expected = self.width * self.height * 4
+        if len(bgra) != expected:
+            raise ValueError("像素长度不对")
+        ctypes.memmove(self._bits, bgra, expected)
+        self._hit_mask = alpha_mask
+        self._has_pixels = True
+        self._blit(move=False)
 
     def _alpha_at(self, lx: int, ly: int) -> int:
         if not self._hit_mask:

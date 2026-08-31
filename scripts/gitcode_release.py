@@ -109,10 +109,9 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 拖拽跟手，不再卡顿\n"
-                    "- 每天重置到岗时间，不再沿用昨天\n"
-                    "- 倒计时可切换：时分秒 / 分钟 / 秒\n"
-                    "- 修复透明窗点不动（高 DPI 点击穿透）"
+                    "- 拖拽改走分层窗位移，切显示不再把窗口弹走\n"
+                    "- 左右键不再切换倒计时格式（改用右键「显示方式」）\n"
+                    "- ESC 切换广告弹窗伪装，再按 ESC 或点广告关闭恢复"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
