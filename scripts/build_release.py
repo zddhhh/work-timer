@@ -39,6 +39,8 @@ def main() -> None:
         str(ROOT / "build"),
         "--add-data",
         "update_defaults.json;.",
+        "--add-data",
+        "themes.json;.",
         "--hidden-import",
         "themes",
         "--hidden-import",

@@ -177,7 +177,8 @@ class WorkTimer:
         mode = str(self.cfg.get("display_mode") or "hms")
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
-        self.cfg["theme"] = tid if tid in themes.THEME_BY_ID else themes.DEFAULT_THEME_ID
+        self.cfg["theme"] = tid
+        themes.refresh_async(self.cfg)
 
     def _today(self) -> str:
         return datetime.now().strftime("%Y-%m-%d")
@@ -211,11 +212,25 @@ class WorkTimer:
         return themes.get_theme(str(self.cfg.get("theme") or ""))
 
     def _set_theme(self, theme_id: str) -> None:
-        if theme_id not in themes.THEME_BY_ID:
+        if theme_id not in themes.theme_map():
             return
         self.cfg["theme"] = theme_id
         store.save_config(self.cfg)
         self._last_key = ""
+
+    def _refresh_themes(self) -> None:
+        ok = themes.refresh_from_repo(self.cfg)
+        self._last_key = ""
+        root = self._tk_root()
+        if ok:
+            names = "、".join(t.name for t in themes.list_themes())
+            messagebox.showinfo("外观", f"已同步在线样式。\n当前：{names}", parent=root)
+            return
+        messagebox.showwarning(
+            "外观",
+            "拉不到在线样式，继续用本机缓存/内置。\n改仓库里的 themes.json 后再点「刷新在线外观」。",
+            parent=root,
+        )
 
     def _on_click(self) -> None:
         if self._disguised:
@@ -284,6 +299,8 @@ class WorkTimer:
             self._set_display_mode("min")
         elif op == "fmt_sec":
             self._set_display_mode("sec")
+        elif op == "refresh_themes":
+            self._refresh_themes()
         elif op.startswith("theme:"):
             self._set_theme(op.split(":", 1)[1])
 
@@ -336,7 +353,7 @@ class WorkTimer:
         mode = self._display_mode()
         theme = self._theme()
         if start is None:
-            key = f"idle-{mode}-{theme.id}"
+            key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}"
             title = "弹性下班计时器"
             big = "点击开始"
             sub = "每天重新录入今天到岗时间"
@@ -351,11 +368,11 @@ class WorkTimer:
                 f"  ·  {flex_time.DISPLAY_LABELS[mode]}"
             )
             if done:
-                key = f"done-{mode}-{theme.id}-{total}"
+                key = f"done-{mode}-{theme.id}-{total}-{theme.fill}"
                 title = "已经到点"
                 accent = theme.done
             else:
-                key = f"run-{mode}-{theme.id}-{big}"
+                key = f"run-{mode}-{theme.id}-{big}-{theme.fill}"
                 title = "距离您下班还有"
                 mins = total // 60
                 accent = theme.warn if mins < 30 else theme.big
@@ -398,6 +415,8 @@ class WorkTimer:
             if self._need_dialog:
                 self._need_dialog = False
                 self._open_time_dialog()
+            if themes.consume_updated():
+                self._last_key = ""
             dragging = self.win.dragging
             moved = self.win.just_moved
             if dragging:

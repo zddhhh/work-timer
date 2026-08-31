@@ -57,6 +57,7 @@ ID_QUIT = 1
 ID_CHECK_UPDATE = 2
 ID_SET_TIME = 3
 ID_DISGUISE = 4
+ID_REFRESH_THEMES = 5
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
@@ -387,10 +388,13 @@ class LayeredPetWindow:
         user32.AppendMenuW(
             hfmt, MF_STRING | (MF_CHECKED if display_mode == "sec" else 0), ID_FMT_SEC, "秒"
         )
+        catalog = themes.list_themes()
         htheme = user32.CreatePopupMenu()
-        for i, th in enumerate(themes.THEMES):
+        for i, th in enumerate(catalog):
             checked = MF_CHECKED if th.id == theme_id else 0
             user32.AppendMenuW(htheme, MF_STRING | checked, ID_THEME_BASE + i, th.name)
+        user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(htheme, MF_STRING, ID_REFRESH_THEMES, "刷新在线外观")
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_TIME, "设置上班时间")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
@@ -429,8 +433,10 @@ class LayeredPetWindow:
             return "fmt_min"
         if cmd == ID_FMT_SEC:
             return "fmt_sec"
-        if ID_THEME_BASE <= cmd < ID_THEME_BASE + len(themes.THEMES):
-            return "theme:" + themes.THEMES[cmd - ID_THEME_BASE].id
+        if cmd == ID_REFRESH_THEMES:
+            return "refresh_themes"
+        if ID_THEME_BASE <= cmd < ID_THEME_BASE + len(catalog):
+            return "theme:" + catalog[cmd - ID_THEME_BASE].id
         return ""
 
     @property

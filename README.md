@@ -28,7 +28,7 @@ python main.py
 |---|---|
 | 左键点一下 | 未计时：录入上班时间；计时中：切换时分秒 / 分钟 / 秒 |
 | 左键拖 | 挪位置（会记住） |
-| 右键 → 外观 | 淡影（默认）/ 深夜 / 霜白 / 霓虹 / 终端 |
+| 右键 → 外观 | 淡影（默认，几乎只有字）/ 玻璃 / 霜白 / 霓虹 / 终端；可「刷新在线外观」 |
 | 右键 → 显示方式 | 时分秒 / 分钟 / 秒 |
 | ESC | 切换成广告弹窗伪装；再按 ESC 或点广告关闭恢复 |
 | 右键 → 伪装成广告 (Esc) | 同 Esc |
@@ -52,3 +52,7 @@ python main.py
 发版：改 `version.py` 的 `APP_VERSION` → 打包 → 上传 Release 附件，文件名保持 `WorkTimer.exe`。
 
 Windows 误报见 [`docs/Windows安全说明.md`](docs/Windows安全说明.md)。
+
+## 在线换皮（不用发新版本）
+
+`1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。新 `kind` 暂时只能用已有的：`ghost` / `glass` / `frost` / `neon` / `terminal`。全新画法才需要发 exe。

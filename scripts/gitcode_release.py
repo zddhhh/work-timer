@@ -108,9 +108,9 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 左键点击恢复切换时分秒/分钟/秒\n"
-                    "- 右键「外观」换皮肤，默认淡影半透明、不显眼\n"
-                    "- 广告伪装仍在右下角，点广告或 Esc 关闭"
+                    "- 外观重做：默认淡影几乎只有字，其它皮也收干净了\n"
+                    "- 启动会拉仓库 themes.json，以后换皮不用再发 exe\n"
+                    "- 右键外观 → 刷新在线外观"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
