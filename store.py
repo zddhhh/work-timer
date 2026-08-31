@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
+from datetime import datetime
 from pathlib import Path
 
 
@@ -62,4 +64,24 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    config_path().write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        config_path().write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def append_log(message: str) -> None:
+    try:
+        path = user_data_dir() / "error.log"
+        line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n"
+        if path.exists() and path.stat().st_size > 80_000:
+            path.write_text(line, encoding="utf-8")
+        else:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
+    except OSError:
+        pass
+
+
+def log_exception(where: str, exc: BaseException) -> None:
+    append_log(f"{where}: {exc}\n{traceback.format_exc()}")

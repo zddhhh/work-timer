@@ -178,14 +178,12 @@ def _fetch_urls(repo: str, token: str) -> list[str]:
     import updater
 
     owner, name = updater.parse_repo(repo)
-    urls = [
-        f"https://gitcode.com/{owner}/{name}/raw/main/themes.json",
-        f"https://gitcode.com/{owner}/{name}/-/raw/main/themes.json",
-        f"https://api.gitcode.com/api/v5/repos/{owner}/{name}/raw/themes.json?ref=main",
-    ]
+    # 网页 raw 地址会返回 HTML，不能当 JSON 读。只走 GitCode API。
+    path = f"/repos/{owner}/{name}/raw/themes.json"
+    urls = [f"https://api.gitcode.com/api/v5{path}?ref=main"]
     if token:
         q = urllib.parse.urlencode({"access_token": token, "ref": "main"})
-        urls.append(f"https://api.gitcode.com/api/v5/repos/{owner}/{name}/raw/themes.json?{q}")
+        urls.insert(0, f"https://api.gitcode.com/api/v5{path}?{q}")
     return urls
 
 
@@ -201,24 +199,33 @@ def refresh_from_repo(cfg: dict, *, timeout: float = 4.0) -> bool:
         urls = _fetch_urls(repo, token)
     except ValueError:
         return False
+    limit = 256 * 1024
     for url in urls:
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
+                blob = resp.read(limit + 1)
+            if len(blob) > limit:
+                continue
+            raw = blob.decode("utf-8", errors="replace").lstrip("\ufeff").strip()
+            if not raw.startswith("{") and not raw.startswith("["):
+                continue
             items = _parse_catalog(json.loads(raw))
             if not items:
                 continue
-            _cache_path().write_text(json.dumps({"version": 1, "themes": [
-                {
-                    "id": t.id, "name": t.name, "kind": t.kind, "radius": t.radius,
-                    "fill": list(t.fill), "outline": list(t.outline),
-                    "title": list(t.title), "big": list(t.big), "sub": list(t.sub),
-                    "idle": list(t.idle), "warn": list(t.warn), "done": list(t.done),
-                }
-                for t in items
-            ]}, ensure_ascii=False, indent=2), encoding="utf-8")
             _set_catalog(items)
+            try:
+                _cache_path().write_text(json.dumps({"version": 1, "themes": [
+                    {
+                        "id": t.id, "name": t.name, "kind": t.kind, "radius": t.radius,
+                        "fill": list(t.fill), "outline": list(t.outline),
+                        "title": list(t.title), "big": list(t.big), "sub": list(t.sub),
+                        "idle": list(t.idle), "warn": list(t.warn), "done": list(t.done),
+                    }
+                    for t in items
+                ]}, ensure_ascii=False, indent=2), encoding="utf-8")
+            except OSError:
+                pass
             return True
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
             continue
@@ -229,8 +236,8 @@ def refresh_async(cfg: dict) -> None:
     def _run() -> None:
         try:
             refresh_from_repo(cfg)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("theme-refresh", e)
 
     threading.Thread(target=_run, daemon=True, name="theme-refresh").start()
 
@@ -279,14 +286,19 @@ def paint_card(
                 d.line((10, y, w - 11, y), fill=(0, 40, 16, 26))
 
     ghost = kind == "ghost"
-    _halo_text(d, (22, 14), title, font_title, theme.title, ghost=ghost)
-    _halo_text(d, (22, 42), big, font_big, accent, ghost=ghost)
-    _halo_text(d, (22, 96), sub, font_sub, theme.sub, ghost=ghost)
+    big_y = 42 if sub else 40
+    _halo_text(d, (22, 12), title, font_title, theme.title, ghost=ghost)
+    _halo_text(d, (22, big_y), big, font_big, accent, ghost=ghost)
+    if sub:
+        _halo_text(d, (22, 90), sub, font_sub, theme.sub, ghost=ghost)
     if ghost:
-        bb = d.textbbox((22, 42), big, font=font_big)
-        yline = min(int(bb[3]) + 5, h - 28)
-        x2 = min(max(int(bb[2]), 102), w - 28)
-        d.line((22, yline, x2, yline), fill=(255, 255, 255, 42), width=1)
+        try:
+            bb = d.textbbox((22, big_y), big, font=font_big)
+            yline = min(int(bb[3]) + 5, h - 22)
+            x2 = min(max(int(bb[2]), 102), w - 28)
+            d.line((22, yline, x2, yline), fill=(255, 255, 255, 42), width=1)
+        except Exception:
+            pass
 
 
 load_local_catalog()

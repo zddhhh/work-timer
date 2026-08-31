@@ -312,6 +312,8 @@ class LayeredPetWindow:
 
     def present_bgra(self, bgra: bytes, alpha_mask: bytes) -> None:
         """只更新画面，不改窗口位置（避免切显示时乱跳）。"""
+        if not self.hwnd or self._closed:
+            return
         expected = self.width * self.height * 4
         if len(bgra) != expected:
             raise ValueError("像素长度不对")
@@ -370,6 +372,9 @@ class LayeredPetWindow:
                 self._on_right_click(pt.x, pt.y)
             return 0
         if msg == WM_CLOSE:
+            self._closed = True
+            return 0
+        if msg == WM_DESTROY:
             self._closed = True
             return 0
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -450,8 +455,10 @@ class LayeredPetWindow:
         return flag
 
     def pump(self) -> None:
+        if not self.hwnd:
+            return
         msg = MSG()
-        while user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, PM_REMOVE):
+        while user32.PeekMessageW(ctypes.byref(msg), self.hwnd, 0, 0, PM_REMOVE):
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
 

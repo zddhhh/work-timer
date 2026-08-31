@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import ctypes
 import os
+import ssl
+import sys
 import time
 import tkinter as tk
 from datetime import datetime
@@ -19,8 +21,8 @@ import themes
 import updater
 from version import APP_VERSION
 
-WIN_W = 380
-WIN_H = 132
+WIN_W = 360
+WIN_H = 100
 FPS = 60
 
 
@@ -178,6 +180,10 @@ class WorkTimer:
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
         self.cfg["theme"] = tid
+        try:
+            ssl.create_default_context()
+        except Exception:
+            pass
         themes.refresh_async(self.cfg)
 
     def _today(self) -> str:
@@ -348,47 +354,47 @@ class WorkTimer:
             messagebox.showerror("更新失败", str(e), parent=root)
 
     def _paint(self) -> None:
-        start = self._start_hm()
-        now = datetime.now()
-        mode = self._display_mode()
-        theme = self._theme()
-        if start is None:
-            key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}"
-            title = "弹性下班计时器"
-            big = "点击开始"
-            sub = "每天重新录入今天到岗时间"
-            accent = theme.idle
-        else:
-            oh, om = flex_time.offwork_hm(*start)
-            td = flex_time.remaining_to(now, oh, om)
-            total, done = flex_time.remaining_parts(td)
-            big = flex_time.format_remaining(total, mode)
-            sub = (
-                f"上班 {flex_time.format_hm(*start)}  →  下班 {flex_time.format_hm(oh, om)}"
-                f"  ·  {flex_time.DISPLAY_LABELS[mode]}"
-            )
-            if done:
-                key = f"done-{mode}-{theme.id}-{total}-{theme.fill}"
-                title = "已经到点"
-                accent = theme.done
+        try:
+            start = self._start_hm()
+            now = datetime.now()
+            mode = self._display_mode()
+            theme = self._theme()
+            if start is None:
+                key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}"
+                title = "弹性下班"
+                big = "点击开始"
+                sub = ""
+                accent = theme.idle
             else:
-                key = f"run-{mode}-{theme.id}-{big}-{theme.fill}"
-                title = "距离您下班还有"
-                mins = total // 60
-                accent = theme.warn if mins < 30 else theme.big
+                oh, om = flex_time.offwork_hm(*start)
+                td = flex_time.remaining_to(now, oh, om)
+                total, done = flex_time.remaining_parts(td)
+                big = flex_time.format_remaining(total, mode)
+                sub = ""
+                if done:
+                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}"
+                    title = "已经到点"
+                    accent = theme.done
+                else:
+                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}"
+                    title = "距离您下班还有"
+                    mins = total // 60
+                    accent = theme.warn if mins < 30 else theme.big
 
-        if key == self._last_key:
-            return
-        self._last_key = key
+            if key == self._last_key:
+                return
 
-        img = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        themes.paint_card(
-            d, WIN_W, WIN_H, theme, title, big, sub, accent,
-            self._font_title, self._font_big, self._font_sub,
-        )
-        bgra, mask = _rgba_to_bgra(img)
-        self.win.present_bgra(bgra, mask)
+            img = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            themes.paint_card(
+                d, WIN_W, WIN_H, theme, title, big, sub, accent,
+                self._font_title, self._font_big, self._font_sub,
+            )
+            bgra, mask = _rgba_to_bgra(img)
+            self.win.present_bgra(bgra, mask)
+            self._last_key = key
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("paint", e)
 
     def _persist_pos(self) -> None:
         if self.cfg.get("win_x") == self.win.x and self.cfg.get("win_y") == self.win.y:
@@ -402,37 +408,41 @@ class WorkTimer:
         last_save = time.monotonic()
         was_dragging = False
         while self.running and not self.win.closed:
-            self.win.pump()
-            self.ad.pump()
-            self._poll_esc()
-            if self._disguised:
-                time.sleep(0.008)
-                continue
-            if self._menu_pos is not None:
-                sx, sy = self._menu_pos
-                self._menu_pos = None
-                self._handle_menu(sx, sy)
-            if self._need_dialog:
-                self._need_dialog = False
-                self._open_time_dialog()
-            if themes.consume_updated():
-                self._last_key = ""
-            dragging = self.win.dragging
-            moved = self.win.just_moved
-            if dragging:
-                was_dragging = True
-                time.sleep(0.001)
-                continue
-            if was_dragging or moved:
-                self._persist_pos()
-                last_save = time.monotonic()
-                was_dragging = False
-            self._paint()
-            now = time.monotonic()
-            if now - last_save > 1.5:
-                self._persist_pos()
-                last_save = now
-            time.sleep(1.0 / FPS)
+            try:
+                self.win.pump()
+                self.ad.pump()
+                self._poll_esc()
+                if self._disguised:
+                    time.sleep(0.008)
+                    continue
+                if self._menu_pos is not None:
+                    sx, sy = self._menu_pos
+                    self._menu_pos = None
+                    self._handle_menu(sx, sy)
+                if self._need_dialog:
+                    self._need_dialog = False
+                    self._open_time_dialog()
+                if themes.consume_updated():
+                    self._last_key = ""
+                dragging = self.win.dragging
+                moved = self.win.just_moved
+                if dragging:
+                    was_dragging = True
+                    time.sleep(0.001)
+                    continue
+                if was_dragging or moved:
+                    self._persist_pos()
+                    last_save = time.monotonic()
+                    was_dragging = False
+                self._paint()
+                now = time.monotonic()
+                if now - last_save > 1.5:
+                    self._persist_pos()
+                    last_save = now
+                time.sleep(1.0 / FPS)
+            except Exception as e:  # noqa: BLE001
+                store.log_exception("loop", e)
+                time.sleep(0.05)
         self._persist_pos()
         self.ad.destroy()
         self.win.destroy()
@@ -441,13 +451,15 @@ class WorkTimer:
 
 
 def main() -> None:
+    sys.excepthook = lambda *args: store.append_log("".join(__import__("traceback").format_exception(*args)))
     try:
         WorkTimer().run()
     except Exception as e:  # noqa: BLE001
+        store.log_exception("main", e)
         try:
             messagebox.showerror("弹性下班计时器", str(e))
         except Exception:
-            raise SystemExit(str(e)) from e
+            pass
 
 
 if __name__ == "__main__":

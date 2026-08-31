@@ -108,9 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 外观重做：默认淡影几乎只有字，其它皮也收干净了\n"
-                    "- 启动会拉仓库 themes.json，以后换皮不用再发 exe\n"
-                    "- 右键外观 → 刷新在线外观"
+                    "- 修启动后过一会闪退（在线外观只拉 JSON API）\n"
+                    "- 界面只显示距离下班多久，去掉几点到几点"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
