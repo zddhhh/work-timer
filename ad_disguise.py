@@ -63,10 +63,7 @@ class AdDisguise:
             AD_W, AD_H, "精选推荐", class_name="WorkTimerAdWnd", visible=False
         )
         bgra, mask = _render()
-        area = layered_win.work_area()
-        x = int((area.left + area.right - AD_W) / 2)
-        y = int((area.top + area.bottom - AD_H) / 2)
-        self.win.move(x, y)
+        self._place_bottom_right()
         self.win.present_bgra(bgra, mask)
         self.visible = False
         self._on_dismiss = None
@@ -80,8 +77,16 @@ class AdDisguise:
         if self._on_dismiss:
             self._on_dismiss()
 
+    def _place_bottom_right(self) -> None:
+        area = layered_win.work_area()
+        margin = 18
+        x = int(area.right - AD_W - margin)
+        y = int(area.bottom - AD_H - margin)
+        self.win.move(x, y)
+
     def show(self) -> None:
         self.visible = True
+        self._place_bottom_right()
         self.win.show()
         self.win.keep_topmost()
 

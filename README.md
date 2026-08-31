@@ -20,7 +20,7 @@ python main.py
 .\.venv\Scripts\python.exe scripts\build_release.py
 ```
 
-产物：`dist\WorkTimer.exe`，双击就能跑。
+产物：`release\WorkTimer.exe`（给 GitCode 上传）。`dist\` 不覆盖，留给本机旧版测 OTA。
 
 ## 操作
 
