@@ -108,8 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 拖到任务栏不再消失：夹在工作区内，禁止最小化\n"
-                    "- 拖完强制重绘，避免分层窗位置和画面脱节"
+                    "- 窗口收窄，拖到右侧时空白可以探出屏幕，不再整块卡住"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

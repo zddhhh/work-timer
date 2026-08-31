@@ -21,8 +21,8 @@ import themes
 import updater
 from version import APP_VERSION
 
-WIN_W = 360
-WIN_H = 100
+WIN_W = 248
+WIN_H = 92
 FPS = 60
 
 
