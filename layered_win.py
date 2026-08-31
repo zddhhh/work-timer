@@ -5,6 +5,8 @@ import ctypes
 from ctypes import wintypes
 from typing import Callable
 
+import themes
+
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
@@ -58,6 +60,7 @@ ID_DISGUISE = 4
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
+ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
 
@@ -370,7 +373,7 @@ class LayeredPetWindow:
             return 0
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
-    def popup_menu(self, x: int, y: int, display_mode: str = "hms") -> str:
+    def popup_menu(self, x: int, y: int, display_mode: str = "hms", theme_id: str = "ghost") -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
             return ""
@@ -384,8 +387,13 @@ class LayeredPetWindow:
         user32.AppendMenuW(
             hfmt, MF_STRING | (MF_CHECKED if display_mode == "sec" else 0), ID_FMT_SEC, "秒"
         )
+        htheme = user32.CreatePopupMenu()
+        for i, th in enumerate(themes.THEMES):
+            checked = MF_CHECKED if th.id == theme_id else 0
+            user32.AppendMenuW(htheme, MF_STRING | checked, ID_THEME_BASE + i, th.name)
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_TIME, "设置上班时间")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
+        user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(hmenu, MF_STRING, ID_DISGUISE, "伪装成广告 (Esc)")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
@@ -421,6 +429,8 @@ class LayeredPetWindow:
             return "fmt_min"
         if cmd == ID_FMT_SEC:
             return "fmt_sec"
+        if ID_THEME_BASE <= cmd < ID_THEME_BASE + len(themes.THEMES):
+            return "theme:" + themes.THEMES[cmd - ID_THEME_BASE].id
         return ""
 
     @property

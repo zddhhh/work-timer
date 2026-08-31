@@ -40,6 +40,8 @@ def main() -> None:
         "--add-data",
         "update_defaults.json;.",
         "--hidden-import",
+        "themes",
+        "--hidden-import",
         "ad_disguise",
         "--hidden-import",
         "store",

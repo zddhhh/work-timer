@@ -15,6 +15,7 @@ import ad_disguise
 import flex_time
 import layered_win
 import store
+import themes
 import updater
 from version import APP_VERSION
 
@@ -175,6 +176,8 @@ class WorkTimer:
         self._last_key = ""
         mode = str(self.cfg.get("display_mode") or "hms")
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
+        tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
+        self.cfg["theme"] = tid if tid in themes.THEME_BY_ID else themes.DEFAULT_THEME_ID
 
     def _today(self) -> str:
         return datetime.now().strftime("%Y-%m-%d")
@@ -201,11 +204,26 @@ class WorkTimer:
         store.save_config(self.cfg)
         self._last_key = ""
 
+    def _cycle_display(self) -> None:
+        self._set_display_mode(flex_time.next_display_mode(self._display_mode()))
+
+    def _theme(self) -> themes.Theme:
+        return themes.get_theme(str(self.cfg.get("theme") or ""))
+
+    def _set_theme(self, theme_id: str) -> None:
+        if theme_id not in themes.THEME_BY_ID:
+            return
+        self.cfg["theme"] = theme_id
+        store.save_config(self.cfg)
+        self._last_key = ""
+
     def _on_click(self) -> None:
         if self._disguised:
             return
-        if not self._has_start():
-            self._need_dialog = True
+        if self._has_start():
+            self._cycle_display()
+            return
+        self._need_dialog = True
 
     def _toggle_disguise(self) -> None:
         if self._disguised:
@@ -251,7 +269,7 @@ class WorkTimer:
         self._last_key = ""
 
     def _handle_menu(self, sx: int, sy: int) -> None:
-        op = self.win.popup_menu(sx, sy, self._display_mode())
+        op = self.win.popup_menu(sx, sy, self._display_mode(), self._theme().id)
         if op == "quit":
             self.running = False
         elif op == "update":
@@ -266,6 +284,8 @@ class WorkTimer:
             self._set_display_mode("min")
         elif op == "fmt_sec":
             self._set_display_mode("sec")
+        elif op.startswith("theme:"):
+            self._set_theme(op.split(":", 1)[1])
 
     def _check_update(self) -> None:
         self.cfg = store.load_config()
@@ -314,12 +334,13 @@ class WorkTimer:
         start = self._start_hm()
         now = datetime.now()
         mode = self._display_mode()
+        theme = self._theme()
         if start is None:
-            key = f"idle-{mode}"
+            key = f"idle-{mode}-{theme.id}"
             title = "弹性下班计时器"
             big = "点击开始"
             sub = "每天重新录入今天到岗时间"
-            accent = (90, 168, 255, 255)
+            accent = theme.idle
         else:
             oh, om = flex_time.offwork_hm(*start)
             td = flex_time.remaining_to(now, oh, om)
@@ -330,14 +351,14 @@ class WorkTimer:
                 f"  ·  {flex_time.DISPLAY_LABELS[mode]}"
             )
             if done:
-                key = f"done-{mode}-{total}"
+                key = f"done-{mode}-{theme.id}-{total}"
                 title = "已经到点"
-                accent = (88, 214, 141, 255)
+                accent = theme.done
             else:
-                key = f"run-{mode}-{big}"
+                key = f"run-{mode}-{theme.id}-{big}"
                 title = "距离您下班还有"
                 mins = total // 60
-                accent = (255, 214, 102, 255) if mins < 30 else (244, 246, 251, 255)
+                accent = theme.warn if mins < 30 else theme.big
 
         if key == self._last_key:
             return
@@ -345,11 +366,10 @@ class WorkTimer:
 
         img = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
-        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, fill=(18, 22, 32, 220))
-        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, outline=(255, 255, 255, 70), width=1)
-        d.text((24, 16), title, font=self._font_title, fill=(186, 196, 214, 230))
-        d.text((24, 44), big, font=self._font_big, fill=accent)
-        d.text((24, 92), sub, font=self._font_sub, fill=(154, 163, 181, 220))
+        themes.paint_card(
+            d, WIN_W, WIN_H, theme, title, big, sub, accent,
+            self._font_title, self._font_big, self._font_sub,
+        )
         bgra, mask = _rgba_to_bgra(img)
         self.win.present_bgra(bgra, mask)
 

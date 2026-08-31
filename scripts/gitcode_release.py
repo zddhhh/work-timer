@@ -108,9 +108,9 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 广告伪装改到屏幕右下角\n"
-                    "- 打包进 release/，不再覆盖 dist 里的本机测试包\n"
-                    "- Esc 切换广告弹窗伪装，再按 Esc 或点广告关闭恢复"
+                    "- 左键点击恢复切换时分秒/分钟/秒\n"
+                    "- 右键「外观」换皮肤，默认淡影半透明、不显眼\n"
+                    "- 广告伪装仍在右下角，点广告或 Esc 关闭"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

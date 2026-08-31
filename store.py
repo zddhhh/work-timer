@@ -28,6 +28,7 @@ def load_config() -> dict:
         "start_m": None,
         "start_date": "",
         "display_mode": "hms",
+        "theme": "ghost",
         "win_x": None,
         "win_y": None,
         "gitcode_repo": "",
