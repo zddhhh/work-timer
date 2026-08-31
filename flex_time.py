@@ -23,8 +23,8 @@ def clamp_start(h: int, m: int) -> tuple[int, int]:
     return _minutes_to_hm(t)
 
 
-def parse_start(text: str) -> tuple[int, int] | None:
-    """支持 8.30 / 8:30 / 0830 / 8点30。"""
+def parse_clock(text: str) -> tuple[int, int] | None:
+    """任意时刻：8.30 / 8:30 / 0830 / 8点30 / 18:00。"""
     raw = (text or "").strip().replace("：", ":").replace("．", ".").replace("点", ":")
     raw = raw.replace(" ", "")
     if not raw:
@@ -47,7 +47,15 @@ def parse_start(text: str) -> tuple[int, int] | None:
         return None
     if mm < 0 or mm > 59 or hh < 0 or hh > 23:
         return None
-    return clamp_start(hh, mm)
+    return hh, mm
+
+
+def parse_start(text: str) -> tuple[int, int] | None:
+    """到岗时间，夹到 8:30–9:30。"""
+    parsed = parse_clock(text)
+    if parsed is None:
+        return None
+    return clamp_start(*parsed)
 
 
 def offwork_hm(start_h: int, start_m: int) -> tuple[int, int]:

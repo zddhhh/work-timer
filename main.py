@@ -142,7 +142,87 @@ def _ask_start_time(
     return result[0]
 
 
-class WorkTimer:
+def _ask_off_time(
+    parent: tk.Tk | None,
+    preset: tuple[int, int] | None,
+    *,
+    near: tuple[int, int] | None = None,
+) -> tuple[int, int] | None:
+    result: list[tuple[int, int] | None] = [None]
+    dlg = tk.Toplevel(parent)
+    dlg.title("下班时间")
+    dlg.resizable(False, False)
+    dlg.attributes("-topmost", True)
+    dlg.configure(bg="#1b1e26")
+    if near:
+        dlg.geometry(f"340x200+{int(near[0])}+{int(near[1])}")
+    else:
+        dlg.geometry("340x200")
+    try:
+        dlg.lift()
+        dlg.focus_force()
+    except Exception:
+        pass
+    dlg.grab_set()
+
+    ph, pm = preset if preset else (18, 0)
+    var = tk.StringVar(value="" if preset is None else f"{ph}:{pm:02d}")
+    preview = tk.StringVar()
+
+    def refresh_preview(*_a) -> None:
+        parsed = flex_time.parse_clock(var.get())
+        if parsed is None:
+            preview.set("请输入今天的下班时间，例如 18:00")
+            return
+        preview.set(f"倒计时到 {flex_time.format_hm(*parsed)}")
+
+    var.trace_add("write", refresh_preview)
+    refresh_preview()
+
+    tk.Label(
+        dlg,
+        text="今天下班几点？",
+        fg="#f4f6fb",
+        bg="#1b1e26",
+        font=("Microsoft YaHei UI", 13, "bold"),
+    ).pack(pady=(18, 4))
+    tk.Label(
+        dlg,
+        text="直接按这个点倒计时，不走弹性 9.5 小时",
+        fg="#9aa3b5",
+        bg="#1b1e26",
+        font=("Microsoft YaHei UI", 9),
+    ).pack()
+
+    entry = ttk.Entry(dlg, textvariable=var, font=("Microsoft YaHei UI", 16), justify="center", width=12)
+    entry.pack(pady=14)
+    entry.select_range(0, tk.END)
+    entry.focus_set()
+    tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg="#1b1e26", font=("Microsoft YaHei UI", 10)).pack()
+
+    def ok() -> None:
+        parsed = flex_time.parse_clock(var.get())
+        if parsed is None:
+            messagebox.showwarning("下班时间", "请输入 0:00 到 23:59，例如 18:00 或 18.30", parent=dlg)
+            return
+        result[0] = parsed
+        dlg.destroy()
+
+    def cancel() -> None:
+        dlg.destroy()
+
+    bar = tk.Frame(dlg, bg="#1b1e26")
+    bar.pack(pady=16)
+    tk.Button(bar, text="开始计时", command=ok, width=10, bg="#3d7eff", fg="white", relief="flat").pack(
+        side="left", padx=8
+    )
+    tk.Button(bar, text="取消", command=cancel, width=8, bg="#3a3f4b", fg="white", relief="flat").pack(
+        side="left", padx=8
+    )
+    dlg.bind("<Return>", lambda _e: ok())
+    dlg.bind("<Escape>", lambda _e: cancel())
+    dlg.wait_window()
+    return result[0]
     def __init__(self) -> None:
         try:
             # Per-monitor v2，避免窗口画在 A、点击命中在 B
@@ -204,6 +284,27 @@ class WorkTimer:
             return None
         return int(self.cfg["start_h"]), int(self.cfg["start_m"])
 
+    def _time_mode(self) -> str:
+        mode = str(self.cfg.get("time_mode") or "flex")
+        return mode if mode in ("flex", "direct") else "flex"
+
+    def _has_target(self) -> bool:
+        if str(self.cfg.get("start_date") or "") != self._today():
+            return False
+        if self._time_mode() == "direct":
+            return isinstance(self.cfg.get("off_h"), int) and isinstance(self.cfg.get("off_m"), int)
+        return self._has_start()
+
+    def _off_hm(self) -> tuple[int, int] | None:
+        if not self._has_target():
+            return None
+        if self._time_mode() == "direct":
+            return int(self.cfg["off_h"]), int(self.cfg["off_m"])
+        start = self._start_hm()
+        if start is None:
+            return None
+        return flex_time.offwork_hm(*start)
+
     def _display_mode(self) -> str:
         mode = str(self.cfg.get("display_mode") or "hms")
         return mode if mode in flex_time.DISPLAY_MODES else "hms"
@@ -245,7 +346,7 @@ class WorkTimer:
     def _on_click(self) -> None:
         if self._disguised:
             return
-        if self._has_start():
+        if self._has_target():
             self._cycle_display()
             return
         self._need_dialog = True
@@ -279,19 +380,40 @@ class WorkTimer:
             self._tk = root
         return self._tk
 
+    def _dialog_near(self) -> tuple[int, int]:
+        return (self.win.x, self.win.y + WIN_H + 8)
+
     def _open_time_dialog(self) -> None:
         preset = self._start_hm()
-        picked = _ask_start_time(
-            self._tk_root(),
-            preset,
-            near=(self.win.x, self.win.y + WIN_H + 8),
-        )
+        picked = _ask_start_time(self._tk_root(), preset, near=self._dialog_near())
         if picked is None:
             return
+        self.cfg["time_mode"] = "flex"
         self.cfg["start_h"], self.cfg["start_m"] = picked
         self.cfg["start_date"] = self._today()
         store.save_config(self.cfg)
         self._last_key = ""
+
+    def _open_off_dialog(self) -> None:
+        if self._time_mode() == "direct" and self._has_target():
+            preset = self._off_hm()
+        else:
+            oh, om = self.cfg.get("off_h"), self.cfg.get("off_m")
+            preset = (int(oh), int(om)) if isinstance(oh, int) and isinstance(om, int) else (18, 0)
+        picked = _ask_off_time(self._tk_root(), preset, near=self._dialog_near())
+        if picked is None:
+            return
+        self.cfg["time_mode"] = "direct"
+        self.cfg["off_h"], self.cfg["off_m"] = picked
+        self.cfg["start_date"] = self._today()
+        store.save_config(self.cfg)
+        self._last_key = ""
+
+    def _open_idle_dialog(self) -> None:
+        if self._time_mode() == "direct":
+            self._open_off_dialog()
+            return
+        self._open_time_dialog()
 
     def _handle_menu(self, sx: int, sy: int) -> None:
         op = self.win.popup_menu(sx, sy, self._display_mode(), self._theme().id)
@@ -301,6 +423,8 @@ class WorkTimer:
             self._check_update()
         elif op == "set_time":
             self._open_time_dialog()
+        elif op == "set_off":
+            self._open_off_dialog()
         elif op == "disguise":
             self._toggle_disguise()
         elif op == "fmt_hms":
@@ -359,18 +483,18 @@ class WorkTimer:
 
     def _paint(self) -> None:
         try:
-            start = self._start_hm()
+            target = self._off_hm()
             now = datetime.now()
             mode = self._display_mode()
             theme = self._theme()
-            if start is None:
+            if target is None:
                 key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}"
                 title = "弹性下班"
                 big = "点击开始"
                 sub = ""
                 accent = theme.idle
             else:
-                oh, om = flex_time.offwork_hm(*start)
+                oh, om = target
                 td = flex_time.remaining_to(now, oh, om)
                 total, done = flex_time.remaining_parts(td)
                 big = flex_time.format_remaining(total, mode)
@@ -425,7 +549,7 @@ class WorkTimer:
                     self._handle_menu(sx, sy)
                 if self._need_dialog:
                     self._need_dialog = False
-                    self._open_time_dialog()
+                    self._open_idle_dialog()
                 if themes.consume_updated():
                     self._last_key = ""
                 dragging = self.win.dragging

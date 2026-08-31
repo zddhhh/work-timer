@@ -108,8 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 组件区域内点击不再穿到后面的窗口\n"
-                    "- 拖拽改回整窗留在屏幕内，尺寸不变"
+                    "- 可直接填下班时间倒计时，也仍可用到岗时间按弹性算"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

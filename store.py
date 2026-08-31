@@ -28,6 +28,9 @@ def load_config() -> dict:
     defaults = {
         "start_h": None,
         "start_m": None,
+        "off_h": None,
+        "off_m": None,
+        "time_mode": "flex",
         "start_date": "",
         "display_mode": "hms",
         "theme": "ghost",
