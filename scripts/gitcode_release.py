@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 可直接填下班时间倒计时，也仍可用到岗时间按弹性算"
+                    "- 修复启动报错 WorkTimer is not defined"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

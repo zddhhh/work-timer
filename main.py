@@ -223,6 +223,9 @@ def _ask_off_time(
     dlg.bind("<Escape>", lambda _e: cancel())
     dlg.wait_window()
     return result[0]
+
+
+class WorkTimer:
     def __init__(self) -> None:
         try:
             # Per-monitor v2，避免窗口画在 A、点击命中在 B
