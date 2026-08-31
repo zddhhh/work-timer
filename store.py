@@ -26,6 +26,8 @@ def load_config() -> dict:
     defaults = {
         "start_h": None,
         "start_m": None,
+        "start_date": "",
+        "display_mode": "hms",
         "win_x": None,
         "win_y": None,
         "gitcode_repo": "",

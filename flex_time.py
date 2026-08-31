@@ -71,3 +71,35 @@ def split_min_sec(td: timedelta) -> tuple[int, int, bool]:
     done = total <= 0
     total = abs(total)
     return total // 60, total % 60, done
+
+
+DISPLAY_MODES = ("hms", "min", "sec")
+DISPLAY_LABELS = {
+    "hms": "时分秒",
+    "min": "分钟",
+    "sec": "秒",
+}
+
+
+def next_display_mode(mode: str) -> str:
+    modes = DISPLAY_MODES
+    if mode not in modes:
+        return modes[0]
+    return modes[(modes.index(mode) + 1) % len(modes)]
+
+
+def remaining_parts(td: timedelta) -> tuple[int, bool]:
+    """返回 (总秒数绝对值, 是否已到点)。"""
+    total = int(td.total_seconds())
+    return abs(total), total <= 0
+
+
+def format_remaining(total_seconds: int, mode: str) -> str:
+    total = max(0, int(total_seconds))
+    if mode == "sec":
+        return f"{total}秒"
+    if mode == "min":
+        return f"{total // 60}分钟"
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}时{m}分{s:02d}秒"

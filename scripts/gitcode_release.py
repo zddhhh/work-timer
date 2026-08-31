@@ -1,4 +1,4 @@
-"""创建 GitCode Release 并上传 WorkTimer.exe。
+r"""创建 GitCode Release 并上传 WorkTimer.exe。
 
 用法:
   $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
@@ -109,10 +109,10 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 透明桌面倒计时\n"
-                    "- 录入 8:30–9:30 到岗时间，按 9.5 小时弹性算出 18:00–19:00 下班\n"
-                    "- 显示距离下班还有多少分多少秒\n"
-                    "- GitCode OTA 热更新"
+                    "- 拖拽跟手，不再卡顿\n"
+                    "- 每天重置到岗时间，不再沿用昨天\n"
+                    "- 倒计时可切换：时分秒 / 分钟 / 秒\n"
+                    "- 修复透明窗点不动（高 DPI 点击穿透）"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -44,9 +44,17 @@ TPM_RIGHTBUTTON = 0x0002
 TPM_RETURNCMD = 0x0100
 TPM_NONOTIFY = 0x0080
 
+MF_CHECKED = 0x00000008
+MF_POPUP = 0x00000010
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+
 ID_QUIT = 1
 ID_CHECK_UPDATE = 2
 ID_SET_TIME = 3
+ID_FMT_HMS = 10
+ID_FMT_MIN = 11
+ID_FMT_SEC = 12
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
 
@@ -174,7 +182,8 @@ class LayeredPetWindow:
         wc.lpszClassName = self._class_name
         user32.RegisterClassW(ctypes.byref(wc))
 
-        ex = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+        # 不要 WS_EX_NOACTIVATE：高 DPI 下点击容易被系统丢掉
+        ex = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW
         self.hwnd = user32.CreateWindowExW(
             ex, self._class_name, title, WS_POPUP, 0, 0, width, height, None, None, self._hinst, None
         )
@@ -228,7 +237,13 @@ class LayeredPetWindow:
     def move(self, x: int, y: int) -> None:
         self.x, self.y = int(x), int(y)
         user32.SetWindowPos(
-            self.hwnd, HWND_TOPMOST, self.x, self.y, self.width, self.height, SWP_SHOWWINDOW | SWP_NOACTIVATE
+            self.hwnd,
+            HWND_TOPMOST,
+            self.x,
+            self.y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         )
 
     def keep_topmost(self) -> None:
@@ -271,11 +286,7 @@ class LayeredPetWindow:
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == WM_NCHITTEST:
-            pt = POINT()
-            user32.GetCursorPos(ctypes.byref(pt))
-            lx, ly = pt.x - self.x, pt.y - self.y
-            if self._alpha_at(lx, ly) < 16:
-                return HTTRANSPARENT
+            # 整块卡片都可点。按像素穿透在高 DPI 下会整窗点穿。
             return HTCLIENT
         if msg == WM_LBUTTONDOWN:
             if not self.drag_enabled:
@@ -317,11 +328,23 @@ class LayeredPetWindow:
             return 0
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
-    def popup_menu(self, x: int, y: int) -> str:
+    def popup_menu(self, x: int, y: int, display_mode: str = "hms") -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
             return ""
+        hfmt = user32.CreatePopupMenu()
+        user32.AppendMenuW(
+            hfmt, MF_STRING | (MF_CHECKED if display_mode == "hms" else 0), ID_FMT_HMS, "时分秒"
+        )
+        user32.AppendMenuW(
+            hfmt, MF_STRING | (MF_CHECKED if display_mode == "min" else 0), ID_FMT_MIN, "分钟"
+        )
+        user32.AppendMenuW(
+            hfmt, MF_STRING | (MF_CHECKED if display_mode == "sec" else 0), ID_FMT_SEC, "秒"
+        )
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_TIME, "设置上班时间")
+        user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
+        user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_QUIT, "退出")
@@ -347,7 +370,17 @@ class LayeredPetWindow:
             return "update"
         if cmd == ID_SET_TIME:
             return "set_time"
+        if cmd == ID_FMT_HMS:
+            return "fmt_hms"
+        if cmd == ID_FMT_MIN:
+            return "fmt_min"
+        if cmd == ID_FMT_SEC:
+            return "fmt_sec"
         return ""
+
+    @property
+    def dragging(self) -> bool:
+        return self._dragging
 
     def pump(self) -> None:
         msg = MSG()

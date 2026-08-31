@@ -17,9 +17,9 @@ import store
 import updater
 from version import APP_VERSION
 
-WIN_W = 360
+WIN_W = 380
 WIN_H = 132
-FPS = 12
+FPS = 60
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -50,18 +50,31 @@ def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
     return bytes(bgra), bytes(mask)
 
 
-def _ask_start_time(parent: tk.Tk | None, preset: tuple[int, int] | None) -> tuple[int, int] | None:
+def _ask_start_time(
+    parent: tk.Tk | None,
+    preset: tuple[int, int] | None,
+    *,
+    near: tuple[int, int] | None = None,
+) -> tuple[int, int] | None:
     result: list[tuple[int, int] | None] = [None]
     dlg = tk.Toplevel(parent)
     dlg.title("上班时间")
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
     dlg.configure(bg="#1b1e26")
-    dlg.geometry("340x220")
+    if near:
+        dlg.geometry(f"340x220+{int(near[0])}+{int(near[1])}")
+    else:
+        dlg.geometry("340x220")
+    try:
+        dlg.lift()
+        dlg.focus_force()
+    except Exception:
+        pass
     dlg.grab_set()
 
-    ph, pm = preset or (9, 0)
-    var = tk.StringVar(value=f"{ph}:{pm:02d}")
+    ph, pm = preset if preset else (9, 0)
+    var = tk.StringVar(value="" if preset is None else f"{ph}:{pm:02d}")
     preview = tk.StringVar()
 
     def refresh_preview(*_a) -> None:
@@ -125,9 +138,13 @@ def _ask_start_time(parent: tk.Tk | None, preset: tuple[int, int] | None) -> tup
 class WorkTimer:
     def __init__(self) -> None:
         try:
-            ctypes.windll.user32.SetProcessDPIAware()
+            # Per-monitor v2，避免窗口画在 A、点击命中在 B
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
         except Exception:
-            pass
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
         updater.cleanup_update_artifacts()
         self.cfg = store.load_config()
         self.running = True
@@ -151,8 +168,15 @@ class WorkTimer:
         self._font_big = _font(28)
         self._font_sub = _font(12)
         self._last_key = ""
+        mode = str(self.cfg.get("display_mode") or "hms")
+        self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
+
+    def _today(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d")
 
     def _has_start(self) -> bool:
+        if str(self.cfg.get("start_date") or "") != self._today():
+            return False
         h, m = self.cfg.get("start_h"), self.cfg.get("start_m")
         return isinstance(h, int) and isinstance(m, int)
 
@@ -161,7 +185,24 @@ class WorkTimer:
             return None
         return int(self.cfg["start_h"]), int(self.cfg["start_m"])
 
+    def _display_mode(self) -> str:
+        mode = str(self.cfg.get("display_mode") or "hms")
+        return mode if mode in flex_time.DISPLAY_MODES else "hms"
+
+    def _set_display_mode(self, mode: str) -> None:
+        if mode not in flex_time.DISPLAY_MODES:
+            return
+        self.cfg["display_mode"] = mode
+        store.save_config(self.cfg)
+        self._last_key = ""
+
+    def _cycle_display(self) -> None:
+        self._set_display_mode(flex_time.next_display_mode(self._display_mode()))
+
     def _on_click(self) -> None:
+        if self._has_start():
+            self._cycle_display()
+            return
         self._need_dialog = True
 
     def _request_menu(self, sx: int, sy: int) -> None:
@@ -176,21 +217,32 @@ class WorkTimer:
 
     def _open_time_dialog(self) -> None:
         preset = self._start_hm()
-        picked = _ask_start_time(self._tk_root(), preset)
+        picked = _ask_start_time(
+            self._tk_root(),
+            preset,
+            near=(self.win.x, self.win.y + WIN_H + 8),
+        )
         if picked is None:
             return
         self.cfg["start_h"], self.cfg["start_m"] = picked
+        self.cfg["start_date"] = self._today()
         store.save_config(self.cfg)
         self._last_key = ""
 
     def _handle_menu(self, sx: int, sy: int) -> None:
-        op = self.win.popup_menu(sx, sy)
+        op = self.win.popup_menu(sx, sy, self._display_mode())
         if op == "quit":
             self.running = False
         elif op == "update":
             self._check_update()
         elif op == "set_time":
             self._open_time_dialog()
+        elif op == "fmt_hms":
+            self._set_display_mode("hms")
+        elif op == "fmt_min":
+            self._set_display_mode("min")
+        elif op == "fmt_sec":
+            self._set_display_mode("sec")
 
     def _check_update(self) -> None:
         self.cfg = store.load_config()
@@ -238,27 +290,30 @@ class WorkTimer:
     def _paint(self) -> None:
         start = self._start_hm()
         now = datetime.now()
+        mode = self._display_mode()
         if start is None:
-            key = "idle"
+            key = f"idle-{mode}"
             title = "弹性下班计时器"
             big = "点击开始"
-            sub = "录入今天 8:30–9:30 的到岗时间"
+            sub = "每天重新录入今天到岗时间"
             accent = (90, 168, 255, 255)
         else:
             oh, om = flex_time.offwork_hm(*start)
             td = flex_time.remaining_to(now, oh, om)
-            mins, secs, done = flex_time.split_min_sec(td)
+            total, done = flex_time.remaining_parts(td)
+            big = flex_time.format_remaining(total, mode)
+            sub = (
+                f"上班 {flex_time.format_hm(*start)}  →  下班 {flex_time.format_hm(oh, om)}"
+                f"  ·  {flex_time.DISPLAY_LABELS[mode]}"
+            )
             if done:
-                key = f"done-{mins}-{secs}"
+                key = f"done-{mode}-{total}"
                 title = "已经到点"
-                big = f"{mins}分 {secs:02d}秒"
-                sub = f"上班 {flex_time.format_hm(*start)}  →  下班 {flex_time.format_hm(oh, om)}"
                 accent = (88, 214, 141, 255)
             else:
-                key = f"run-{mins}-{secs}"
+                key = f"run-{mode}-{big}"
                 title = "距离您下班还有"
-                big = f"{mins}分 {secs:02d}秒"
-                sub = f"上班 {flex_time.format_hm(*start)}  →  下班 {flex_time.format_hm(oh, om)}"
+                mins = total // 60
                 accent = (255, 214, 102, 255) if mins < 30 else (244, 246, 251, 255)
 
         if key == self._last_key:
@@ -267,8 +322,8 @@ class WorkTimer:
 
         img = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
-        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, fill=(18, 22, 32, 168))
-        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, outline=(255, 255, 255, 40), width=1)
+        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, fill=(18, 22, 32, 220))
+        d.rounded_rectangle((4, 4, WIN_W - 5, WIN_H - 5), radius=22, outline=(255, 255, 255, 70), width=1)
         d.text((24, 16), title, font=self._font_title, fill=(186, 196, 214, 230))
         d.text((24, 44), big, font=self._font_big, fill=accent)
         d.text((24, 92), sub, font=self._font_sub, fill=(154, 163, 181, 220))
@@ -285,6 +340,7 @@ class WorkTimer:
     def run(self) -> None:
         self._paint()
         last_save = time.monotonic()
+        was_dragging = False
         while self.running and not self.win.closed:
             self.win.pump()
             if self._menu_pos is not None:
@@ -294,6 +350,15 @@ class WorkTimer:
             if self._need_dialog:
                 self._need_dialog = False
                 self._open_time_dialog()
+            dragging = self.win.dragging
+            if dragging:
+                was_dragging = True
+                time.sleep(0.001)
+                continue
+            if was_dragging:
+                self._persist_pos()
+                last_save = time.monotonic()
+                was_dragging = False
             self._paint()
             now = time.monotonic()
             if now - last_save > 1.5:
