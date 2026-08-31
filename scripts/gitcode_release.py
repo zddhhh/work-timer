@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修启动后过一会闪退（在线外观只拉 JSON API）\n"
-                    "- 界面只显示距离下班多久，去掉几点到几点"
+                    "- 拖到任务栏不再消失：夹在工作区内，禁止最小化\n"
+                    "- 拖完强制重绘，避免分层窗位置和画面脱节"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

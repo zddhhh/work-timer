@@ -37,7 +37,14 @@ WM_RBUTTONUP = 0x0205
 WM_MOUSEMOVE = 0x0200
 WM_NCHITTEST = 0x0084
 WM_SYSCOMMAND = 0x0112
+WM_CAPTURECHANGED = 0x0215
 SC_MOVE_CAPTION = 0xF012
+SC_MINIMIZE = 0xF020
+SC_MAXIMIZE = 0xF030
+SC_SIZE = 0xF000
+SC_MASK = 0xFFF0
+SW_RESTORE = 9
+MONITOR_DEFAULTTONEAREST = 2
 HTCLIENT = 1
 HTTRANSPARENT = -1
 PM_REMOVE = 0x0001
@@ -130,6 +137,15 @@ class RECT(ctypes.Structure):
     ]
 
 
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", RECT),
+        ("rcWork", RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
 class MSG(ctypes.Structure):
     _fields_ = [
         ("hwnd", wintypes.HWND),
@@ -156,6 +172,14 @@ user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
 user32.GetWindowRect.restype = wintypes.BOOL
 user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
 user32.SendMessageW.restype = LRESULT
+user32.MonitorFromPoint.argtypes = [POINT, wintypes.DWORD]
+user32.MonitorFromPoint.restype = wintypes.HANDLE
+user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+user32.GetMonitorInfoW.restype = wintypes.BOOL
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.IsIconic.restype = wintypes.BOOL
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
 
 
 class LayeredPetWindow:
@@ -290,20 +314,36 @@ class LayeredPetWindow:
         if user32.GetWindowRect(self.hwnd, ctypes.byref(r)):
             self.x, self.y = int(r.left), int(r.top)
 
-    def move(self, x: int, y: int) -> None:
-        self.x, self.y = int(x), int(y)
+    def _apply_pos(self, x: int, y: int) -> None:
+        self.x, self.y = clamp_pos(int(x), int(y), self.width, self.height)
         if self._has_pixels:
             self._blit(move=True)
             return
-        user32.SetWindowPos(
-            self.hwnd,
-            None,
-            self.x,
-            self.y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        )
+        if self.hwnd:
+            user32.SetWindowPos(
+                self.hwnd,
+                None,
+                self.x,
+                self.y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+
+    def move(self, x: int, y: int) -> None:
+        self._apply_pos(x, y)
+
+    def ensure_visible(self) -> None:
+        """拖到任务栏/最小化后，分层窗没有任务栏按钮，看起来像崩了。拉回工作区。"""
+        if not self.hwnd or self._closed:
+            return
+        if user32.IsIconic(self.hwnd):
+            user32.ShowWindow(self.hwnd, SW_RESTORE)
+        if not user32.IsWindowVisible(self.hwnd):
+            user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
+        self._sync_rect()
+        self._apply_pos(self.x, self.y)
+        self.keep_topmost()
 
     def keep_topmost(self) -> None:
         user32.SetWindowPos(
@@ -333,6 +373,10 @@ class LayeredPetWindow:
         if msg == WM_NCHITTEST:
             # 整块卡片都可点。按像素穿透在高 DPI 下会整窗点穿。
             return HTCLIENT
+        if msg == WM_SYSCOMMAND:
+            cmd = int(wparam) & SC_MASK
+            if cmd in (SC_MINIMIZE, SC_MAXIMIZE, SC_SIZE):
+                return 0
         if msg == WM_LBUTTONDOWN:
             if not self.drag_enabled:
                 return 0
@@ -342,28 +386,37 @@ class LayeredPetWindow:
             self._drag_moved = False
             self._press_x = pt.x
             self._press_y = pt.y
+            self._drag_dx = pt.x - self.x
+            self._drag_dy = pt.y - self.y
             user32.SetCapture(hwnd)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
-            if abs(pt.x - self._press_x) > 4 or abs(pt.y - self._press_y) > 4:
-                self._drag_moved = True
-                self._dragging = False
-                user32.ReleaseCapture()
-                # 交给系统移动循环，分层窗逐帧 SetWindowPos/ULW 都会卡
-                user32.SendMessageW(hwnd, WM_SYSCOMMAND, SC_MOVE_CAPTION, 0)
-                self._sync_rect()
-                if self._has_pixels:
-                    self._blit(move=True)
-                self._just_moved = True
+            if not self._drag_moved and abs(pt.x - self._press_x) <= 4 and abs(pt.y - self._press_y) <= 4:
+                return 0
+            self._drag_moved = True
+            self._apply_pos(pt.x - self._drag_dx, pt.y - self._drag_dy)
             return 0
         if msg == WM_LBUTTONUP and self._dragging:
+            moved = self._drag_moved
             self._dragging = False
             self._drag_moved = False
             user32.ReleaseCapture()
+            if moved:
+                self.ensure_visible()
+                self._just_moved = True
+                return 0
             if self._on_left_click:
                 self._on_left_click()
+            return 0
+        if msg == WM_CAPTURECHANGED and self._dragging:
+            moved = self._drag_moved
+            self._dragging = False
+            self._drag_moved = False
+            if moved:
+                self.ensure_visible()
+                self._just_moved = True
             return 0
         if msg == WM_RBUTTONUP:
             pt = POINT()
@@ -471,3 +524,25 @@ def work_area() -> RECT:
     r = RECT()
     user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0)
     return r
+
+
+def monitor_work_at(x: int, y: int) -> RECT:
+    hmon = user32.MonitorFromPoint(POINT(int(x), int(y)), MONITOR_DEFAULTTONEAREST)
+    mi = MONITORINFO()
+    mi.cbSize = ctypes.sizeof(MONITORINFO)
+    if hmon and user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+        return mi.rcWork
+    return work_area()
+
+
+def clamp_pos(x: int, y: int, w: int, h: int) -> tuple[int, int]:
+    """夹到当前显示器工作区，不让窗口钻进任务栏或拖出屏幕。"""
+    area = monitor_work_at(x + w // 2, y + h // 2)
+    min_x, min_y = int(area.left), int(area.top)
+    max_x = int(area.right) - int(w)
+    max_y = int(area.bottom) - int(h)
+    if max_x < min_x:
+        max_x = min_x
+    if max_y < min_y:
+        max_y = min_y
+    return max(min_x, min(int(x), max_x)), max(min_y, min(int(y), max_y))

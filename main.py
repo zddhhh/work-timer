@@ -170,6 +170,7 @@ class WorkTimer:
         if not isinstance(x, int) or not isinstance(y, int):
             x = int(area.right - WIN_W - 24)
             y = int(area.top + 24)
+        x, y = layered_win.clamp_pos(int(x), int(y), WIN_W, WIN_H)
         self.win.move(x, y)
 
         self._font_title = _font(15)
@@ -431,6 +432,8 @@ class WorkTimer:
                     time.sleep(0.001)
                     continue
                 if was_dragging or moved:
+                    self.win.ensure_visible()
+                    self._last_key = ""
                     self._persist_pos()
                     last_save = time.monotonic()
                     was_dragging = False
