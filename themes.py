@@ -230,21 +230,33 @@ def consume_updated() -> bool:
 def load_local_catalog() -> None:
     bundled = _load_json_file(_bundled_path())
     cached = _load_json_file(_cache_path())
-    items = list(cached or bundled or _fallback())
-    # 旧缓存缺新皮时，从内置按 id 补齐（自适应 / 极光 / 墨金等）
-    have = {t.id for t in items}
-    for t in bundled:
-        if t.id in have:
-            continue
-        if t.id == "auto":
-            idx = next((i for i, x in enumerate(items) if x.id == "ghost"), -1) + 1
-            items.insert(max(0, idx), t)
-        else:
-            items.append(t)
-        have.add(t.id)
-        if len(items) >= 16:
-            break
-    _set_catalog(items[:16], notify=False)
+    bmap = {t.id: t for t in bundled}
+    # 这些皮会随版本改配色/自适应，优先用内置覆盖旧缓存
+    prefer_bundled = {"auto", "midnight", "frost", "terminal", "aurora", "inkgold"}
+    if cached:
+        items: list[Theme] = []
+        seen: set[str] = set()
+        for t in cached:
+            if t.id in prefer_bundled and t.id in bmap:
+                items.append(bmap[t.id])
+            else:
+                items.append(t)
+            seen.add(t.id)
+        for t in bundled:
+            if t.id in seen:
+                continue
+            if t.id == "auto":
+                idx = next((i for i, x in enumerate(items) if x.id == "ghost"), -1) + 1
+                items.insert(max(0, idx), t)
+            else:
+                items.append(t)
+            seen.add(t.id)
+            if len(items) >= 16:
+                break
+        items = items[:16]
+    else:
+        items = bundled or _fallback()
+    _set_catalog(items, notify=False)
 
 
 def _fetch_urls(repo: str, token: str) -> list[str]:
@@ -342,39 +354,45 @@ def paint_card(
     r = theme.radius
 
     if kind != "ghost":
-        d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 50))
-        # 浅色墙纸托底：避免半透明底板把字「洗白」
-        if kind == "frost":
-            d.rounded_rectangle(box, radius=r, fill=(252, 253, 255, 242))
-        elif kind in ("aurora", "inkgold", "neon", "terminal", "glass"):
-            d.rounded_rectangle(box, radius=r, fill=(8, 10, 16, 240))
+        d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 40))
+        # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
+        if theme.fill[3] < 230:
+            if _luma(theme.fill) >= 160:
+                d.rounded_rectangle(box, radius=r, fill=(252, 253, 255, 235))
+            else:
+                d.rounded_rectangle(box, radius=r, fill=(10, 12, 18, 235))
         d.rounded_rectangle(box, radius=r, fill=theme.fill)
         if theme.outline[3] > 8:
             d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
+        light_card = _luma(theme.fill) >= 160
         if kind == "glass":
-            d.rounded_rectangle((10, 9, w - 11, 38), radius=max(8, r - 6), fill=(255, 255, 255, 26))
+            shine = (255, 255, 255, 70) if light_card else (255, 255, 255, 26)
+            d.rounded_rectangle((10, 9, w - 11, 38), radius=max(8, r - 6), fill=shine)
         elif kind == "frost":
-            d.rounded_rectangle((10, 9, w - 11, 36), radius=max(8, r - 6), fill=(255, 255, 255, 110))
+            shine = (255, 255, 255, 100) if light_card else (255, 255, 255, 28)
+            d.rounded_rectangle((10, 9, w - 11, 36), radius=max(8, r - 6), fill=shine)
         elif kind == "neon":
             d.rounded_rectangle((9, 16, 13, h - 16), radius=2, fill=(0, 230, 210, 190))
         elif kind == "terminal":
-            d.rectangle((8, 8, w - 9, 10), fill=(70, 180, 100, 150))
-            for y in range(16, h - 10, 5):
-                d.line((10, y, w - 11, y), fill=(0, 40, 16, 26))
+            if light_card:
+                d.rectangle((8, 8, w - 9, 10), fill=(60, 140, 80, 120))
+                for y in range(18, h - 12, 6):
+                    d.line((12, y, w - 13, y), fill=(40, 100, 60, 18))
+            else:
+                d.rectangle((8, 8, w - 9, 10), fill=(70, 180, 100, 150))
+                for y in range(16, h - 10, 5):
+                    d.line((10, y, w - 11, y), fill=(0, 40, 16, 22))
         elif kind == "aurora":
-            d.rounded_rectangle((10, 8, w - 11, 30), radius=max(8, r - 6), fill=(160, 100, 255, 42))
-            for i in range(7):
-                t = i / 6
-                rr = int(120 + 40 * t)
-                gg = int(80 + 140 * t)
-                bb = int(255 - 40 * t)
-                aa = max(36, 120 - i * 12)
-                d.rectangle((9 + i * 2, 14, 12 + i * 2, h - 14), fill=(rr, gg, bb, aa))
-            d.ellipse((w - 54, 8, w - 10, 48), fill=(80, 220, 210, 32))
+            # 克制版：顶上一道柔光 + 左侧细彩条，去掉大色块
+            band = (170, 140, 255, 40) if not light_card else (140, 120, 220, 36)
+            d.rounded_rectangle((10, 8, w - 11, 28), radius=max(8, r - 6), fill=band)
+            d.rectangle((10, 16, 13, h - 16), fill=(120, 180, 255, 140) if not light_card else (90, 80, 170, 120))
         elif kind == "inkgold":
-            d.rounded_rectangle((10, 9, w - 11, 34), radius=max(8, r - 6), fill=(255, 214, 140, 22))
-            d.line((22, 36, min(96, w - 36), 36), fill=(212, 175, 90, 190), width=1)
-            d.rectangle((10, h - 14, w - 11, h - 11), fill=(212, 175, 90, 90))
+            line = (180, 130, 50, 170) if light_card else (212, 175, 90, 180)
+            top = (255, 220, 150, 28) if light_card else (255, 214, 140, 20)
+            d.rounded_rectangle((10, 9, w - 11, 34), radius=max(8, r - 6), fill=top)
+            d.line((22, 36, min(96, w - 36), 36), fill=line, width=1)
+            d.rectangle((10, h - 13, w - 11, h - 11), fill=line)
 
     ghost = kind == "ghost"
     big_y = 42 if sub else 40
