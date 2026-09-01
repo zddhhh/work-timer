@@ -62,6 +62,7 @@ TPM_NONOTIFY = 0x0080
 MF_CHECKED = 0x00000008
 MF_POPUP = 0x00000010
 SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 
 ID_QUIT = 1
@@ -73,6 +74,9 @@ ID_SET_OFF = 6
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
+ID_SIZE_S = 13
+ID_SIZE_M = 14
+ID_SIZE_L = 15
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -285,7 +289,17 @@ class LayeredPetWindow:
         self._old = None
         self._alloc_bitmap()
 
+    def _free_bitmap(self) -> None:
+        if self._old and self._hdc_mem:
+            gdi32.SelectObject(self._hdc_mem, self._old)
+            self._old = None
+        if self._hbmp:
+            gdi32.DeleteObject(self._hbmp)
+            self._hbmp = None
+        self._bits = None
+
     def _alloc_bitmap(self) -> None:
+        self._free_bitmap()
         bmi = BITMAPINFO()
         bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
         bmi.bmiHeader.biWidth = self.width
@@ -302,6 +316,28 @@ class LayeredPetWindow:
         self._bits = bits_ptr
         self._old = gdi32.SelectObject(self._hdc_mem, self._hbmp)
 
+    def resize(self, width: int, height: int) -> None:
+        width, height = max(80, int(width)), max(48, int(height))
+        if width == self.width and height == self.height:
+            return
+        self.width = width
+        self.height = height
+        self._alloc_bitmap()
+        self._has_pixels = False
+        self._hit_mask = None
+        if self.hwnd:
+            user32.SetWindowPos(
+                self.hwnd,
+                None,
+                0,
+                0,
+                width,
+                height,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        self.x, self.y = clamp_pos(self.x, self.y, width, height)
+        self._apply_pos(self.x, self.y)
+
     def set_right_click_handler(self, fn: Callable[[int, int], None]) -> None:
         self._on_right_click = fn
 
@@ -315,14 +351,13 @@ class LayeredPetWindow:
         if self._winevent_hook:
             user32.UnhookWinEvent(self._winevent_hook)
             self._winevent_hook = 0
-        if self._old:
-            gdi32.SelectObject(self._hdc_mem, self._old)
-        if self._hbmp:
-            gdi32.DeleteObject(self._hbmp)
+        self._free_bitmap()
         if self._hdc_mem:
             gdi32.DeleteDC(self._hdc_mem)
+            self._hdc_mem = 0
         if self._hdc_screen:
             user32.ReleaseDC(None, self._hdc_screen)
+            self._hdc_screen = 0
         if self.hwnd:
             user32.DestroyWindow(self.hwnd)
             self.hwnd = 0
@@ -493,6 +528,7 @@ class LayeredPetWindow:
         theme_id: str = "ghost",
         *,
         esc_disguise: bool = False,
+        size_id: str = "s",
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -507,6 +543,16 @@ class LayeredPetWindow:
         user32.AppendMenuW(
             hfmt, MF_STRING | (MF_CHECKED if display_mode == "sec" else 0), ID_FMT_SEC, "秒"
         )
+        hsize = user32.CreatePopupMenu()
+        user32.AppendMenuW(
+            hsize, MF_STRING | (MF_CHECKED if size_id == "s" else 0), ID_SIZE_S, "小"
+        )
+        user32.AppendMenuW(
+            hsize, MF_STRING | (MF_CHECKED if size_id == "m" else 0), ID_SIZE_M, "中"
+        )
+        user32.AppendMenuW(
+            hsize, MF_STRING | (MF_CHECKED if size_id == "l" else 0), ID_SIZE_L, "大"
+        )
         catalog = themes.list_themes()
         htheme = user32.CreatePopupMenu()
         for i, th in enumerate(catalog):
@@ -517,6 +563,7 @@ class LayeredPetWindow:
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_TIME, "设置上班时间")
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
+        user32.AppendMenuW(hmenu, MF_POPUP, hsize, "窗口大小")
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(
             hmenu,
@@ -560,6 +607,12 @@ class LayeredPetWindow:
             return "fmt_min"
         if cmd == ID_FMT_SEC:
             return "fmt_sec"
+        if cmd == ID_SIZE_S:
+            return "size:s"
+        if cmd == ID_SIZE_M:
+            return "size:m"
+        if cmd == ID_SIZE_L:
+            return "size:l"
         if cmd == ID_REFRESH_THEMES:
             return "refresh_themes"
         if ID_THEME_BASE <= cmd < ID_THEME_BASE + len(catalog):

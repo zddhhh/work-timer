@@ -108,8 +108,9 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修复切墙纸/切桌面不变色，只有拖一下才变\n"
-                    "- 约 0.1 秒看一眼屏幕，不再只靠系统通知"
+                    "- 窗口大小：小 / 中 / 大\n"
+                    "- 右侧沙漏随剩余时间变化\n"
+                    "- 极光皮改用生图贴图"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

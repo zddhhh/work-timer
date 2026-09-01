@@ -9,8 +9,9 @@ import urllib.request
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from PIL import ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
+import ornaments
 import store
 
 DEFAULT_THEME_ID = "ghost"
@@ -369,7 +370,7 @@ def _halo_text(d: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, font, fil
 
 
 def paint_card(
-    d: ImageDraw.ImageDraw,
+    img: Image.Image,
     w: int,
     h: int,
     theme: Theme,
@@ -380,23 +381,51 @@ def paint_card(
     font_title: ImageFont.ImageFont,
     font_big: ImageFont.ImageFont,
     font_sub: ImageFont.ImageFont,
+    *,
+    text_right: int | None = None,
 ) -> None:
+    d = ImageDraw.Draw(img)
     box = (6, 6, w - 7, h - 7)
     kind = theme.kind
     r = theme.radius
+    right_limit = text_right if text_right is not None else w - 16
+    pad_x = max(14, min(22, w // 12))
+    title_y = max(8, h // 10)
+    big_y = int(h * (0.42 if sub else 0.40))
 
     if kind != "ghost":
         d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 40))
-        # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
-        if theme.fill[3] < 230:
-            if _luma(theme.fill) >= 160:
-                d.rounded_rectangle(box, radius=r, fill=(252, 253, 255, 235))
-            else:
-                d.rounded_rectangle(box, radius=r, fill=(10, 12, 18, 235))
-        d.rounded_rectangle(box, radius=r, fill=theme.fill)
-        if theme.outline[3] > 8:
-            d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
         light_card = _luma(theme.fill) >= 160
+        if kind == "aurora":
+            # 底色薄一点，把生图极光露出来
+            base = (248, 246, 255, 200) if light_card else (6, 8, 16, 170)
+            d.rounded_rectangle(box, radius=r, fill=base)
+            tint = (
+                theme.fill[0],
+                theme.fill[1],
+                theme.fill[2],
+                min(90, theme.fill[3]),
+            )
+            d.rounded_rectangle(box, radius=r, fill=tint)
+            if theme.outline[3] > 8:
+                d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
+            ornaments.paste_aurora(img, box, light=light_card)
+            veil = (252, 250, 255, 70) if light_card else (6, 8, 16, 85)
+            d.rounded_rectangle(
+                (pad_x - 4, 8, min(right_limit + 2, w - 12), h - 10),
+                radius=max(6, r - 8),
+                fill=veil,
+            )
+        else:
+            # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
+            if theme.fill[3] < 230:
+                if light_card:
+                    d.rounded_rectangle(box, radius=r, fill=(252, 253, 255, 235))
+                else:
+                    d.rounded_rectangle(box, radius=r, fill=(10, 12, 18, 235))
+            d.rounded_rectangle(box, radius=r, fill=theme.fill)
+            if theme.outline[3] > 8:
+                d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
         if kind == "glass":
             shine = (255, 255, 255, 70) if light_card else (255, 255, 255, 26)
             d.rounded_rectangle((10, 9, w - 11, 38), radius=max(8, r - 6), fill=shine)
@@ -414,11 +443,6 @@ def paint_card(
                 d.rectangle((8, 8, w - 9, 10), fill=(70, 180, 100, 150))
                 for y in range(16, h - 10, 5):
                     d.line((10, y, w - 11, y), fill=(0, 40, 16, 22))
-        elif kind == "aurora":
-            # 克制版：顶上一道柔光 + 左侧细彩条，去掉大色块
-            band = (170, 140, 255, 40) if not light_card else (140, 120, 220, 36)
-            d.rounded_rectangle((10, 8, w - 11, 28), radius=max(8, r - 6), fill=band)
-            d.rectangle((10, 16, 13, h - 16), fill=(120, 180, 255, 140) if not light_card else (90, 80, 170, 120))
         elif kind == "inkgold":
             line = (180, 130, 50, 170) if light_card else (212, 175, 90, 180)
             top = (255, 220, 150, 28) if light_card else (255, 214, 140, 20)
@@ -427,19 +451,18 @@ def paint_card(
             d.rectangle((10, h - 13, w - 11, h - 11), fill=line)
 
     ghost = kind == "ghost"
-    big_y = 42 if sub else 40
-    _halo_text(d, (22, 12), title, font_title, theme.title, ghost=ghost)
-    _halo_text(d, (22, big_y), big, font_big, accent, ghost=ghost)
+    _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
+    _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost)
     if sub:
-        _halo_text(d, (22, 90), sub, font_sub, theme.sub, ghost=ghost)
+        _halo_text(d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub, ghost=ghost)
     if ghost:
         try:
-            bb = d.textbbox((22, big_y), big, font=font_big)
+            bb = d.textbbox((pad_x, big_y), big, font=font_big)
             yline = min(int(bb[3]) + 5, h - 22)
-            x2 = min(max(int(bb[2]), 102), w - 28)
+            x2 = min(max(int(bb[2]), 102), right_limit)
             # 浅底用深色细线，深底用浅色细线
             line = (20, 24, 32, 55) if _luma(accent) < 140 else (255, 255, 255, 42)
-            d.line((22, yline, x2, yline), fill=line, width=1)
+            d.line((pad_x, yline, x2, yline), fill=line, width=1)
         except Exception:
             pass
 

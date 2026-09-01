@@ -34,6 +34,7 @@ def load_config() -> dict:
         "start_date": "",
         "display_mode": "hms",
         "theme": "ghost",
+        "win_size": "s",
         "esc_disguise": False,
         "win_x": None,
         "win_y": None,

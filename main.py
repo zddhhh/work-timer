@@ -18,13 +18,13 @@ import ad_disguise
 import backdrop
 import flex_time
 import layered_win
+import ornaments
 import store
 import themes
 import updater
 from version import APP_VERSION
 
-WIN_W = 248
-WIN_H = 92
+SIZE_IDS = ("s", "m", "l")
 FPS = 60
 
 
@@ -246,7 +246,15 @@ class WorkTimer:
         self._need_dialog = False
         self._tk: tk.Tk | None = None
 
-        self.win = layered_win.LayeredPetWindow(WIN_W, WIN_H, "弹性下班")
+        size_id = str(self.cfg.get("win_size") or "s")
+        if size_id not in SIZE_IDS:
+            size_id = "s"
+        self.cfg["win_size"] = size_id
+        self._size_id = size_id
+        w, h, ft, fb, fs, hg = ornaments.size_preset(size_id)
+        self._win_w, self._win_h, self._hg_w = w, h, hg
+
+        self.win = layered_win.LayeredPetWindow(w, h, "弹性下班")
         self.win.set_left_click_handler(self._on_click)
         self.win.set_right_click_handler(self._request_menu)
         self.ad = ad_disguise.AdDisguise()
@@ -258,14 +266,14 @@ class WorkTimer:
         x = self.cfg.get("win_x")
         y = self.cfg.get("win_y")
         if not isinstance(x, int) or not isinstance(y, int):
-            x = int(area.right - WIN_W - 24)
+            x = int(area.right - w - 24)
             y = int(area.top + 24)
-        x, y = layered_win.clamp_pos(int(x), int(y), WIN_W, WIN_H)
+        x, y = layered_win.clamp_pos(int(x), int(y), w, h)
         self.win.move(x, y)
 
-        self._font_title = _font(15)
-        self._font_big = _font(28)
-        self._font_sub = _font(12)
+        self._font_title = _font(ft)
+        self._font_big = _font(fb)
+        self._font_sub = _font(fs)
         self._last_key = ""
         self._surface = "dark"
         self._force_surface_sample = True
@@ -344,6 +352,21 @@ class WorkTimer:
         self._last_key = ""
         self._force_surface_sample = True
 
+    def _set_size(self, size_id: str) -> None:
+        if size_id not in SIZE_IDS:
+            return
+        w, h, ft, fb, fs, hg = ornaments.size_preset(size_id)
+        self._size_id = size_id
+        self._win_w, self._win_h, self._hg_w = w, h, hg
+        self.cfg["win_size"] = size_id
+        store.save_config(self.cfg)
+        self._font_title = _font(ft)
+        self._font_big = _font(fb)
+        self._font_sub = _font(fs)
+        self.win.resize(w, h)
+        self._last_key = ""
+        self._force_surface_sample = True
+
     def _refresh_surface(self, *, force: bool = False) -> None:
         """切屏/换纸系统通知经常到不了置顶小窗，所以平时约 0.1s 看一眼屏幕。"""
         theme = self._theme()
@@ -361,7 +384,7 @@ class WorkTimer:
         if not force and not hot and now - self._last_surface_sample < 0.10:
             return
         self._last_surface_sample = now
-        luma = backdrop.sample_luma_around(self.win.x, self.win.y, WIN_W, WIN_H)
+        luma = backdrop.sample_luma_around(self.win.x, self.win.y, self._win_w, self._win_h)
         if luma is None:
             return
         prev = self._last_luma
@@ -439,7 +462,7 @@ class WorkTimer:
         return self._tk
 
     def _dialog_near(self) -> tuple[int, int]:
-        return (self.win.x, self.win.y + WIN_H + 8)
+        return (self.win.x, self.win.y + self._win_h + 8)
 
     def _open_time_dialog(self) -> None:
         preset = self._start_hm()
@@ -475,7 +498,12 @@ class WorkTimer:
 
     def _handle_menu(self, sx: int, sy: int) -> None:
         op = self.win.popup_menu(
-            sx, sy, self._display_mode(), self._theme().id, esc_disguise=self._esc_disguise_on()
+            sx,
+            sy,
+            self._display_mode(),
+            self._theme().id,
+            esc_disguise=self._esc_disguise_on(),
+            size_id=self._size_id,
         )
         if op == "quit":
             self.running = False
@@ -495,6 +523,8 @@ class WorkTimer:
             self._set_display_mode("sec")
         elif op == "refresh_themes":
             self._refresh_themes()
+        elif op.startswith("size:"):
+            self._set_size(op.split(":", 1)[1])
         elif op.startswith("theme:"):
             self._set_theme(op.split(":", 1)[1])
 
@@ -705,6 +735,21 @@ class WorkTimer:
                 break
             time.sleep(0.03)
 
+    def _remain_ratio(self, remain_sec: int, done: bool) -> float:
+        """上仓沙子比例：1=刚上班满仓，0=到点清空。"""
+        if done:
+            return 0.0
+        span = max(60, int(flex_time.WORK_MINUTES) * 60)
+        start = self._start_hm()
+        off = self._off_hm()
+        if start is not None and off is not None:
+            sm = start[0] * 60 + start[1]
+            om = off[0] * 60 + off[1]
+            if om <= sm:
+                om += 24 * 60
+            span = max(60, (om - sm) * 60)
+        return max(0.0, min(1.0, float(remain_sec) / float(span)))
+
     def _paint(self) -> None:
         try:
             target = self._off_hm()
@@ -713,36 +758,71 @@ class WorkTimer:
             base = self._theme()
             surface = self._surface if base.adaptive else "dark"
             theme = themes.resolve_for_surface(base, surface)
+            w, h, hg = self._win_w, self._win_h, self._hg_w
+            phase = time.monotonic()
+            remain_ratio = 1.0
+            running = False
+            done = False
             if target is None:
-                key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}-{surface}"
                 title = "弹性下班"
                 big = "点击开始"
                 sub = ""
                 accent = theme.idle
+                key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{self._size_id}"
             else:
                 oh, om = target
                 td = flex_time.remaining_to(now, oh, om)
                 total, done = flex_time.remaining_parts(td)
                 big = flex_time.format_remaining(total, mode)
                 sub = ""
+                remain_ratio = self._remain_ratio(0 if done else total, done)
                 if done:
-                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}-{surface}"
                     title = "已经到点"
                     accent = theme.done
+                    key = f"done-{mode}-{theme.id}-{theme.fill}-{surface}-{self._size_id}"
                 else:
-                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}"
                     title = "距离您下班还有"
                     mins = total // 60
                     accent = theme.warn if mins < 30 else theme.big
+                    running = True
+                    tick = int(phase * 6)
+                    key = (
+                        f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-"
+                        f"{self._size_id}-{int(remain_ratio * 40)}-{tick}"
+                    )
+            if theme.kind == "aurora":
+                key = f"{key}-a{int(phase * 4)}"
 
             if key == self._last_key:
                 return
 
-            img = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            text_right = w - hg - 6
             themes.paint_card(
-                d, WIN_W, WIN_H, theme, title, big, sub, accent,
-                self._font_title, self._font_big, self._font_sub,
+                img,
+                w,
+                h,
+                theme,
+                title,
+                big,
+                sub,
+                accent,
+                self._font_title,
+                self._font_big,
+                self._font_sub,
+                text_right=text_right,
+            )
+            sand = (accent[0], accent[1], accent[2], min(230, max(160, accent[3])))
+            glass = theme.outline if theme.outline[3] > 30 else (220, 228, 240, 110)
+            ornaments.paint_hourglass(
+                img,
+                (w - hg - 2, 8, w - 8, h - 8),
+                remain_ratio=remain_ratio,
+                running=running,
+                done=done,
+                sand=sand,
+                glass=glass,
+                phase=phase,
             )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
