@@ -314,8 +314,13 @@ def _halo_text(d: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, font, fil
     if ghost:
         d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 70))
         d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 40))
+    elif _luma(fill) < 140:
+        # 深色字：浅晕，避免浅底上看不清
+        d.text((x + 1, y + 1), text, font=font, fill=(255, 255, 255, 90))
+        d.text((x, y + 1), text, font=font, fill=(255, 255, 255, 50))
     else:
-        d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 50))
+        d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 90))
+        d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 55))
     d.text((x, y), text, font=font, fill=fill)
 
 
@@ -338,13 +343,18 @@ def paint_card(
 
     if kind != "ghost":
         d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 50))
+        # 浅色墙纸托底：避免半透明底板把字「洗白」
+        if kind == "frost":
+            d.rounded_rectangle(box, radius=r, fill=(252, 253, 255, 242))
+        elif kind in ("aurora", "inkgold", "neon", "terminal", "glass"):
+            d.rounded_rectangle(box, radius=r, fill=(8, 10, 16, 240))
         d.rounded_rectangle(box, radius=r, fill=theme.fill)
         if theme.outline[3] > 8:
             d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
         if kind == "glass":
             d.rounded_rectangle((10, 9, w - 11, 38), radius=max(8, r - 6), fill=(255, 255, 255, 26))
         elif kind == "frost":
-            d.rounded_rectangle((10, 9, w - 11, 36), radius=max(8, r - 6), fill=(255, 255, 255, 88))
+            d.rounded_rectangle((10, 9, w - 11, 36), radius=max(8, r - 6), fill=(255, 255, 255, 110))
         elif kind == "neon":
             d.rounded_rectangle((9, 16, 13, h - 16), radius=2, fill=(0, 230, 210, 190))
         elif kind == "terminal":
@@ -352,19 +362,19 @@ def paint_card(
             for y in range(16, h - 10, 5):
                 d.line((10, y, w - 11, y), fill=(0, 40, 16, 26))
         elif kind == "aurora":
-            d.rounded_rectangle((10, 8, w - 11, 30), radius=max(8, r - 6), fill=(160, 100, 255, 36))
+            d.rounded_rectangle((10, 8, w - 11, 30), radius=max(8, r - 6), fill=(160, 100, 255, 42))
             for i in range(7):
                 t = i / 6
                 rr = int(120 + 40 * t)
                 gg = int(80 + 140 * t)
                 bb = int(255 - 40 * t)
-                aa = max(28, 110 - i * 12)
+                aa = max(36, 120 - i * 12)
                 d.rectangle((9 + i * 2, 14, 12 + i * 2, h - 14), fill=(rr, gg, bb, aa))
-            d.ellipse((w - 54, 8, w - 10, 48), fill=(80, 220, 210, 28))
+            d.ellipse((w - 54, 8, w - 10, 48), fill=(80, 220, 210, 32))
         elif kind == "inkgold":
-            d.rounded_rectangle((10, 9, w - 11, 34), radius=max(8, r - 6), fill=(255, 214, 140, 18))
-            d.line((22, 36, min(96, w - 36), 36), fill=(212, 175, 90, 170), width=1)
-            d.rectangle((10, h - 14, w - 11, h - 11), fill=(212, 175, 90, 70))
+            d.rounded_rectangle((10, 9, w - 11, 34), radius=max(8, r - 6), fill=(255, 214, 140, 22))
+            d.line((22, 36, min(96, w - 36), 36), fill=(212, 175, 90, 190), width=1)
+            d.rectangle((10, h - 14, w - 11, h - 11), fill=(212, 175, 90, 90))
 
     ghost = kind == "ghost"
     big_y = 42 if sub else 40

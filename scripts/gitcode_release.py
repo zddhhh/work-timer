@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 检查更新：检查中 / 下载进度 / 安装提示，不再假死\n"
-                    "- 外观新增「极光」「墨金」"
+                    "- 霜白/极光/墨金/玻璃：浅色墙纸下字更清晰\n"
+                    "- 卡片加托底，避免半透明把字洗淡"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
