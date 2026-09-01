@@ -272,6 +272,7 @@ class WorkTimer:
         self._wallpaper_token = backdrop.wallpaper_token()
         self._surface_hot_until = 0.0
         self._last_surface_sample = 0.0
+        self._last_luma = None
         mode = str(self.cfg.get("display_mode") or "hms")
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
@@ -344,7 +345,7 @@ class WorkTimer:
         self._force_surface_sample = True
 
     def _refresh_surface(self, *, force: bool = False) -> None:
-        """换纸/拖动立刻采；之后连采一小段跟上桌面重绘，平时不再空转截屏。"""
+        """切屏/换纸系统通知经常到不了置顶小窗，所以平时约 0.1s 看一眼屏幕。"""
         theme = self._theme()
         if not theme.adaptive:
             return
@@ -357,12 +358,16 @@ class WorkTimer:
             self._force_surface_sample = False
             self._surface_hot_until = now + 0.28
         hot = now < self._surface_hot_until
-        if not force and not hot:
+        if not force and not hot and now - self._last_surface_sample < 0.10:
             return
         self._last_surface_sample = now
         luma = backdrop.sample_luma_around(self.win.x, self.win.y, WIN_W, WIN_H)
         if luma is None:
             return
+        prev = self._last_luma
+        self._last_luma = luma
+        if prev is not None and abs(luma - prev) >= 22:
+            self._surface_hot_until = now + 0.28
         surface = backdrop.classify_surface(luma, self._surface)
         if surface != self._surface:
             self._surface = surface

@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 换墙纸时立刻连采，不再等 0.45 秒轮询\n"
-                    "- 拖动中也会跟明暗；平时不空转截屏"
+                    "- 修复切墙纸/切桌面不变色，只有拖一下才变\n"
+                    "- 约 0.1 秒看一眼屏幕，不再只靠系统通知"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

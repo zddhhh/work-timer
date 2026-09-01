@@ -76,9 +76,33 @@ ID_FMT_SEC = 12
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
+WINEVENTPROC = ctypes.WINFUNCTYPE(
+    None,
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.HWND,
+    wintypes.LONG,
+    wintypes.LONG,
+    wintypes.DWORD,
+    wintypes.DWORD,
+)
+EVENT_SYSTEM_DESKTOPSWITCH = 0x0020
+WINEVENT_OUTOFCONTEXT = 0x0000
 
 user32.DefWindowProcW.argtypes = [wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM]
 user32.DefWindowProcW.restype = LRESULT
+user32.SetWinEventHook.restype = ctypes.c_void_p
+user32.SetWinEventHook.argtypes = [
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.HMODULE,
+    WINEVENTPROC,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.DWORD,
+]
+user32.UnhookWinEvent.argtypes = [ctypes.c_void_p]
+user32.UnhookWinEvent.restype = wintypes.BOOL
 
 
 class WNDCLASSW(ctypes.Structure):
@@ -215,6 +239,8 @@ class LayeredPetWindow:
         self._has_pixels = False
         self._just_moved = False
         self._desktop_changed = False
+        self._winevent_hook = 0
+        self._winevent_proc = WINEVENTPROC(self._on_win_event)
 
         self._hinst = kernel32.GetModuleHandleW(None)
         self._class_name = class_name
@@ -243,6 +269,15 @@ class LayeredPetWindow:
 
         if visible:
             user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
+        self._winevent_hook = user32.SetWinEventHook(
+            EVENT_SYSTEM_DESKTOPSWITCH,
+            EVENT_SYSTEM_DESKTOPSWITCH,
+            None,
+            self._winevent_proc,
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        )
         self._hdc_screen = user32.GetDC(None)
         self._hdc_mem = gdi32.CreateCompatibleDC(self._hdc_screen)
         self._bits = None
@@ -273,7 +308,13 @@ class LayeredPetWindow:
     def set_left_click_handler(self, fn: Callable[[], None]) -> None:
         self._on_left_click = fn
 
+    def _on_win_event(self, _hook, _event, _hwnd, _obj, _child, _thread, _time) -> None:
+        self._desktop_changed = True
+
     def destroy(self) -> None:
+        if self._winevent_hook:
+            user32.UnhookWinEvent(self._winevent_hook)
+            self._winevent_hook = 0
         if self._old:
             gdi32.SelectObject(self._hdc_mem, self._old)
         if self._hbmp:
