@@ -138,6 +138,38 @@ def resolve_for_surface(theme: Theme, surface: str) -> Theme:
     return replace(theme, light=None)
 
 
+def _lerp_rgba(
+    a: tuple[int, int, int, int], b: tuple[int, int, int, int], t: float
+) -> tuple[int, int, int, int]:
+    t = max(0.0, min(1.0, float(t)))
+    return tuple(int(round(x + (y - x) * t)) for x, y in zip(a, b))  # type: ignore[return-value]
+
+
+def blend_themes(a: Theme, b: Theme, t: float) -> Theme:
+    """在两套配色之间插值，用于自适应缓变。"""
+    t = max(0.0, min(1.0, float(t)))
+    if t <= 0:
+        return replace(a, light=None)
+    if t >= 1:
+        return replace(b, light=None)
+    return Theme(
+        b.id,
+        b.name,
+        _lerp_rgba(a.fill, b.fill, t),
+        _lerp_rgba(a.outline, b.outline, t),
+        _lerp_rgba(a.title, b.title, t),
+        _lerp_rgba(a.big, b.big, t),
+        _lerp_rgba(a.sub, b.sub, t),
+        _lerp_rgba(a.idle, b.idle, t),
+        _lerp_rgba(a.warn, b.warn, t),
+        _lerp_rgba(a.done, b.done, t),
+        int(round(a.radius + (b.radius - a.radius) * t)),
+        b.kind,
+        b.adaptive,
+        None,
+    )
+
+
 def _parse_catalog(data: object) -> list[Theme]:
     if isinstance(data, dict):
         items = data.get("themes")
@@ -232,7 +264,7 @@ def load_local_catalog() -> None:
     cached = _load_json_file(_cache_path())
     bmap = {t.id: t for t in bundled}
     # 这些皮会随版本改配色/自适应，优先用内置覆盖旧缓存
-    prefer_bundled = {"auto", "midnight", "frost", "terminal", "aurora", "inkgold"}
+    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold"}
     if cached:
         items: list[Theme] = []
         seen: set[str] = set()

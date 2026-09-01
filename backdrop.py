@@ -13,9 +13,9 @@ DIB_RGB_COLORS = 0
 SM_CXSCREEN = 0
 SM_CYSCREEN = 1
 
-# 滞回：避免墙纸纹理边缘来回跳
-LUMA_TO_LIGHT = 168.0
-LUMA_TO_DARK = 128.0
+# 滞回加宽：减少临界区来回翻
+LUMA_TO_LIGHT = 188.0
+LUMA_TO_DARK = 105.0
 
 
 class BITMAPINFOHEADER(ctypes.Structure):

@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 检查更新：底部固定显示「下载并更新」按钮\n"
-                    "- 说明文字缩短，避免按钮被裁掉"
+                    "- 墙纸明暗切换改为缓变，降低闪变感\n"
+                    "- 默认淡影在浅色墙纸下也可读"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
