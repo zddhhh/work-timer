@@ -43,6 +43,8 @@ SC_MINIMIZE = 0xF020
 SC_MAXIMIZE = 0xF030
 SC_SIZE = 0xF000
 SC_MASK = 0xFFF0
+WM_SETTINGCHANGE = 0x001A
+WM_DISPLAYCHANGE = 0x007E
 WM_MOUSEACTIVATE = 0x0021
 MA_ACTIVATE = 1
 SW_RESTORE = 9
@@ -212,6 +214,7 @@ class LayeredPetWindow:
         self.drag_enabled = True
         self._has_pixels = False
         self._just_moved = False
+        self._desktop_changed = False
 
         self._hinst = kernel32.GetModuleHandleW(None)
         self._class_name = class_name
@@ -424,6 +427,9 @@ class LayeredPetWindow:
                 self.ensure_visible()
                 self._just_moved = True
             return 0
+        if msg in (WM_SETTINGCHANGE, WM_DISPLAYCHANGE):
+            self._desktop_changed = True
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
         if msg == WM_RBUTTONUP:
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
@@ -527,6 +533,12 @@ class LayeredPetWindow:
     def just_moved(self) -> bool:
         flag = self._just_moved
         self._just_moved = False
+        return flag
+
+    @property
+    def desktop_changed(self) -> bool:
+        flag = self._desktop_changed
+        self._desktop_changed = False
         return flag
 
     def pump(self) -> None:

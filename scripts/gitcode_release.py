@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 去掉墙纸变色缓变，认准立刻切\n"
-                    "- 采样约 0.45 秒一次，拖完马上更新"
+                    "- 换墙纸时立刻连采，不再等 0.45 秒轮询\n"
+                    "- 拖动中也会跟明暗；平时不空转截屏"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -268,8 +268,10 @@ class WorkTimer:
         self._font_sub = _font(12)
         self._last_key = ""
         self._surface = "dark"
-        self._last_surface_sample = 0.0
         self._force_surface_sample = True
+        self._wallpaper_token = backdrop.wallpaper_token()
+        self._surface_hot_until = 0.0
+        self._last_surface_sample = 0.0
         mode = str(self.cfg.get("display_mode") or "hms")
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
@@ -342,16 +344,22 @@ class WorkTimer:
         self._force_surface_sample = True
 
     def _refresh_surface(self, *, force: bool = False) -> None:
-        """带 adaptive 的皮采样窗周明暗；认准后立刻切换。"""
+        """换纸/拖动立刻采；之后连采一小段跟上桌面重绘，平时不再空转截屏。"""
         theme = self._theme()
         if not theme.adaptive:
             return
         now = time.monotonic()
-        # 约 0.45s 采一次，滞回足够稳，不再做缓变/连投
-        if not force and not self._force_surface_sample and now - self._last_surface_sample < 0.45:
+        token = backdrop.wallpaper_token()
+        if token != self._wallpaper_token:
+            self._wallpaper_token = token
+            force = True
+        if force or self._force_surface_sample:
+            self._force_surface_sample = False
+            self._surface_hot_until = now + 0.28
+        hot = now < self._surface_hot_until
+        if not force and not hot:
             return
         self._last_surface_sample = now
-        self._force_surface_sample = False
         luma = backdrop.sample_luma_around(self.win.x, self.win.y, WIN_W, WIN_H)
         if luma is None:
             return
@@ -768,8 +776,13 @@ class WorkTimer:
                     self._force_surface_sample = True
                 dragging = self.win.dragging
                 moved = self.win.just_moved
+                if self.win.desktop_changed:
+                    self._force_surface_sample = True
+                    self._last_key = ""
                 if dragging:
                     was_dragging = True
+                    self._refresh_surface(force=True)
+                    self._paint()
                     time.sleep(0.001)
                     continue
                 if was_dragging or moved:
@@ -785,7 +798,10 @@ class WorkTimer:
                 if now - last_save > 1.5:
                     self._persist_pos()
                     last_save = now
-                time.sleep(1.0 / FPS)
+                if now < self._surface_hot_until:
+                    time.sleep(0.001)
+                else:
+                    time.sleep(1.0 / FPS)
             except Exception as e:  # noqa: BLE001
                 store.log_exception("loop", e)
                 time.sleep(0.05)
