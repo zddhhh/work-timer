@@ -108,8 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 四角等比缩放（最小 248×92）\n"
-                    "- 沙漏按最近设置的下班时长漏完，改时间重置满沙"
+                    "- 沙漏重做：玻璃轮廓 + 沙堆 + 细沙粒，不再像火苗"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
