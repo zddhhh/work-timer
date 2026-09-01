@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 
 import ad_disguise
 import backdrop
@@ -248,8 +248,7 @@ class WorkTimer:
 
         w, h = self._load_size()
         self._win_w, self._win_h = w, h
-        ft, fb, fs, hg = ornaments.layout_for(w, h)
-        self._hg_w = hg
+        ft, fb, fs = ornaments.layout_for(w, h)
 
         self.win = layered_win.LayeredPetWindow(w, h, "弹性下班")
         self.win.set_left_click_handler(self._on_click)
@@ -358,23 +357,12 @@ class WorkTimer:
         self.cfg["win_w"], self.cfg["win_h"] = w, h
         return w, h
 
-    def _reset_sand_clock(self) -> None:
-        """按「此刻到下班」重置沙漏：上仓满沙，漏完时长=这段剩余时间。"""
-        off = self._off_hm()
-        if off is None:
-            return
-        td = flex_time.remaining_to(datetime.now(), off[0], off[1])
-        sec = int(td.total_seconds())
-        self.cfg["sand_total_sec"] = max(60, sec) if sec > 0 else 60
-        self._last_key = ""
-
     def _sync_layout_from_window(self) -> None:
         w, h = self.win.width, self.win.height
         if w == self._win_w and h == self._win_h:
             return
         self._win_w, self._win_h = w, h
-        ft, fb, fs, hg = ornaments.layout_for(w, h)
-        self._hg_w = hg
+        ft, fb, fs = ornaments.layout_for(w, h)
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
@@ -493,7 +481,6 @@ class WorkTimer:
         self.cfg["time_mode"] = "flex"
         self.cfg["start_h"], self.cfg["start_m"] = picked
         self.cfg["start_date"] = self._today()
-        self._reset_sand_clock()
         store.save_config(self.cfg)
         self._last_key = ""
 
@@ -509,7 +496,6 @@ class WorkTimer:
         self.cfg["time_mode"] = "direct"
         self.cfg["off_h"], self.cfg["off_m"] = picked
         self.cfg["start_date"] = self._today()
-        self._reset_sand_clock()
         store.save_config(self.cfg)
         self._last_key = ""
 
@@ -755,18 +741,6 @@ class WorkTimer:
                 break
             time.sleep(0.03)
 
-    def _remain_ratio(self, remain_sec: int, done: bool) -> float:
-        """上仓沙子比例：最近一次设置时满仓，按 sand_total_sec 漏完。"""
-        if done:
-            return 0.0
-        span = self.cfg.get("sand_total_sec")
-        if not isinstance(span, int) or span < 60:
-            # 旧配置：以当前剩余为总时长，避免突然跳变
-            span = max(60, int(remain_sec))
-            self.cfg["sand_total_sec"] = span
-            store.save_config(self.cfg)
-        return max(0.0, min(1.0, float(remain_sec) / float(span)))
-
     def _paint(self) -> None:
         try:
             target = self._off_hm()
@@ -775,11 +749,8 @@ class WorkTimer:
             base = self._theme()
             surface = self._surface if base.adaptive else "dark"
             theme = themes.resolve_for_surface(base, surface)
-            w, h, hg = self._win_w, self._win_h, self._hg_w
+            w, h = self._win_w, self._win_h
             phase = time.monotonic()
-            remain_ratio = 1.0
-            running = False
-            done = False
             if target is None:
                 title = "弹性下班"
                 big = "点击开始"
@@ -792,7 +763,6 @@ class WorkTimer:
                 total, done = flex_time.remaining_parts(td)
                 big = flex_time.format_remaining(total, mode)
                 sub = ""
-                remain_ratio = self._remain_ratio(0 if done else total, done)
                 if done:
                     title = "已经到点"
                     accent = theme.done
@@ -801,13 +771,7 @@ class WorkTimer:
                     title = "距离您下班还有"
                     mins = total // 60
                     accent = theme.warn if mins < 30 else theme.big
-                    running = True
-                    # 约 12fps 刷新漏沙动画；液面按剩余比例细分
-                    tick = int(phase * 12)
-                    key = (
-                        f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-"
-                        f"{w}x{h}-{int(remain_ratio * 200)}-{tick}"
-                    )
+                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-{w}x{h}"
             if theme.kind == "aurora":
                 key = f"{key}-a{int(phase * 4)}"
 
@@ -815,7 +779,6 @@ class WorkTimer:
                 return
 
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            text_right = w - hg - 6
             themes.paint_card(
                 img,
                 w,
@@ -828,19 +791,6 @@ class WorkTimer:
                 self._font_title,
                 self._font_big,
                 self._font_sub,
-                text_right=text_right,
-            )
-            sand = (accent[0], accent[1], accent[2], min(230, max(160, accent[3])))
-            glass = theme.outline if theme.outline[3] > 30 else (220, 228, 240, 110)
-            ornaments.paint_hourglass(
-                img,
-                (w - hg - 2, 8, w - 8, h - 8),
-                remain_ratio=remain_ratio,
-                running=running,
-                done=done,
-                sand=sand,
-                glass=glass,
-                phase=phase,
             )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)

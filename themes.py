@@ -387,11 +387,11 @@ def paint_card(
     d = ImageDraw.Draw(img)
     box = (6, 6, w - 7, h - 7)
     kind = theme.kind
-    r = theme.radius
+    r = min(theme.radius, max(6, h // 4))
     right_limit = text_right if text_right is not None else w - 16
-    pad_x = max(14, min(22, w // 12))
-    title_y = max(8, h // 10)
-    big_y = int(h * (0.42 if sub else 0.40))
+    pad_x = max(10, min(22, w // 12))
+    title_y = max(6, h // 10)
+    big_y = int(h * (0.42 if sub else 0.38))
 
     if kind != "ghost":
         d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 40))
@@ -428,10 +428,12 @@ def paint_card(
                 d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
         if kind == "glass":
             shine = (255, 255, 255, 70) if light_card else (255, 255, 255, 26)
-            d.rounded_rectangle((10, 9, w - 11, 38), radius=max(8, r - 6), fill=shine)
+            shine_b = max(16, min(38, int(h * 0.42)))
+            d.rounded_rectangle((10, 9, w - 11, shine_b), radius=max(8, r - 6), fill=shine)
         elif kind == "frost":
             shine = (255, 255, 255, 100) if light_card else (255, 255, 255, 28)
-            d.rounded_rectangle((10, 9, w - 11, 36), radius=max(8, r - 6), fill=shine)
+            shine_b = max(16, min(36, int(h * 0.40)))
+            d.rounded_rectangle((10, 9, w - 11, shine_b), radius=max(8, r - 6), fill=shine)
         elif kind == "neon":
             d.rounded_rectangle((9, 16, 13, h - 16), radius=2, fill=(0, 230, 210, 190))
         elif kind == "terminal":
@@ -446,8 +448,9 @@ def paint_card(
         elif kind == "inkgold":
             line = (180, 130, 50, 170) if light_card else (212, 175, 90, 180)
             top = (255, 220, 150, 28) if light_card else (255, 214, 140, 20)
-            d.rounded_rectangle((10, 9, w - 11, 34), radius=max(8, r - 6), fill=top)
-            d.line((22, 36, min(96, w - 36), 36), fill=line, width=1)
+            band_b = max(16, min(34, int(h * 0.38)))
+            d.rounded_rectangle((10, 9, w - 11, band_b), radius=max(8, r - 6), fill=top)
+            d.line((22, band_b + 2, min(96, w - 36), band_b + 2), fill=line, width=1)
             d.rectangle((10, h - 13, w - 11, h - 11), fill=line)
 
     ghost = kind == "ghost"
@@ -458,8 +461,8 @@ def paint_card(
     if ghost:
         try:
             bb = d.textbbox((pad_x, big_y), big, font=font_big)
-            yline = min(int(bb[3]) + 5, h - 22)
-            x2 = min(max(int(bb[2]), 102), right_limit)
+            yline = min(int(bb[3]) + 4, h - 10)
+            x2 = min(max(int(bb[2]), min(102, right_limit)), right_limit)
             # 浅底用深色细线，深底用浅色细线
             line = (20, 24, 32, 55) if _luma(accent) < 140 else (255, 255, 255, 42)
             d.line((pad_x, yline, x2, yline), fill=line, width=1)

@@ -94,7 +94,7 @@ EVENT_SYSTEM_DESKTOPSWITCH = 0x0020
 WINEVENT_OUTOFCONTEXT = 0x0000
 EDGE = 12
 BASE_W, BASE_H = 248, 92
-MIN_W, MIN_H = BASE_W, BASE_H
+MIN_W, MIN_H = 148, 55
 MAX_W = 520
 MAX_H = int(round(MAX_W * BASE_H / BASE_W))
 ASPECT = BASE_W / BASE_H
@@ -756,7 +756,7 @@ def monitor_work_at(x: int, y: int) -> RECT:
 
 
 def snap_size(w: int, h: int) -> tuple[int, int]:
-    """锁定 248:92 比例；不小于最小尺寸。"""
+    """锁定 248:92 比例；最小约 148×55。"""
     w = int(w)
     # 以宽为准等比，再夹到合法范围
     w = max(MIN_W, min(MAX_W, w))

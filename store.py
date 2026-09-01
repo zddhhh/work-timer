@@ -36,7 +36,6 @@ def load_config() -> dict:
         "theme": "ghost",
         "win_w": 248,
         "win_h": 92,
-        "sand_total_sec": None,
         "esc_disguise": False,
         "win_x": None,
         "win_y": None,

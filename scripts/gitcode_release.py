@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 沙漏撤回：恢复生图玻璃器皿 + 动态沙子"
+                    "- 去掉沙漏；最小可缩到约 148×55"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
