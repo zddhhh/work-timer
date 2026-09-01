@@ -24,8 +24,8 @@ import themes
 import updater
 from version import APP_VERSION
 
-SIZE_IDS = ("s", "m", "l")
 FPS = 60
+_LEGACY_SIZES = {"s": (248, 92), "m": (320, 118), "l": (400, 148)}
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -246,13 +246,10 @@ class WorkTimer:
         self._need_dialog = False
         self._tk: tk.Tk | None = None
 
-        size_id = str(self.cfg.get("win_size") or "s")
-        if size_id not in SIZE_IDS:
-            size_id = "s"
-        self.cfg["win_size"] = size_id
-        self._size_id = size_id
-        w, h, ft, fb, fs, hg = ornaments.size_preset(size_id)
-        self._win_w, self._win_h, self._hg_w = w, h, hg
+        w, h = self._load_size()
+        self._win_w, self._win_h = w, h
+        ft, fb, fs, hg = ornaments.layout_for(w, h)
+        self._hg_w = hg
 
         self.win = layered_win.LayeredPetWindow(w, h, "弹性下班")
         self.win.set_left_click_handler(self._on_click)
@@ -352,23 +349,37 @@ class WorkTimer:
         self._last_key = ""
         self._force_surface_sample = True
 
-    def _set_size(self, size_id: str) -> None:
-        if size_id not in SIZE_IDS:
+    def _load_size(self) -> tuple[int, int]:
+        w, h = self.cfg.get("win_w"), self.cfg.get("win_h")
+        if not isinstance(w, int) or not isinstance(h, int):
+            legacy = str(self.cfg.get("win_size") or "")
+            w, h = _LEGACY_SIZES.get(legacy, (248, 92))
+        w = max(layered_win.MIN_W, min(layered_win.MAX_W, int(w)))
+        h = max(layered_win.MIN_H, min(layered_win.MAX_H, int(h)))
+        self.cfg["win_w"], self.cfg["win_h"] = w, h
+        return w, h
+
+    def _sync_layout_from_window(self) -> None:
+        w, h = self.win.width, self.win.height
+        if w == self._win_w and h == self._win_h:
             return
-        w, h, ft, fb, fs, hg = ornaments.size_preset(size_id)
-        self._size_id = size_id
-        self._win_w, self._win_h, self._hg_w = w, h, hg
-        self.cfg["win_size"] = size_id
-        store.save_config(self.cfg)
+        self._win_w, self._win_h = w, h
+        ft, fb, fs, hg = ornaments.layout_for(w, h)
+        self._hg_w = hg
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
-        self.win.resize(w, h)
         self._last_key = ""
-        self._force_surface_sample = True
+
+    def _persist_size(self) -> None:
+        if self.cfg.get("win_w") == self._win_w and self.cfg.get("win_h") == self._win_h:
+            return
+        self.cfg["win_w"] = self._win_w
+        self.cfg["win_h"] = self._win_h
+        store.save_config(self.cfg)
 
     def _refresh_surface(self, *, force: bool = False) -> None:
-        """切屏/换纸系统通知经常到不了置顶小窗，所以平时约 0.1s 看一眼屏幕。"""
+        """窗周+窗下采样；最小化/切前台会强制连采。"""
         theme = self._theme()
         if not theme.adaptive:
             return
@@ -379,9 +390,9 @@ class WorkTimer:
             force = True
         if force or self._force_surface_sample:
             self._force_surface_sample = False
-            self._surface_hot_until = now + 0.28
+            self._surface_hot_until = now + 0.45
         hot = now < self._surface_hot_until
-        if not force and not hot and now - self._last_surface_sample < 0.10:
+        if not force and not hot and now - self._last_surface_sample < 0.08:
             return
         self._last_surface_sample = now
         luma = backdrop.sample_luma_around(self.win.x, self.win.y, self._win_w, self._win_h)
@@ -389,9 +400,10 @@ class WorkTimer:
             return
         prev = self._last_luma
         self._last_luma = luma
-        if prev is not None and abs(luma - prev) >= 22:
-            self._surface_hot_until = now + 0.28
-        surface = backdrop.classify_surface(luma, self._surface)
+        jumped = prev is not None and abs(luma - prev) >= 24
+        if jumped:
+            self._surface_hot_until = now + 0.45
+        surface = backdrop.classify_surface(luma, self._surface, soft=jumped)
         if surface != self._surface:
             self._surface = surface
             self._last_key = ""
@@ -503,7 +515,6 @@ class WorkTimer:
             self._display_mode(),
             self._theme().id,
             esc_disguise=self._esc_disguise_on(),
-            size_id=self._size_id,
         )
         if op == "quit":
             self.running = False
@@ -523,8 +534,6 @@ class WorkTimer:
             self._set_display_mode("sec")
         elif op == "refresh_themes":
             self._refresh_themes()
-        elif op.startswith("size:"):
-            self._set_size(op.split(":", 1)[1])
         elif op.startswith("theme:"):
             self._set_theme(op.split(":", 1)[1])
 
@@ -768,7 +777,7 @@ class WorkTimer:
                 big = "点击开始"
                 sub = ""
                 accent = theme.idle
-                key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{self._size_id}"
+                key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
             else:
                 oh, om = target
                 td = flex_time.remaining_to(now, oh, om)
@@ -779,7 +788,7 @@ class WorkTimer:
                 if done:
                     title = "已经到点"
                     accent = theme.done
-                    key = f"done-{mode}-{theme.id}-{theme.fill}-{surface}-{self._size_id}"
+                    key = f"done-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
                 else:
                     title = "距离您下班还有"
                     mins = total // 60
@@ -788,7 +797,7 @@ class WorkTimer:
                     tick = int(phase * 6)
                     key = (
                         f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-"
-                        f"{self._size_id}-{int(remain_ratio * 40)}-{tick}"
+                        f"{w}x{h}-{int(remain_ratio * 40)}-{tick}"
                     )
             if theme.kind == "aurora":
                 key = f"{key}-a{int(phase * 4)}"
@@ -841,6 +850,7 @@ class WorkTimer:
         self._paint()
         last_save = time.monotonic()
         was_dragging = False
+        was_resizing = False
         while self.running and not self.win.closed:
             try:
                 self.win.pump()
@@ -860,16 +870,33 @@ class WorkTimer:
                     self._last_key = ""
                     self._force_surface_sample = True
                 dragging = self.win.dragging
+                resizing = self.win.resizing
                 moved = self.win.just_moved
+                resized = self.win.just_resized
                 if self.win.desktop_changed:
                     self._force_surface_sample = True
                     self._last_key = ""
+                if resizing:
+                    was_resizing = True
+                    self._sync_layout_from_window()
+                    self._paint()
+                    time.sleep(0.001)
+                    continue
                 if dragging:
                     was_dragging = True
                     self._refresh_surface(force=True)
                     self._paint()
                     time.sleep(0.001)
                     continue
+                if was_resizing or resized:
+                    self.win.ensure_visible()
+                    self._sync_layout_from_window()
+                    self._persist_size()
+                    self._persist_pos()
+                    self._force_surface_sample = True
+                    self._last_key = ""
+                    last_save = time.monotonic()
+                    was_resizing = False
                 if was_dragging or moved:
                     self.win.ensure_visible()
                     self._last_key = ""
@@ -891,6 +918,7 @@ class WorkTimer:
                 store.log_exception("loop", e)
                 time.sleep(0.05)
         self._persist_pos()
+        self._persist_size()
         self.ad.destroy()
         self.win.destroy()
         if self._tk is not None:

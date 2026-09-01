@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import math
 import time
-from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -32,6 +31,16 @@ def load_asset(name: str) -> Image.Image | None:
     return im
 
 
+def layout_for(w: int, h: int) -> tuple[int, int, int, int]:
+    """按窗口尺寸算字体与右侧沙漏宽度。"""
+    scale = min(max(w, 1) / 248.0, max(h, 1) / 92.0)
+    ft = max(12, min(26, int(round(15 * scale))))
+    fb = max(18, min(44, int(round(28 * scale))))
+    fs = max(10, min(18, int(round(12 * scale))))
+    hg = max(36, min(96, int(round(min(h * 0.78, w * 0.24)))))
+    return ft, fb, fs, hg
+
+
 def _scale_alpha(im: Image.Image, factor: float) -> Image.Image:
     out = im.copy()
     a = out.getchannel("A").point(lambda v: max(0, min(255, int(v * factor))))
@@ -50,7 +59,6 @@ def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: boo
     phase = time.monotonic()
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     if drape is not None:
-        # 横向缓慢漂移
         tw = max(bw + 80, drape.width)
         th = max(bh, drape.height)
         src = drape.resize((tw, th), Image.Resampling.LANCZOS)
@@ -67,7 +75,6 @@ def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: boo
         crop = src.crop((ox, oy, ox + bw, oy + bh))
         layer = Image.alpha_composite(layer, _scale_alpha(crop, 0.55 if not light else 0.32))
 
-    # 圆角遮罩，避免贴图溢出
     mask = Image.new("L", (bw, bh), 0)
     md = ImageDraw.Draw(mask)
     md.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=max(8, min(bw, bh) // 6), fill=255)
@@ -85,52 +92,127 @@ def paint_hourglass(
     glass: tuple[int, int, int, int],
     phase: float,
 ) -> None:
-    """右侧小沙漏：上仓沙子随剩余时间变少。"""
+    """右侧沙漏：生图玻璃器皿 + 仓内沙子随剩余时间变化。"""
     x0, y0, x1, y1 = rect
-    w, h = x1 - x0, y1 - y0
-    if w < 16 or h < 24:
+    tw, th = x1 - x0, y1 - y0
+    if tw < 18 or th < 28:
         return
-    cx = x0 + w // 2
-    top = y0 + 2
-    bot = y1 - 2
-    mid = (top + bot) // 2
-    hw = max(6, w // 2 - 3)
-    neck = max(2, w // 10)
-    ratio = max(0.0, min(1.0, float(remain_ratio)))
-    if done:
-        ratio = 0.0
+    ratio = 0.0 if done else max(0.0, min(1.0, float(remain_ratio)))
+    vessel = load_asset("hourglass_vessel.png")
+    if vessel is not None:
+        _paint_vessel_hourglass(
+            img, x0, y0, tw, th, vessel, ratio=ratio, running=running, sand=sand, phase=phase
+        )
+        return
+    _paint_geom_hourglass(
+        img, x0, y0, tw, th, ratio=ratio, running=running, sand=sand, glass=glass, phase=phase
+    )
 
+
+def _warm_sand(sand: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    r, g, b, a = sand
+    return (
+        min(255, (r + 210) // 2),
+        min(255, (g + 160) // 2),
+        min(255, (b + 60) // 2),
+        min(230, max(170, a)),
+    )
+
+
+def _paint_vessel_hourglass(
+    img: Image.Image,
+    x0: int,
+    y0: int,
+    tw: int,
+    th: int,
+    vessel: Image.Image,
+    *,
+    ratio: float,
+    running: bool,
+    sand: tuple[int, int, int, int],
+    phase: float,
+) -> None:
+    vw, vh = vessel.size
+    scale = min(tw / vw, th / vh)
+    nw, nh = max(1, int(vw * scale)), max(1, int(vh * scale))
+    px = x0 + (tw - nw) // 2
+    py = y0 + (th - nh) // 2
+    sand_c = _warm_sand(sand)
+
+    sand_layer = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(sand_layer)
+    cx = nw // 2
+    top = int(nh * 0.24)
+    mid = int(nh * 0.50)
+    bot = int(nh * 0.76)
+    hw = max(5, int(nw * 0.20))
+    neck = max(2, int(nw * 0.035))
+
+    if ratio > 0.001:
+        fill_h = max(1, int((mid - top) * ratio))
+        y_sand = mid - fill_h
+        pts = _trap_in_triangle(cx, top, mid, hw, neck, y_sand, mid)
+        if len(pts) >= 3:
+            d.polygon(pts, fill=sand_c)
+    bottom_ratio = 1.0 - ratio
+    if bottom_ratio > 0.001:
+        fill_h = max(1, int((bot - mid) * bottom_ratio))
+        y_sand = bot - fill_h
+        pts = _trap_in_triangle_up(cx, mid, bot, neck, hw, y_sand, bot)
+        if len(pts) >= 3:
+            d.polygon(pts, fill=sand_c)
+
+    if running and 0.02 < ratio < 0.98:
+        for i in range(4):
+            t = (phase * 2.2 + i * 0.25) % 1.0
+            gy = mid - 3 + int(t * 10)
+            gx = cx + int(math.sin(phase * 7 + i * 1.7) * max(1, nw * 0.02))
+            aa = int(200 * (1.0 - abs(t - 0.45) * 1.5))
+            if aa > 24:
+                d.ellipse((gx - 1, gy - 1, gx + 1, gy + 1), fill=(sand_c[0], sand_c[1], sand_c[2], aa))
+
+    vessel_r = vessel.resize((nw, nh), Image.Resampling.LANCZOS)
+    # 器皿略提亮透明度，避免发黑
+    vessel_r = _scale_alpha(vessel_r, 0.92)
+    out = Image.alpha_composite(sand_layer, vessel_r)
+    img.paste(out, (px, py), out)
+
+
+def _paint_geom_hourglass(
+    img: Image.Image,
+    x0: int,
+    y0: int,
+    tw: int,
+    th: int,
+    *,
+    ratio: float,
+    running: bool,
+    sand: tuple[int, int, int, int],
+    glass: tuple[int, int, int, int],
+    phase: float,
+) -> None:
+    cx = x0 + tw // 2
+    top = y0 + 2
+    bot = y0 + th - 2
+    mid = (top + bot) // 2
+    hw = max(6, tw // 2 - 3)
+    neck = max(2, tw // 10)
+    sand_c = _warm_sand(sand)
     d = ImageDraw.Draw(img)
-    # 木色细框（极轻），玻璃轮廓
-    frame = (120, 100, 80, 90) if glass[0] + glass[1] + glass[2] > 400 else (200, 180, 140, 70)
-    d.line((cx - hw, top, cx + hw, top), fill=frame, width=1)
-    d.line((cx - hw, bot, cx + hw, bot), fill=frame, width=1)
     d.line((cx - hw, top, cx - neck, mid), fill=glass, width=1)
     d.line((cx + hw, top, cx + neck, mid), fill=glass, width=1)
     d.line((cx - neck, mid, cx - hw, bot), fill=glass, width=1)
     d.line((cx + neck, mid, cx + hw, bot), fill=glass, width=1)
-
-    # 上仓沙子：从颈部往上堆，高度随 ratio
-    top_h = mid - top
-    if ratio > 0.001 and top_h > 2:
-        fill_h = max(1, int(top_h * ratio))
-        y_sand = mid - fill_h
-        # 三角形截面宽度随高度变化
-        pts = _trap_in_triangle(cx, top, mid, hw, neck, y_sand, mid)
+    if ratio > 0.001:
+        fill_h = max(1, int((mid - top) * ratio))
+        pts = _trap_in_triangle(cx, top, mid, hw, neck, mid - fill_h, mid)
         if len(pts) >= 3:
-            d.polygon(pts, fill=sand)
-
-    # 下仓沙子
-    bottom_ratio = 1.0 - ratio
-    bot_h = bot - mid
-    if bottom_ratio > 0.001 and bot_h > 2:
-        fill_h = max(1, int(bot_h * bottom_ratio))
-        y_sand = bot - fill_h
-        pts = _trap_in_triangle_up(cx, mid, bot, neck, hw, y_sand, bot)
+            d.polygon(pts, fill=sand_c)
+    if ratio < 0.999:
+        fill_h = max(1, int((bot - mid) * (1.0 - ratio)))
+        pts = _trap_in_triangle_up(cx, mid, bot, neck, hw, bot - fill_h, bot)
         if len(pts) >= 3:
-            d.polygon(pts, fill=sand)
-
-    # 下落沙粒
+            d.polygon(pts, fill=sand_c)
     if running and 0.02 < ratio < 0.98:
         for i in range(3):
             t = (phase * 2.4 + i * 0.33) % 1.0
@@ -138,14 +220,12 @@ def paint_hourglass(
             gx = cx + int(math.sin(phase * 6 + i) * 1.2)
             aa = int(160 * (1.0 - abs(t - 0.5) * 1.6))
             if aa > 20:
-                d.point((gx, gy), fill=(sand[0], sand[1], sand[2], aa))
-                d.point((gx, gy + 1), fill=(sand[0], sand[1], sand[2], aa // 2))
+                d.point((gx, gy), fill=(sand_c[0], sand_c[1], sand_c[2], aa))
 
 
 def _trap_in_triangle(
     cx: int, top: int, mid: int, hw: int, neck: int, y0: int, y1: int
 ) -> list[tuple[int, int]]:
-    """上仓倒三角内，取 y0..y1 水平带。"""
     y0 = max(top, min(mid, y0))
     y1 = max(top, min(mid, y1))
     if y1 <= y0:
@@ -166,7 +246,6 @@ def _trap_in_triangle(
 def _trap_in_triangle_up(
     cx: int, mid: int, bot: int, neck: int, hw: int, y0: int, y1: int
 ) -> list[tuple[int, int]]:
-    """下仓正三角内，取 y0..y1 水平带。"""
     y0 = max(mid, min(bot, y0))
     y1 = max(mid, min(bot, y1))
     if y1 <= y0:
@@ -182,14 +261,3 @@ def _trap_in_triangle_up(
         (int(cx + half_at(y1)), y1),
         (int(cx - half_at(y1)), y1),
     ]
-
-
-@lru_cache(maxsize=8)
-def size_preset(size_id: str) -> tuple[int, int, int, int, int, int]:
-    """返回 (w, h, font_title, font_big, font_sub, hourglass_w)。"""
-    table = {
-        "s": (248, 92, 15, 28, 12, 52),
-        "m": (320, 118, 17, 34, 13, 68),
-        "l": (400, 148, 20, 42, 15, 86),
-    }
-    return table.get(size_id, table["s"])

@@ -108,9 +108,9 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 窗口大小：小 / 中 / 大\n"
-                    "- 右侧沙漏随剩余时间变化\n"
-                    "- 极光皮改用生图贴图"
+                    "- 拖边/角拉伸缩放窗口\n"
+                    "- 生图玻璃沙漏 + 动态沙子\n"
+                    "- 修复深色窗最小化后浅色不换色"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

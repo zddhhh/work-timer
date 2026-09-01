@@ -74,9 +74,6 @@ ID_SET_OFF = 6
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
-ID_SIZE_S = 13
-ID_SIZE_M = 14
-ID_SIZE_L = 15
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -90,8 +87,19 @@ WINEVENTPROC = ctypes.WINFUNCTYPE(
     wintypes.DWORD,
     wintypes.DWORD,
 )
+EVENT_SYSTEM_FOREGROUND = 0x0003
+EVENT_SYSTEM_MINIMIZESTART = 0x0016
+EVENT_SYSTEM_MINIMIZEEND = 0x0017
 EVENT_SYSTEM_DESKTOPSWITCH = 0x0020
 WINEVENT_OUTOFCONTEXT = 0x0000
+EDGE = 10
+MIN_W, MAX_W = 200, 520
+MIN_H, MAX_H = 70, 200
+IDC_ARROW = 32512
+IDC_SIZEWE = 32644
+IDC_SIZENS = 32645
+IDC_SIZENWSE = 32642
+IDC_SIZENESW = 32643
 
 user32.DefWindowProcW.argtypes = [wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM]
 user32.DefWindowProcW.restype = LRESULT
@@ -232,18 +240,30 @@ class LayeredPetWindow:
         self._on_right_click: Callable[[int, int], None] | None = None
         self._on_left_click: Callable[[], None] | None = None
         self._dragging = False
+        self._resizing = False
         self._drag_moved = False
         self._press_x = 0
         self._press_y = 0
         self._drag_dx = 0
         self._drag_dy = 0
+        self._resize_left = False
+        self._resize_right = False
+        self._resize_top = False
+        self._resize_bottom = False
+        self._resize_ox = 0
+        self._resize_oy = 0
+        self._resize_ow = 0
+        self._resize_oh = 0
+        self._resize_opx = 0
+        self._resize_opy = 0
         self._closed = False
         self._hit_mask = None
         self.drag_enabled = True
         self._has_pixels = False
         self._just_moved = False
+        self._just_resized = False
         self._desktop_changed = False
-        self._winevent_hook = 0
+        self._winevent_hooks: list = []
         self._winevent_proc = WINEVENTPROC(self._on_win_event)
 
         self._hinst = kernel32.GetModuleHandleW(None)
@@ -257,7 +277,7 @@ class LayeredPetWindow:
         wc.cbWndExtra = 0
         wc.hInstance = self._hinst
         wc.hIcon = None
-        wc.hCursor = user32.LoadCursorW(None, 32512)
+        wc.hCursor = user32.LoadCursorW(None, IDC_ARROW)
         wc.hbrBackground = None
         wc.lpszMenuName = None
         wc.lpszClassName = self._class_name
@@ -273,15 +293,14 @@ class LayeredPetWindow:
 
         if visible:
             user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
-        self._winevent_hook = user32.SetWinEventHook(
-            EVENT_SYSTEM_DESKTOPSWITCH,
-            EVENT_SYSTEM_DESKTOPSWITCH,
-            None,
-            self._winevent_proc,
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT,
-        )
+        for a, b in (
+            (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
+            (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND),
+            (EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_DESKTOPSWITCH),
+        ):
+            hook = user32.SetWinEventHook(a, b, None, self._winevent_proc, 0, 0, WINEVENT_OUTOFCONTEXT)
+            if hook:
+                self._winevent_hooks.append(hook)
         self._hdc_screen = user32.GetDC(None)
         self._hdc_mem = gdi32.CreateCompatibleDC(self._hdc_screen)
         self._bits = None
@@ -316,27 +335,32 @@ class LayeredPetWindow:
         self._bits = bits_ptr
         self._old = gdi32.SelectObject(self._hdc_mem, self._hbmp)
 
-    def resize(self, width: int, height: int) -> None:
-        width, height = max(80, int(width)), max(48, int(height))
-        if width == self.width and height == self.height:
+    def resize(self, width: int, height: int, *, x: int | None = None, y: int | None = None) -> None:
+        width = max(MIN_W, min(MAX_W, int(width)))
+        height = max(MIN_H, min(MAX_H, int(height)))
+        nx = self.x if x is None else int(x)
+        ny = self.y if y is None else int(y)
+        nx, ny = clamp_pos(nx, ny, width, height)
+        if width == self.width and height == self.height and nx == self.x and ny == self.y:
             return
+        size_changed = width != self.width or height != self.height
         self.width = width
         self.height = height
-        self._alloc_bitmap()
-        self._has_pixels = False
-        self._hit_mask = None
+        self.x, self.y = nx, ny
+        if size_changed:
+            self._alloc_bitmap()
+            self._has_pixels = False
+            self._hit_mask = None
         if self.hwnd:
             user32.SetWindowPos(
                 self.hwnd,
                 None,
-                0,
-                0,
+                self.x,
+                self.y,
                 width,
                 height,
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                SWP_NOZORDER | SWP_NOACTIVATE,
             )
-        self.x, self.y = clamp_pos(self.x, self.y, width, height)
-        self._apply_pos(self.x, self.y)
 
     def set_right_click_handler(self, fn: Callable[[int, int], None]) -> None:
         self._on_right_click = fn
@@ -348,9 +372,9 @@ class LayeredPetWindow:
         self._desktop_changed = True
 
     def destroy(self) -> None:
-        if self._winevent_hook:
-            user32.UnhookWinEvent(self._winevent_hook)
-            self._winevent_hook = 0
+        for hook in self._winevent_hooks:
+            user32.UnhookWinEvent(hook)
+        self._winevent_hooks.clear()
         self._free_bitmap()
         if self._hdc_mem:
             gdi32.DeleteDC(self._hdc_mem)
@@ -451,6 +475,27 @@ class LayeredPetWindow:
             return 0
         return self._hit_mask[ly * self.width + lx]
 
+    def _edge_hit(self, lx: int, ly: int) -> tuple[bool, bool, bool, bool]:
+        return (
+            lx < EDGE,
+            lx >= self.width - EDGE,
+            ly < EDGE,
+            ly >= self.height - EDGE,
+        )
+
+    def _set_edge_cursor(self, left: bool, right: bool, top: bool, bottom: bool) -> None:
+        if (left and top) or (right and bottom):
+            cur = IDC_SIZENWSE
+        elif (right and top) or (left and bottom):
+            cur = IDC_SIZENESW
+        elif left or right:
+            cur = IDC_SIZEWE
+        elif top or bottom:
+            cur = IDC_SIZENS
+        else:
+            cur = IDC_ARROW
+        user32.SetCursor(user32.LoadCursorW(None, cur))
+
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == WM_NCHITTEST:
             return HTCLIENT
@@ -460,20 +505,70 @@ class LayeredPetWindow:
             cmd = int(wparam) & SC_MASK
             if cmd in (SC_MINIMIZE, SC_MAXIMIZE, SC_SIZE):
                 return 0
+        if msg == WM_MOUSEMOVE and not self._dragging and not self._resizing:
+            pt = POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            left, right, top, bottom = self._edge_hit(pt.x - self.x, pt.y - self.y)
+            if any((left, right, top, bottom)):
+                self._set_edge_cursor(left, right, top, bottom)
+            else:
+                user32.SetCursor(user32.LoadCursorW(None, IDC_ARROW))
         if msg == WM_LBUTTONDOWN:
             if not self.drag_enabled:
                 return 0
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
+            left, right, top, bottom = self._edge_hit(pt.x - self.x, pt.y - self.y)
+            user32.SetForegroundWindow(hwnd)
+            self.keep_topmost()
+            user32.SetCapture(hwnd)
+            if any((left, right, top, bottom)):
+                self._resizing = True
+                self._drag_moved = False
+                self._resize_left, self._resize_right = left, right
+                self._resize_top, self._resize_bottom = top, bottom
+                self._resize_ox, self._resize_oy = self.x, self.y
+                self._resize_ow, self._resize_oh = self.width, self.height
+                self._resize_opx, self._resize_opy = pt.x, pt.y
+                self._set_edge_cursor(left, right, top, bottom)
+                return 0
             self._dragging = True
             self._drag_moved = False
             self._press_x = pt.x
             self._press_y = pt.y
             self._drag_dx = pt.x - self.x
             self._drag_dy = pt.y - self.y
-            user32.SetForegroundWindow(hwnd)
-            self.keep_topmost()
-            user32.SetCapture(hwnd)
+            return 0
+        if msg == WM_MOUSEMOVE and self._resizing:
+            pt = POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            dx = pt.x - self._resize_opx
+            dy = pt.y - self._resize_opy
+            nx, ny = self._resize_ox, self._resize_oy
+            nw, nh = self._resize_ow, self._resize_oh
+            if self._resize_left:
+                nx = self._resize_ox + dx
+                nw = self._resize_ow - dx
+            if self._resize_right:
+                nw = self._resize_ow + dx
+            if self._resize_top:
+                ny = self._resize_oy + dy
+                nh = self._resize_oh - dy
+            if self._resize_bottom:
+                nh = self._resize_oh + dy
+            if nw < MIN_W:
+                if self._resize_left:
+                    nx = self._resize_ox + self._resize_ow - MIN_W
+                nw = MIN_W
+            if nh < MIN_H:
+                if self._resize_top:
+                    ny = self._resize_oy + self._resize_oh - MIN_H
+                nh = MIN_H
+            nw = min(MAX_W, nw)
+            nh = min(MAX_H, nh)
+            if abs(nw - self.width) >= 2 or abs(nh - self.height) >= 2 or nx != self.x or ny != self.y:
+                self._drag_moved = True
+                self.resize(nw, nh, x=nx, y=ny)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
             pt = POINT()
@@ -482,6 +577,16 @@ class LayeredPetWindow:
                 return 0
             self._drag_moved = True
             self._apply_pos(pt.x - self._drag_dx, pt.y - self._drag_dy)
+            return 0
+        if msg == WM_LBUTTONUP and self._resizing:
+            moved = self._drag_moved
+            self._resizing = False
+            self._drag_moved = False
+            user32.ReleaseCapture()
+            user32.SetCursor(user32.LoadCursorW(None, IDC_ARROW))
+            if moved:
+                self.ensure_visible()
+                self._just_resized = True
             return 0
         if msg == WM_LBUTTONUP and self._dragging:
             moved = self._drag_moved
@@ -495,13 +600,18 @@ class LayeredPetWindow:
             if self._on_left_click:
                 self._on_left_click()
             return 0
-        if msg == WM_CAPTURECHANGED and self._dragging:
+        if msg == WM_CAPTURECHANGED and (self._dragging or self._resizing):
             moved = self._drag_moved
+            was_resize = self._resizing
             self._dragging = False
+            self._resizing = False
             self._drag_moved = False
             if moved:
                 self.ensure_visible()
-                self._just_moved = True
+                if was_resize:
+                    self._just_resized = True
+                else:
+                    self._just_moved = True
             return 0
         if msg in (WM_SETTINGCHANGE, WM_DISPLAYCHANGE):
             self._desktop_changed = True
@@ -528,7 +638,6 @@ class LayeredPetWindow:
         theme_id: str = "ghost",
         *,
         esc_disguise: bool = False,
-        size_id: str = "s",
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -543,16 +652,6 @@ class LayeredPetWindow:
         user32.AppendMenuW(
             hfmt, MF_STRING | (MF_CHECKED if display_mode == "sec" else 0), ID_FMT_SEC, "秒"
         )
-        hsize = user32.CreatePopupMenu()
-        user32.AppendMenuW(
-            hsize, MF_STRING | (MF_CHECKED if size_id == "s" else 0), ID_SIZE_S, "小"
-        )
-        user32.AppendMenuW(
-            hsize, MF_STRING | (MF_CHECKED if size_id == "m" else 0), ID_SIZE_M, "中"
-        )
-        user32.AppendMenuW(
-            hsize, MF_STRING | (MF_CHECKED if size_id == "l" else 0), ID_SIZE_L, "大"
-        )
         catalog = themes.list_themes()
         htheme = user32.CreatePopupMenu()
         for i, th in enumerate(catalog):
@@ -563,7 +662,6 @@ class LayeredPetWindow:
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_TIME, "设置上班时间")
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
-        user32.AppendMenuW(hmenu, MF_POPUP, hsize, "窗口大小")
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(
             hmenu,
@@ -607,12 +705,6 @@ class LayeredPetWindow:
             return "fmt_min"
         if cmd == ID_FMT_SEC:
             return "fmt_sec"
-        if cmd == ID_SIZE_S:
-            return "size:s"
-        if cmd == ID_SIZE_M:
-            return "size:m"
-        if cmd == ID_SIZE_L:
-            return "size:l"
         if cmd == ID_REFRESH_THEMES:
             return "refresh_themes"
         if ID_THEME_BASE <= cmd < ID_THEME_BASE + len(catalog):
@@ -624,9 +716,19 @@ class LayeredPetWindow:
         return self._dragging
 
     @property
+    def resizing(self) -> bool:
+        return self._resizing
+
+    @property
     def just_moved(self) -> bool:
         flag = self._just_moved
         self._just_moved = False
+        return flag
+
+    @property
+    def just_resized(self) -> bool:
+        flag = self._just_resized
+        self._just_resized = False
         return flag
 
     @property

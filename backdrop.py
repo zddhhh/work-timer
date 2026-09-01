@@ -18,10 +18,12 @@ SPI_GETDESKWALLPAPER = 0x0073
 # 滞回加宽：减少临界区来回翻
 LUMA_TO_LIGHT = 188.0
 LUMA_TO_DARK = 105.0
+# 亮度猛跳时（最小化露出墙纸）用更中性的门槛，避免卡在滞回里
+LUMA_SOFT = 148.0
 
 # 一次 BitBlt 足够；多次 1px 截屏会被 DWM 拖成上百毫秒
-_MAX_W = 320
-_MAX_H = 160
+_MAX_W = 640
+_MAX_H = 280
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -141,7 +143,7 @@ def wallpaper_token() -> tuple:
 
 
 def sample_luma_around(x: int, y: int, w: int, h: int, *, strip: int = 8) -> float | None:
-    """一次截取窗口外扩一圈，只平均圈上的像素。"""
+    """采窗周 + 窗下（分层窗通常不进 BitBlt，能看到背后应用/墙纸）。"""
     sw = int(user32.GetSystemMetrics(SM_CXSCREEN))
     sh = int(user32.GetSystemMetrics(SM_CYSCREEN))
     x, y, w, h = int(x), int(y), int(w), int(h)
@@ -157,13 +159,26 @@ def sample_luma_around(x: int, y: int, w: int, h: int, *, strip: int = 8) -> flo
     if not hdc:
         return None
     try:
-        return _SAMPLER.luma(hdc, left, top, rw, rh, x, y, w, h)
+        around = _SAMPLER.luma(hdc, left, top, rw, rh, x, y, w, h)
+        # 窗内缩进一块：最小化深色窗后，这里会马上变成浅墙纸
+        ix = x + max(4, w // 5)
+        iy = y + max(4, h // 5)
+        iw = max(4, w - 2 * max(4, w // 5))
+        ih = max(4, h - 2 * max(4, h // 5))
+        behind = _SAMPLER.luma(hdc, ix, iy, iw, ih, -1, -1, 0, 0)
+        if around is None:
+            return behind
+        if behind is None:
+            return around
+        return behind * 0.7 + around * 0.3
     finally:
         user32.ReleaseDC(None, hdc)
 
 
-def classify_surface(luma: float, current: str) -> str:
-    """返回 dark / light。带滞回，current 为当前判定。"""
+def classify_surface(luma: float, current: str, *, soft: bool = False) -> str:
+    """返回 dark / light。soft=亮度猛跳时跳过滞回。"""
+    if soft:
+        return "light" if luma >= LUMA_SOFT else "dark"
     cur = current if current in ("dark", "light") else "dark"
     if cur == "dark":
         return "light" if luma >= LUMA_TO_LIGHT else "dark"
