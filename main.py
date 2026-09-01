@@ -22,7 +22,7 @@ import updater
 from version import APP_VERSION
 
 WIN_W = 248
-WIN_H = 96
+WIN_H = 92
 FPS = 60
 
 
@@ -261,8 +261,8 @@ class WorkTimer:
         x, y = layered_win.clamp_pos(int(x), int(y), WIN_W, WIN_H)
         self.win.move(x, y)
 
-        self._font_title = _font(12)
-        self._font_big = _font(30)
+        self._font_title = _font(15)
+        self._font_big = _font(28)
         self._font_sub = _font(12)
         self._last_key = ""
         mode = str(self.cfg.get("display_mode") or "hms")
@@ -509,7 +509,6 @@ class WorkTimer:
             now = datetime.now()
             mode = self._display_mode()
             theme = self._theme()
-            progress = None
             if target is None:
                 key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}"
                 title = "弹性下班"
@@ -520,16 +519,14 @@ class WorkTimer:
                 oh, om = target
                 td = flex_time.remaining_to(now, oh, om)
                 total, done = flex_time.remaining_parts(td)
-                progress = flex_time.remaining_ratio(now, oh, om, start=self._start_hm())
-                pkey = f"{int(progress * 50):02d}"
                 big = flex_time.format_remaining(total, mode)
                 sub = ""
                 if done:
-                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}-{pkey}"
+                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}"
                     title = "已经到点"
                     accent = theme.done
                 else:
-                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{pkey}"
+                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}"
                     title = "距离您下班还有"
                     mins = total // 60
                     accent = theme.warn if mins < 30 else theme.big
@@ -542,7 +539,6 @@ class WorkTimer:
             themes.paint_card(
                 d, WIN_W, WIN_H, theme, title, big, sub, accent,
                 self._font_title, self._font_big, self._font_sub,
-                progress=progress,
             )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)

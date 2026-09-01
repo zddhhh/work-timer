@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 淡影默认皮：标题更弱、数字对比更高\n"
-                    "- 计时中底部细进度条，长度跟剩余工时走"
+                    "- 撤回 1.0.16 偏显眼的淡影改动，外观回到 1.0.15\n"
+                    "- 在线换皮仍只改颜色；进度条/字号等画法需要发版"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
