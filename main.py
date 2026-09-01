@@ -268,12 +268,6 @@ class WorkTimer:
         self._font_sub = _font(12)
         self._last_key = ""
         self._surface = "dark"
-        self._blend_from_surface = "dark"
-        self._blend_to_surface = "dark"
-        self._blend_t0: float | None = None
-        self._surface_votes = 0
-        self._surface_vote_for = ""
-        self._surface_boot = True
         self._last_surface_sample = 0.0
         self._force_surface_sample = True
         mode = str(self.cfg.get("display_mode") or "hms")
@@ -347,44 +341,14 @@ class WorkTimer:
         self._last_key = ""
         self._force_surface_sample = True
 
-    def _blend_amount(self) -> float:
-        if self._blend_t0 is None:
-            return 1.0
-        # ~0.55 秒缓变：既不明显跳，又不会拖太久
-        u = (time.monotonic() - self._blend_t0) / 0.55
-        if u >= 1.0:
-            self._blend_t0 = None
-            self._blend_from_surface = self._blend_to_surface
-            return 1.0
-        # smoothstep
-        return u * u * (3.0 - 2.0 * u)
-
-    def _start_surface_blend(self, to: str) -> None:
-        if to not in ("dark", "light"):
-            return
-        if to == self._surface and self._blend_t0 is None:
-            return
-        amt = self._blend_amount()
-        if self._blend_t0 is not None and amt < 1.0:
-            # 缓变中途改方向：从当前更接近的一侧接着混
-            self._blend_from_surface = (
-                self._blend_to_surface if amt >= 0.5 else self._blend_from_surface
-            )
-        else:
-            self._blend_from_surface = self._surface
-        self._blend_to_surface = to
-        self._surface = to
-        self._blend_t0 = time.monotonic()
-        self._last_key = ""
-
     def _refresh_surface(self, *, force: bool = False) -> None:
-        """带 adaptive 的皮采样窗周明暗；切换用缓变，避免闪一下。"""
+        """带 adaptive 的皮采样窗周明暗；认准后立刻切换。"""
         theme = self._theme()
         if not theme.adaptive:
             return
         now = time.monotonic()
-        # 约 1.2s 采一次；连续 2 次同意就切（约 2.5s 内开始缓变）
-        if not force and not self._force_surface_sample and now - self._last_surface_sample < 1.2:
+        # 约 0.45s 采一次，滞回足够稳，不再做缓变/连投
+        if not force and not self._force_surface_sample and now - self._last_surface_sample < 0.45:
             return
         self._last_surface_sample = now
         self._force_surface_sample = False
@@ -392,28 +356,9 @@ class WorkTimer:
         if luma is None:
             return
         surface = backdrop.classify_surface(luma, self._surface)
-        # 启动第一次：直接落到正确一侧，不播放缓变（避免先错色再闪）
-        if self._surface_boot:
-            self._surface_boot = False
+        if surface != self._surface:
             self._surface = surface
-            self._blend_from_surface = surface
-            self._blend_to_surface = surface
-            self._blend_t0 = None
             self._last_key = ""
-            return
-        if surface == self._surface:
-            self._surface_votes = 0
-            self._surface_vote_for = ""
-            return
-        if surface == self._surface_vote_for:
-            self._surface_votes += 1
-        else:
-            self._surface_vote_for = surface
-            self._surface_votes = 1
-        if self._surface_votes >= 2:
-            self._surface_votes = 0
-            self._surface_vote_for = ""
-            self._start_surface_blend(surface)
 
     def _refresh_themes(self) -> None:
         ok = themes.refresh_from_repo(self.cfg)
@@ -753,18 +698,10 @@ class WorkTimer:
             now = datetime.now()
             mode = self._display_mode()
             base = self._theme()
-            blend_amt = 1.0
-            if base.adaptive:
-                blend_amt = self._blend_amount()
-                ta = themes.resolve_for_surface(base, self._blend_from_surface)
-                tb = themes.resolve_for_surface(base, self._blend_to_surface)
-                theme = themes.blend_themes(ta, tb, blend_amt)
-                surface_key = f"{self._blend_from_surface}-{self._blend_to_surface}"
-            else:
-                theme = base
-                surface_key = "fixed"
+            surface = self._surface if base.adaptive else "dark"
+            theme = themes.resolve_for_surface(base, surface)
             if target is None:
-                key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}-{surface_key}"
+                key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}-{surface}"
                 title = "弹性下班"
                 big = "点击开始"
                 sub = ""
@@ -776,17 +713,16 @@ class WorkTimer:
                 big = flex_time.format_remaining(total, mode)
                 sub = ""
                 if done:
-                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}-{surface_key}"
+                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}-{surface}"
                     title = "已经到点"
                     accent = theme.done
                 else:
-                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface_key}"
+                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}"
                     title = "距离您下班还有"
                     mins = total // 60
                     accent = theme.warn if mins < 30 else theme.big
 
-            # 缓变中每帧重绘；静止时按 key 省电
-            if self._blend_t0 is None and key == self._last_key:
+            if key == self._last_key:
                 return
 
             img = Image.new("RGBA", (WIN_W, WIN_H), (0, 0, 0, 0))
@@ -839,10 +775,7 @@ class WorkTimer:
                 if was_dragging or moved:
                     self.win.ensure_visible()
                     self._last_key = ""
-                    # 拖完立刻采一次，缩短「换墙纸还干等」的感觉
                     self._force_surface_sample = True
-                    self._surface_votes = 0
-                    self._surface_vote_for = ""
                     self._persist_pos()
                     last_save = time.monotonic()
                     was_dragging = False

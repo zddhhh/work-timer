@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 墙纸变色响应加快（约 2～3 秒内开始缓变）\n"
-                    "- 仍保留短缓变，避免硬切闪一下"
+                    "- 去掉墙纸变色缓变，认准立刻切\n"
+                    "- 采样约 0.45 秒一次，拖完马上更新"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
