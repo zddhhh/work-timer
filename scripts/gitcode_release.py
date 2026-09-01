@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 沙漏重做：玻璃轮廓 + 沙堆 + 细沙粒，不再像火苗"
+                    "- 沙漏撤回：恢复生图玻璃器皿 + 动态沙子"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
