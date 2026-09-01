@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 墙纸明暗切换改为缓变，降低闪变感\n"
-                    "- 默认淡影在浅色墙纸下也可读"
+                    "- 墙纸变色响应加快（约 2～3 秒内开始缓变）\n"
+                    "- 仍保留短缓变，避免硬切闪一下"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

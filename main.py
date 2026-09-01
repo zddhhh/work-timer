@@ -350,8 +350,8 @@ class WorkTimer:
     def _blend_amount(self) -> float:
         if self._blend_t0 is None:
             return 1.0
-        # ~1 秒缓入缓出，肉眼接近无跳变
-        u = (time.monotonic() - self._blend_t0) / 1.05
+        # ~0.55 秒缓变：既不明显跳，又不会拖太久
+        u = (time.monotonic() - self._blend_t0) / 0.55
         if u >= 1.0:
             self._blend_t0 = None
             self._blend_from_surface = self._blend_to_surface
@@ -383,8 +383,8 @@ class WorkTimer:
         if not theme.adaptive:
             return
         now = time.monotonic()
-        # 约 3.5s 采一次；连续 3 次同意才切换
-        if not force and not self._force_surface_sample and now - self._last_surface_sample < 3.5:
+        # 约 1.2s 采一次；连续 2 次同意就切（约 2.5s 内开始缓变）
+        if not force and not self._force_surface_sample and now - self._last_surface_sample < 1.2:
             return
         self._last_surface_sample = now
         self._force_surface_sample = False
@@ -410,7 +410,7 @@ class WorkTimer:
         else:
             self._surface_vote_for = surface
             self._surface_votes = 1
-        if self._surface_votes >= 3:
+        if self._surface_votes >= 2:
             self._surface_votes = 0
             self._surface_vote_for = ""
             self._start_surface_blend(surface)
@@ -839,7 +839,10 @@ class WorkTimer:
                 if was_dragging or moved:
                     self.win.ensure_visible()
                     self._last_key = ""
+                    # 拖完立刻采一次，缩短「换墙纸还干等」的感觉
                     self._force_surface_sample = True
+                    self._surface_votes = 0
+                    self._surface_vote_for = ""
                     self._persist_pos()
                     last_save = time.monotonic()
                     was_dragging = False
