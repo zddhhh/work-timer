@@ -794,10 +794,11 @@ class WorkTimer:
                     mins = total // 60
                     accent = theme.warn if mins < 30 else theme.big
                     running = True
-                    tick = int(phase * 6)
+                    # 约 12fps 刷新漏沙动画；液面按剩余比例细分
+                    tick = int(phase * 12)
                     key = (
                         f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-"
-                        f"{w}x{h}-{int(remain_ratio * 40)}-{tick}"
+                        f"{w}x{h}-{int(remain_ratio * 200)}-{tick}"
                     )
             if theme.kind == "aurora":
                 key = f"{key}-a{int(phase * 4)}"

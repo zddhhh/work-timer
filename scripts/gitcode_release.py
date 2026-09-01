@@ -108,9 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 拖边/角拉伸缩放窗口\n"
-                    "- 生图玻璃沙漏 + 动态沙子\n"
-                    "- 修复深色窗最小化后浅色不换色"
+                    "- 沙漏颈部可见漏沙动画，上下仓随剩余时间变化"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
