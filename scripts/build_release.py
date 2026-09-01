@@ -44,6 +44,8 @@ def main() -> None:
         "--hidden-import",
         "themes",
         "--hidden-import",
+        "backdrop",
+        "--hidden-import",
         "ad_disguise",
         "--hidden-import",
         "store",

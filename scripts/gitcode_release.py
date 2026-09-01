@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 撤回 1.0.16 偏显眼的淡影改动，外观回到 1.0.15\n"
-                    "- 在线换皮仍只改颜色；进度条/字号等画法需要发版"
+                    "- 外观新增「自适应」：手动选中后按墙纸明暗切换字色\n"
+                    "- 默认仍为淡影，不会自动开启自适应"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

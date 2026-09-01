@@ -14,6 +14,7 @@ from tkinter import messagebox, ttk
 from PIL import Image, ImageDraw, ImageFont
 
 import ad_disguise
+import backdrop
 import flex_time
 import layered_win
 import store
@@ -265,6 +266,9 @@ class WorkTimer:
         self._font_big = _font(28)
         self._font_sub = _font(12)
         self._last_key = ""
+        self._surface = "dark"
+        self._last_surface_sample = 0.0
+        self._force_surface_sample = True
         mode = str(self.cfg.get("display_mode") or "hms")
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
@@ -334,6 +338,25 @@ class WorkTimer:
         self.cfg["theme"] = theme_id
         store.save_config(self.cfg)
         self._last_key = ""
+        self._force_surface_sample = True
+
+    def _refresh_surface(self, *, force: bool = False) -> None:
+        """仅「自适应」外观采样窗周明暗；其它皮不动。"""
+        theme = self._theme()
+        if not theme.adaptive:
+            return
+        now = time.monotonic()
+        if not force and not self._force_surface_sample and now - self._last_surface_sample < 2.2:
+            return
+        self._last_surface_sample = now
+        self._force_surface_sample = False
+        luma = backdrop.sample_luma_around(self.win.x, self.win.y, WIN_W, WIN_H)
+        if luma is None:
+            return
+        surface = backdrop.classify_surface(luma, self._surface)
+        if surface != self._surface:
+            self._surface = surface
+            self._last_key = ""
 
     def _refresh_themes(self) -> None:
         ok = themes.refresh_from_repo(self.cfg)
@@ -508,9 +531,11 @@ class WorkTimer:
             target = self._off_hm()
             now = datetime.now()
             mode = self._display_mode()
-            theme = self._theme()
+            base = self._theme()
+            surface = self._surface if base.adaptive else "dark"
+            theme = themes.resolve_for_surface(base, surface)
             if target is None:
-                key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}"
+                key = f"idle-{mode}-{theme.id}-{theme.fill}-{theme.kind}-{surface}"
                 title = "弹性下班"
                 big = "点击开始"
                 sub = ""
@@ -522,11 +547,11 @@ class WorkTimer:
                 big = flex_time.format_remaining(total, mode)
                 sub = ""
                 if done:
-                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}"
+                    key = f"done-{mode}-{theme.id}-{total}-{theme.fill}-{surface}"
                     title = "已经到点"
                     accent = theme.done
                 else:
-                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}"
+                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}"
                     title = "距离您下班还有"
                     mins = total // 60
                     accent = theme.warn if mins < 30 else theme.big
@@ -574,6 +599,7 @@ class WorkTimer:
                     self._open_idle_dialog()
                 if themes.consume_updated():
                     self._last_key = ""
+                    self._force_surface_sample = True
                 dragging = self.win.dragging
                 moved = self.win.just_moved
                 if dragging:
@@ -583,9 +609,11 @@ class WorkTimer:
                 if was_dragging or moved:
                     self.win.ensure_visible()
                     self._last_key = ""
+                    self._force_surface_sample = True
                     self._persist_pos()
                     last_save = time.monotonic()
                     was_dragging = False
+                self._refresh_surface()
                 self._paint()
                 now = time.monotonic()
                 if now - last_save > 1.5:

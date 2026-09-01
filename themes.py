@@ -6,7 +6,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import ImageDraw, ImageFont
@@ -33,6 +33,8 @@ class Theme:
     done: tuple[int, int, int, int]
     radius: int
     kind: str
+    adaptive: bool = False
+    light: Theme | None = None
 
 
 def _rgba(v, fallback: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
@@ -43,6 +45,11 @@ def _rgba(v, fallback: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
         return (r, g, b, a)
     except (TypeError, ValueError):
         return fallback
+
+
+def _luma(c: tuple[int, int, int, int]) -> float:
+    r, g, b, _a = c
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
 def _parse_theme(raw: object) -> Theme | None:
@@ -59,20 +66,76 @@ def _parse_theme(raw: object) -> Theme | None:
         radius = max(4, min(28, int(raw.get("radius") or 18)))
     except (TypeError, ValueError):
         radius = 18
+    adaptive = bool(raw.get("adaptive"))
+    fill = _rgba(raw.get("fill"), (22, 26, 34, 160))
+    outline = _rgba(raw.get("outline"), (255, 255, 255, 40))
+    title = _rgba(raw.get("title"), (180, 186, 200, 210))
+    big = _rgba(raw.get("big"), (244, 246, 250, 245))
+    sub = _rgba(raw.get("sub"), (150, 158, 172, 190))
+    idle = _rgba(raw.get("idle"), (140, 190, 255, 240))
+    warn = _rgba(raw.get("warn"), (255, 210, 120, 245))
+    done = _rgba(raw.get("done"), (120, 214, 168, 245))
+    light: Theme | None = None
+    on_light = raw.get("on_light")
+    if adaptive and isinstance(on_light, dict):
+        light = Theme(
+            tid,
+            name,
+            _rgba(on_light.get("fill"), fill),
+            _rgba(on_light.get("outline"), outline),
+            _rgba(on_light.get("title"), title),
+            _rgba(on_light.get("big"), big),
+            _rgba(on_light.get("sub"), sub),
+            _rgba(on_light.get("idle"), idle),
+            _rgba(on_light.get("warn"), warn),
+            _rgba(on_light.get("done"), done),
+            radius,
+            kind,
+            True,
+            None,
+        )
     return Theme(
-        tid,
-        name,
-        _rgba(raw.get("fill"), (22, 26, 34, 160)),
-        _rgba(raw.get("outline"), (255, 255, 255, 40)),
-        _rgba(raw.get("title"), (180, 186, 200, 210)),
-        _rgba(raw.get("big"), (244, 246, 250, 245)),
-        _rgba(raw.get("sub"), (150, 158, 172, 190)),
-        _rgba(raw.get("idle"), (140, 190, 255, 240)),
-        _rgba(raw.get("warn"), (255, 210, 120, 245)),
-        _rgba(raw.get("done"), (120, 214, 168, 245)),
-        radius,
-        kind,
+        tid, name, fill, outline, title, big, sub, idle, warn, done, radius, kind, adaptive, light
     )
+
+
+def _theme_to_dict(t: Theme) -> dict:
+    d = {
+        "id": t.id,
+        "name": t.name,
+        "kind": t.kind,
+        "radius": t.radius,
+        "adaptive": t.adaptive,
+        "fill": list(t.fill),
+        "outline": list(t.outline),
+        "title": list(t.title),
+        "big": list(t.big),
+        "sub": list(t.sub),
+        "idle": list(t.idle),
+        "warn": list(t.warn),
+        "done": list(t.done),
+    }
+    if t.adaptive and t.light is not None:
+        d["on_light"] = {
+            "fill": list(t.light.fill),
+            "outline": list(t.light.outline),
+            "title": list(t.light.title),
+            "big": list(t.light.big),
+            "sub": list(t.light.sub),
+            "idle": list(t.light.idle),
+            "warn": list(t.light.warn),
+            "done": list(t.light.done),
+        }
+    return d
+
+
+def resolve_for_surface(theme: Theme, surface: str) -> Theme:
+    """adaptive 主题按背后明暗取色；其它主题原样返回。"""
+    if not theme.adaptive:
+        return theme
+    if surface == "light" and theme.light is not None:
+        return theme.light
+    return replace(theme, light=None)
 
 
 def _parse_catalog(data: object) -> list[Theme]:
@@ -165,20 +228,27 @@ def consume_updated() -> bool:
 
 
 def load_local_catalog() -> None:
-    cached = _load_json_file(_cache_path())
-    if cached:
-        _set_catalog(cached, notify=False)
-        return
     bundled = _load_json_file(_bundled_path())
-    if bundled:
-        _set_catalog(bundled, notify=False)
+    cached = _load_json_file(_cache_path())
+    items = cached or bundled or _fallback()
+    # 旧缓存没有「自适应」时，从内置补一条，避免升到新 exe 后菜单里没有
+    if not any(t.adaptive for t in items):
+        for t in bundled:
+            if not t.adaptive:
+                continue
+            out = list(items)
+            if t.id not in {x.id for x in out}:
+                idx = next((i for i, x in enumerate(out) if x.id == "ghost"), -1) + 1
+                out.insert(max(0, idx), t)
+                items = out[:16]
+            break
+    _set_catalog(items, notify=False)
 
 
 def _fetch_urls(repo: str, token: str) -> list[str]:
     import updater
 
     owner, name = updater.parse_repo(repo)
-    # 网页 raw 地址会返回 HTML，不能当 JSON 读。只走 GitCode API。
     path = f"/repos/{owner}/{name}/raw/themes.json"
     urls = [f"https://api.gitcode.com/api/v5{path}?ref=main"]
     if token:
@@ -215,15 +285,10 @@ def refresh_from_repo(cfg: dict, *, timeout: float = 4.0) -> bool:
                 continue
             _set_catalog(items)
             try:
-                _cache_path().write_text(json.dumps({"version": 1, "themes": [
-                    {
-                        "id": t.id, "name": t.name, "kind": t.kind, "radius": t.radius,
-                        "fill": list(t.fill), "outline": list(t.outline),
-                        "title": list(t.title), "big": list(t.big), "sub": list(t.sub),
-                        "idle": list(t.idle), "warn": list(t.warn), "done": list(t.done),
-                    }
-                    for t in items
-                ]}, ensure_ascii=False, indent=2), encoding="utf-8")
+                _cache_path().write_text(
+                    json.dumps({"version": 1, "themes": [_theme_to_dict(t) for t in items]}, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
             except OSError:
                 pass
             return True
@@ -296,7 +361,9 @@ def paint_card(
             bb = d.textbbox((22, big_y), big, font=font_big)
             yline = min(int(bb[3]) + 5, h - 22)
             x2 = min(max(int(bb[2]), 102), w - 28)
-            d.line((22, yline, x2, yline), fill=(255, 255, 255, 42), width=1)
+            # 浅底用深色细线，深底用浅色细线
+            line = (20, 24, 32, 55) if _luma(accent) < 140 else (255, 255, 255, 42)
+            d.line((22, yline, x2, yline), fill=line, width=1)
         except Exception:
             pass
 
