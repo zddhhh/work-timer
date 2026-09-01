@@ -5,6 +5,7 @@ import ctypes
 import os
 import ssl
 import sys
+import threading
 import time
 import tkinter as tk
 from datetime import datetime
@@ -485,46 +486,151 @@ class WorkTimer:
 
     def _check_update(self) -> None:
         self.cfg = store.load_config()
-        status, info = updater.check_update(self.cfg)
         root = self._tk_root()
-        if status == "no_repo":
-            messagebox.showinfo(
-                "检查更新",
-                f"还没配置 GitCode 仓库。\n当前版本：{APP_VERSION}\n\n"
-                f"写入 {store.config_path()} 的 gitcode_repo 字段。",
-                parent=root,
-            )
-            return
-        if status.startswith("error:"):
-            messagebox.showerror("检查更新", status[6:], parent=root)
-            return
-        if status == "latest":
-            messagebox.showinfo(
-                "检查更新",
-                f"已是最新版。\n当前：{APP_VERSION}\n远端：{info.version if info else '-'}",
-                parent=root,
-            )
-            return
-        if status != "available" or info is None:
-            return
-        body = (info.body or "").strip()
-        tip = body[:300] + ("…" if len(body) > 300 else "")
-        ok = messagebox.askyesno(
-            "发现新版本",
-            f"当前：{APP_VERSION}\n最新：{info.version}（{info.tag}）\n\n{tip}\n\n是否下载并更新？",
-            parent=root,
-        )
-        if not ok:
-            return
-        if updater.current_exe_path() is None:
-            messagebox.showinfo("检查更新", "源码运行请重新打包 exe，或手动下载 Release 附件。", parent=root)
-            return
+        near = self._dialog_near()
+        dlg = tk.Toplevel(root)
+        dlg.title("检查更新")
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+        dlg.configure(bg="#1b1e26")
+        dlg.geometry(f"360x168+{near[0]}+{near[1]}")
         try:
-            path = updater.download_update(info, self.cfg)
-            updater.apply_update_and_restart(path)
-            updater.force_exit_for_update()
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror("更新失败", str(e), parent=root)
+            dlg.lift()
+            dlg.focus_force()
+        except Exception:
+            pass
+        dlg.grab_set()
+        dlg.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        status = tk.StringVar(value="正在连接 GitCode…")
+        detail = tk.StringVar(value=f"当前版本 {APP_VERSION}")
+        tk.Label(dlg, textvariable=status, fg="#f4f6fb", bg="#1b1e26", font=("Microsoft YaHei UI", 11, "bold")).pack(
+            pady=(18, 6), padx=16, anchor="w"
+        )
+        tk.Label(dlg, textvariable=detail, fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9)).pack(
+            padx=16, anchor="w"
+        )
+        bar = ttk.Progressbar(dlg, mode="indeterminate", length=320)
+        bar.pack(pady=16, padx=16)
+        bar.start(12)
+        btn_row = tk.Frame(dlg, bg="#1b1e26")
+        btn_row.pack(pady=(0, 14))
+        close_btn = tk.Button(
+            btn_row, text="关闭", width=8, bg="#3a3f4b", fg="white", relief="flat", state="disabled",
+            command=dlg.destroy,
+        )
+        close_btn.pack()
+
+        state: dict = {"busy": True, "info": None}
+
+        def ui(fn) -> None:
+            try:
+                dlg.after(0, fn)
+            except Exception:
+                pass
+
+        def finish_idle(msg: str, sub: str = "", *, error: bool = False) -> None:
+            state["busy"] = False
+            bar.stop()
+            bar.configure(mode="determinate", value=100 if not error else 0)
+            status.set(msg)
+            if sub:
+                detail.set(sub)
+            close_btn.configure(state="normal")
+            dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+
+        def start_download(info: updater.ReleaseInfo) -> None:
+            if updater.current_exe_path() is None:
+                finish_idle("当前是源码运行", "请重新打包 exe，或手动下载 Release 附件。", error=True)
+                return
+            status.set(f"正在下载 {info.version}…")
+            detail.set("准备下载安装包")
+            bar.stop()
+            bar.configure(mode="determinate", maximum=100, value=0)
+
+            def on_progress(done: int, total: int) -> None:
+                def _upd() -> None:
+                    if total > 0:
+                        pct = max(0, min(100, int(done * 100 / total)))
+                        bar.configure(value=pct)
+                        detail.set(f"{done / (1024 * 1024):.1f} / {total / (1024 * 1024):.1f} MB（{pct}%）")
+                    else:
+                        detail.set(f"已下载 {done / (1024 * 1024):.1f} MB")
+
+                ui(_upd)
+
+            def worker_dl() -> None:
+                try:
+                    path = updater.download_update(info, self.cfg, on_progress=on_progress)
+
+                    def _install() -> None:
+                        status.set("正在安装并重启…")
+                        detail.set("替换完成后会自动重新打开")
+                        bar.configure(value=100)
+                        dlg.update_idletasks()
+                        try:
+                            updater.apply_update_and_restart(path)
+                            updater.force_exit_for_update()
+                        except Exception as e:  # noqa: BLE001
+                            finish_idle("更新失败", str(e), error=True)
+
+                    ui(_install)
+                except Exception as e:  # noqa: BLE001
+                    err = str(e)
+                    ui(lambda: finish_idle("下载失败", err, error=True))
+
+            threading.Thread(target=worker_dl, daemon=True, name="update-download").start()
+
+        def after_check(result: tuple[str, updater.ReleaseInfo | None]) -> None:
+            st, info = result
+            if st == "no_repo":
+                finish_idle(
+                    "还没配置仓库",
+                    f"请写入 {store.config_path()} 的 gitcode_repo",
+                    error=True,
+                )
+                return
+            if st.startswith("error:"):
+                finish_idle("检查失败", st[6:], error=True)
+                return
+            if st == "latest":
+                finish_idle("已是最新版", f"当前 {APP_VERSION} · 远端 {info.version if info else '-'}")
+                return
+            if st != "available" or info is None:
+                finish_idle("检查结束", "没有可用更新", error=True)
+                return
+            state["info"] = info
+            bar.stop()
+            bar.configure(mode="determinate", value=0)
+            body = (info.body or "").strip()
+            tip = body[:180] + ("…" if len(body) > 180 else "")
+            status.set(f"发现新版本 {info.version}")
+            detail.set(tip or f"标签 {info.tag}")
+            close_btn.configure(state="normal", text="稍后")
+            dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+
+            def go() -> None:
+                close_btn.configure(state="disabled", text="关闭")
+                dlg.protocol("WM_DELETE_WINDOW", lambda: None)
+                yes.pack_forget()
+                start_download(info)
+
+            yes = tk.Button(
+                btn_row, text="下载并更新", width=12, bg="#3d7eff", fg="white", relief="flat", command=go
+            )
+            yes.pack(side="left", padx=8)
+            close_btn.pack_forget()
+            close_btn.pack(side="left", padx=8)
+
+        def worker_check() -> None:
+            try:
+                result = updater.check_update(self.cfg)
+            except Exception as e:  # noqa: BLE001
+                result = (f"error:{e}", None)
+            ui(lambda: after_check(result))
+
+        threading.Thread(target=worker_check, daemon=True, name="update-check").start()
+        dlg.wait_window()
 
     def _paint(self) -> None:
         try:

@@ -10,6 +10,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,17 +68,31 @@ def _http_get_json(url: str, token: str = "") -> object:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _http_download(url: str, dest: Path, token: str = "") -> None:
+def _http_download(
+    url: str,
+    dest: Path,
+    token: str = "",
+    on_progress: Callable[[int, int], None] | None = None,
+) -> None:
     headers = {"User-Agent": f"WorkTimer/{APP_VERSION}"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
+        total = 0
+        try:
+            total = int(resp.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        done = 0
         while True:
             chunk = resp.read(1024 * 256)
             if not chunk:
                 break
             f.write(chunk)
+            done += len(chunk)
+            if on_progress is not None:
+                on_progress(done, total)
 
 
 def _pick_asset(assets: list[dict], want: str) -> dict | None:
@@ -225,13 +240,17 @@ def pending_update_path() -> Path | None:
     return None
 
 
-def download_update(info: ReleaseInfo, cfg: dict) -> Path:
+def download_update(
+    info: ReleaseInfo,
+    cfg: dict,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> Path:
     cleanup_update_artifacts(keep_pending=False)
     token = (cfg.get("gitcode_token") or "").strip()
     tmp = Path(tempfile.gettempdir()) / f"WorkTimer_update_{info.version}.exe"
     if tmp.exists():
         tmp.unlink()
-    _http_download(info.download_url, tmp, token=token)
+    _http_download(info.download_url, tmp, token=token, on_progress=on_progress)
     if tmp.stat().st_size < 1024 * 100:
         raise RuntimeError("下载文件太小，可能不是有效的 exe（检查 Release 附件名）")
     return tmp

@@ -14,7 +14,7 @@ from PIL import ImageDraw, ImageFont
 import store
 
 DEFAULT_THEME_ID = "ghost"
-_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal"})
+_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold"})
 _updated = False
 _lock = threading.Lock()
 
@@ -230,19 +230,21 @@ def consume_updated() -> bool:
 def load_local_catalog() -> None:
     bundled = _load_json_file(_bundled_path())
     cached = _load_json_file(_cache_path())
-    items = cached or bundled or _fallback()
-    # 旧缓存没有「自适应」时，从内置补一条，避免升到新 exe 后菜单里没有
-    if not any(t.adaptive for t in items):
-        for t in bundled:
-            if not t.adaptive:
-                continue
-            out = list(items)
-            if t.id not in {x.id for x in out}:
-                idx = next((i for i, x in enumerate(out) if x.id == "ghost"), -1) + 1
-                out.insert(max(0, idx), t)
-                items = out[:16]
+    items = list(cached or bundled or _fallback())
+    # 旧缓存缺新皮时，从内置按 id 补齐（自适应 / 极光 / 墨金等）
+    have = {t.id for t in items}
+    for t in bundled:
+        if t.id in have:
+            continue
+        if t.id == "auto":
+            idx = next((i for i, x in enumerate(items) if x.id == "ghost"), -1) + 1
+            items.insert(max(0, idx), t)
+        else:
+            items.append(t)
+        have.add(t.id)
+        if len(items) >= 16:
             break
-    _set_catalog(items, notify=False)
+    _set_catalog(items[:16], notify=False)
 
 
 def _fetch_urls(repo: str, token: str) -> list[str]:
@@ -349,6 +351,20 @@ def paint_card(
             d.rectangle((8, 8, w - 9, 10), fill=(70, 180, 100, 150))
             for y in range(16, h - 10, 5):
                 d.line((10, y, w - 11, y), fill=(0, 40, 16, 26))
+        elif kind == "aurora":
+            d.rounded_rectangle((10, 8, w - 11, 30), radius=max(8, r - 6), fill=(160, 100, 255, 36))
+            for i in range(7):
+                t = i / 6
+                rr = int(120 + 40 * t)
+                gg = int(80 + 140 * t)
+                bb = int(255 - 40 * t)
+                aa = max(28, 110 - i * 12)
+                d.rectangle((9 + i * 2, 14, 12 + i * 2, h - 14), fill=(rr, gg, bb, aa))
+            d.ellipse((w - 54, 8, w - 10, 48), fill=(80, 220, 210, 28))
+        elif kind == "inkgold":
+            d.rounded_rectangle((10, 9, w - 11, 34), radius=max(8, r - 6), fill=(255, 214, 140, 18))
+            d.line((22, 36, min(96, w - 36), 36), fill=(212, 175, 90, 170), width=1)
+            d.rectangle((10, h - 14, w - 11, h - 11), fill=(212, 175, 90, 70))
 
     ghost = kind == "ghost"
     big_y = 42 if sub else 40

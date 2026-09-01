@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 外观新增「自适应」：手动选中后按墙纸明暗切换字色\n"
-                    "- 默认仍为淡影，不会自动开启自适应"
+                    "- 检查更新：检查中 / 下载进度 / 安装提示，不再假死\n"
+                    "- 外观新增「极光」「墨金」"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
