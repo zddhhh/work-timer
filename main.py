@@ -773,7 +773,8 @@ class WorkTimer:
                     accent = theme.warn if mins < 30 else theme.big
                     key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-{w}x{h}"
             if ornaments.has_skin(theme.kind):
-                key = f"{key}-a{int(phase * 4)}"
+                # ~24fps 刷新贴图裁剪，看起来更丝滑
+                key = f"{key}-a{int(phase * 24)}"
 
             if key == self._last_key:
                 return

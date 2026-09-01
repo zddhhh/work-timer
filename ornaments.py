@@ -9,6 +9,8 @@ from PIL import Image, ImageChops, ImageDraw
 import store
 
 _ASSET_CACHE: dict[str, Image.Image] = {}
+# (asset_name, tw, th) -> resized RGBA
+_RESIZE_CACHE: dict[tuple[str, int, int], Image.Image] = {}
 
 # kind -> (主贴图, 可选第二层)；淡影(ghost)不用生图
 _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
@@ -38,6 +40,19 @@ def load_asset(name: str) -> Image.Image | None:
         return None
     _ASSET_CACHE[name] = im
     return im
+
+
+def _resized(name: str, src: Image.Image, tw: int, th: int) -> Image.Image:
+    key = (name, tw, th)
+    got = _RESIZE_CACHE.get(key)
+    if got is not None:
+        return got
+    out = src.resize((tw, th), Image.Resampling.LANCZOS)
+    # 只留最近几档，避免拖放缩放时缓存膨胀
+    if len(_RESIZE_CACHE) > 24:
+        _RESIZE_CACHE.clear()
+    _RESIZE_CACHE[key] = out
+    return out
 
 
 def layout_for(w: int, h: int) -> tuple[int, int, int]:
@@ -94,16 +109,16 @@ def paste_skin(
     if drape is not None:
         tw = max(bw + 80, drape.width)
         th = max(bh, drape.height)
-        src = drape.resize((tw, th), Image.Resampling.LANCZOS)
-        ox = int((phase * 10) % max(1, src.width - bw))
+        src = _resized(name_a, drape, tw, th)
+        ox = int((phase * 28) % max(1, src.width - bw))
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
         layer = Image.alpha_composite(layer, _scale_alpha(crop, a0))
     if glow is not None:
         tw = max(bw + 60, glow.width)
         th = max(bh, glow.height)
-        src = glow.resize((tw, th), Image.Resampling.LANCZOS)
-        ox = int((phase * -8) % max(1, src.width - bw))
+        src = _resized(name_b or "glow", glow, tw, th)
+        ox = int((phase * -22) % max(1, src.width - bw))
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
         layer = Image.alpha_composite(layer, _scale_alpha(crop, a1))

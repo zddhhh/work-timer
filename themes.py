@@ -388,7 +388,6 @@ def paint_card(
     box = (6, 6, w - 7, h - 7)
     kind = theme.kind
     r = min(theme.radius, max(6, h // 4))
-    right_limit = text_right if text_right is not None else w - 16
     pad_x = max(10, min(22, w // 12))
     title_y = max(6, h // 10)
     big_y = int(h * (0.42 if sub else 0.38))
@@ -426,16 +425,6 @@ def paint_card(
     _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost)
     if sub:
         _halo_text(d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub, ghost=ghost)
-    if ghost:
-        try:
-            bb = d.textbbox((pad_x, big_y), big, font=font_big)
-            yline = min(int(bb[3]) + 4, h - 10)
-            x2 = min(max(int(bb[2]), min(102, right_limit)), right_limit)
-            # 浅底用深色细线，深底用浅色细线
-            line = (20, 24, 32, 55) if _luma(accent) < 140 else (255, 255, 255, 42)
-            d.line((pad_x, yline, x2, yline), fill=line, width=1)
-        except Exception:
-            pass
 
 
 load_local_catalog()
