@@ -235,6 +235,8 @@ class WorkTimer:
                 ctypes.windll.user32.SetProcessDPIAware()
             except Exception:
                 pass
+        if updater.resume_pending_update():
+            updater.force_exit_for_update()
         updater.cleanup_update_artifacts()
         self.cfg = store.load_config()
         self.running = True

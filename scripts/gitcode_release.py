@@ -108,7 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- Esc 广告伪装改为开关，默认关闭"
+                    "- 修复 OTA 替换失败留下 WorkTimer.exe.new 的问题\n"
+                    "- 启动时自动收尾未完成的更新"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

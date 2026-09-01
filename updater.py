@@ -163,7 +163,7 @@ def current_exe_path() -> Path | None:
     return None
 
 
-def cleanup_update_artifacts(*, exe_dir: Path | None = None) -> None:
+def cleanup_update_artifacts(*, exe_dir: Path | None = None, keep_pending: bool = True) -> None:
     tmp = Path(tempfile.gettempdir())
     for pat in (
         "WorkTimer_update_*.exe",
@@ -194,16 +194,39 @@ def cleanup_update_artifacts(*, exe_dir: Path | None = None) -> None:
             p.unlink(missing_ok=True)
         except OSError:
             pass
-    for name in ("WorkTimer.exe.new", "WorkTimer.exe.old", "WorkTimer.exe.bak"):
+    for name in ("WorkTimer.exe.old", "WorkTimer.exe.bak"):
         p = root / name
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+    # .exe.new 可能是未完成的 OTA，默认保留，启动时会尝试收尾
+    if not keep_pending:
+        p = root / "WorkTimer.exe.new"
         try:
             p.unlink(missing_ok=True)
         except OSError:
             pass
 
 
+def pending_update_path() -> Path | None:
+    cur = current_exe_path()
+    if cur is None:
+        return None
+    pending = Path(str(cur) + ".new")
+    if not pending.exists():
+        return None
+    try:
+        if pending.stat().st_size >= 1024 * 100:
+            return pending
+        pending.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return None
+
+
 def download_update(info: ReleaseInfo, cfg: dict) -> Path:
-    cleanup_update_artifacts()
+    cleanup_update_artifacts(keep_pending=False)
     token = (cfg.get("gitcode_token") or "").strip()
     tmp = Path(tempfile.gettempdir()) / f"WorkTimer_update_{info.version}.exe"
     if tmp.exists():
@@ -214,52 +237,9 @@ def download_update(info: ReleaseInfo, cfg: dict) -> Path:
     return tmp
 
 
-def apply_update_and_restart(new_exe: Path) -> None:
-    cur = current_exe_path()
-    if cur is None:
-        raise RuntimeError("源码运行模式不能热更新，请重新打包 exe")
-
-    pid = os.getpid()
+def _spawn_replacer(ps1: str, pid: int) -> None:
     tmp_dir = Path(tempfile.gettempdir())
     ps1_path = tmp_dir / f"WorkTimer_update_{pid}.ps1"
-    log_path = tmp_dir / f"WorkTimer_update_{pid}.log"
-    new_s = str(new_exe).replace("'", "''")
-    cur_s = str(cur).replace("'", "''")
-    cur_dir = str(cur.parent).replace("'", "''")
-    tmp_dir_s = str(tmp_dir).replace("'", "''")
-    log_s = str(log_path).replace("'", "''")
-    ps1 = f"""$ErrorActionPreference = 'Stop'
-function Log($m) {{ Add-Content -LiteralPath '{log_s}' -Value ("[{{0}}] {{1}}" -f (Get-Date -Format 'HH:mm:ss'), $m) -ErrorAction SilentlyContinue }}
-Log 'updater started'
-$deadline = (Get-Date).AddSeconds(90)
-while (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{
-  if ((Get-Date) -gt $deadline) {{ Log 'wait timeout, continue'; break }}
-  Start-Sleep -Seconds 1
-}}
-Log 'process exited'
-Start-Sleep -Seconds 2
-$src = Get-Item -LiteralPath '{new_s}'
-if ($src.Length -lt 100KB) {{ throw 'update file too small' }}
-$tmpOut = '{cur_s}.new'
-Copy-Item -LiteralPath '{new_s}' -Destination $tmpOut -Force
-Move-Item -LiteralPath $tmpOut -Destination '{cur_s}' -Force
-Log ('replaced ok, size=' + (Get-Item -LiteralPath '{cur_s}').Length)
-Remove-Item -LiteralPath '{new_s}' -Force -ErrorAction SilentlyContinue
-Get-ChildItem -LiteralPath '{cur_dir}' -Filter 'WorkTimer-*.exe' -ErrorAction SilentlyContinue | ForEach-Object {{
-  if ($_.FullName -ne '{cur_s}') {{
-    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
-    Log ('removed old copy ' + $_.Name)
-  }}
-}}
-Remove-Item -LiteralPath '{cur_s}.new','{cur_s}.old','{cur_s}.bak' -Force -ErrorAction SilentlyContinue
-Get-ChildItem -LiteralPath '{tmp_dir_s}' -Filter 'WorkTimer_update_*' -ErrorAction SilentlyContinue | ForEach-Object {{
-  Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
-}}
-$env:PYINSTALLER_RESET_ENVIRONMENT = '1'
-$p = Start-Process -FilePath '{cur_s}' -WorkingDirectory '{cur_dir}' -PassThru
-Log ('restarted pid=' + $p.Id)
-Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-"""
     ps1_path.write_text(ps1, encoding="utf-8")
     create_no_window = 0x08000000
     subprocess.Popen(
@@ -279,6 +259,92 @@ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction Silent
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def _replace_script(*, pid: int, new_exe: Path, cur: Path, already_staged: bool) -> str:
+    """等待本进程退出后，用 rename 替换 exe（比直接 Move 覆盖更稳）。"""
+    new_s = str(new_exe).replace("'", "''")
+    cur_s = str(cur).replace("'", "''")
+    cur_dir = str(cur.parent).replace("'", "''")
+    tmp_dir_s = str(Path(tempfile.gettempdir())).replace("'", "''")
+    log_s = str(Path(tempfile.gettempdir()) / f"WorkTimer_update_{pid}.log").replace("'", "''")
+    stage = "1" if already_staged else "0"
+    return f"""$ErrorActionPreference = 'Stop'
+function Log($m) {{ Add-Content -LiteralPath '{log_s}' -Value ("[{{0}}] {{1}}" -f (Get-Date -Format 'HH:mm:ss'), $m) -ErrorAction SilentlyContinue }}
+Log 'updater started'
+$deadline = (Get-Date).AddSeconds(120)
+while (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{
+  if ((Get-Date) -gt $deadline) {{ Log 'wait timeout, abort'; exit 1 }}
+  Start-Sleep -Milliseconds 400
+}}
+Log 'process exited'
+Start-Sleep -Seconds 1
+$cur = '{cur_s}'
+$new = '{new_s}'
+$staged = '{cur_s}.new'
+$old = '{cur_s}.old'
+if ({stage} -eq 0) {{
+  $src = Get-Item -LiteralPath $new
+  if ($src.Length -lt 100KB) {{ throw 'update file too small' }}
+  Copy-Item -LiteralPath $new -Destination $staged -Force
+  Log 'staged to .new'
+}} else {{
+  if (-not (Test-Path -LiteralPath $staged)) {{ throw 'missing staged .new' }}
+  if ((Get-Item -LiteralPath $staged).Length -lt 100KB) {{ throw 'staged file too small' }}
+  Log 'using existing .new'
+}}
+$ok = $false
+for ($i = 0; $i -lt 40; $i++) {{
+  try {{
+    if (Test-Path -LiteralPath $old) {{ Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }}
+    if (Test-Path -LiteralPath $cur) {{
+      Move-Item -LiteralPath $cur -Destination $old -Force
+    }}
+    Move-Item -LiteralPath $staged -Destination $cur -Force
+    $ok = $true
+    Log ('replaced ok, size=' + (Get-Item -LiteralPath $cur).Length)
+    break
+  }} catch {{
+    Log ("retry $i : " + $_.Exception.Message)
+    Start-Sleep -Milliseconds 500
+  }}
+}}
+if (-not $ok) {{ throw 'replace failed after retries' }}
+Remove-Item -LiteralPath $new,$old,'{cur_s}.bak' -Force -ErrorAction SilentlyContinue
+Get-ChildItem -LiteralPath '{cur_dir}' -Filter 'WorkTimer-*.exe' -ErrorAction SilentlyContinue | ForEach-Object {{
+  if ($_.FullName -ne $cur) {{
+    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+  }}
+}}
+Get-ChildItem -LiteralPath '{tmp_dir_s}' -Filter 'WorkTimer_update_*' -ErrorAction SilentlyContinue | ForEach-Object {{
+  Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+}}
+$env:PYINSTALLER_RESET_ENVIRONMENT = '1'
+$p = Start-Process -FilePath $cur -WorkingDirectory '{cur_dir}' -PassThru
+Log ('restarted pid=' + $p.Id)
+Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+"""
+
+
+def apply_update_and_restart(new_exe: Path) -> None:
+    cur = current_exe_path()
+    if cur is None:
+        raise RuntimeError("源码运行模式不能热更新，请重新打包 exe")
+    pid = os.getpid()
+    ps1 = _replace_script(pid=pid, new_exe=new_exe, cur=cur, already_staged=False)
+    _spawn_replacer(ps1, pid)
+
+
+def resume_pending_update() -> bool:
+    """启动时若发现上次 OTA 留下的 .exe.new，继续替换并重启。"""
+    cur = current_exe_path()
+    pending = pending_update_path()
+    if cur is None or pending is None:
+        return False
+    pid = os.getpid()
+    ps1 = _replace_script(pid=pid, new_exe=pending, cur=cur, already_staged=True)
+    _spawn_replacer(ps1, pid)
+    return True
 
 
 def force_exit_for_update() -> None:
