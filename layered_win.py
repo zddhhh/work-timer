@@ -92,12 +92,13 @@ EVENT_SYSTEM_MINIMIZESTART = 0x0016
 EVENT_SYSTEM_MINIMIZEEND = 0x0017
 EVENT_SYSTEM_DESKTOPSWITCH = 0x0020
 WINEVENT_OUTOFCONTEXT = 0x0000
-EDGE = 10
-MIN_W, MAX_W = 200, 520
-MIN_H, MAX_H = 70, 200
+EDGE = 12
+BASE_W, BASE_H = 248, 92
+MIN_W, MIN_H = BASE_W, BASE_H
+MAX_W = 520
+MAX_H = int(round(MAX_W * BASE_H / BASE_W))
+ASPECT = BASE_W / BASE_H
 IDC_ARROW = 32512
-IDC_SIZEWE = 32644
-IDC_SIZENS = 32645
 IDC_SIZENWSE = 32642
 IDC_SIZENESW = 32643
 
@@ -336,8 +337,7 @@ class LayeredPetWindow:
         self._old = gdi32.SelectObject(self._hdc_mem, self._hbmp)
 
     def resize(self, width: int, height: int, *, x: int | None = None, y: int | None = None) -> None:
-        width = max(MIN_W, min(MAX_W, int(width)))
-        height = max(MIN_H, min(MAX_H, int(height)))
+        width, height = snap_size(int(width), int(height))
         nx = self.x if x is None else int(x)
         ny = self.y if y is None else int(y)
         nx, ny = clamp_pos(nx, ny, width, height)
@@ -476,22 +476,20 @@ class LayeredPetWindow:
         return self._hit_mask[ly * self.width + lx]
 
     def _edge_hit(self, lx: int, ly: int) -> tuple[bool, bool, bool, bool]:
-        return (
-            lx < EDGE,
-            lx >= self.width - EDGE,
-            ly < EDGE,
-            ly >= self.height - EDGE,
-        )
+        """只认四角，保证斜向等比缩放。"""
+        left = lx < EDGE
+        right = lx >= self.width - EDGE
+        top = ly < EDGE
+        bottom = ly >= self.height - EDGE
+        if (left or right) and (top or bottom):
+            return left, right, top, bottom
+        return False, False, False, False
 
     def _set_edge_cursor(self, left: bool, right: bool, top: bool, bottom: bool) -> None:
         if (left and top) or (right and bottom):
             cur = IDC_SIZENWSE
         elif (right and top) or (left and bottom):
             cur = IDC_SIZENESW
-        elif left or right:
-            cur = IDC_SIZEWE
-        elif top or bottom:
-            cur = IDC_SIZENS
         else:
             cur = IDC_ARROW
         user32.SetCursor(user32.LoadCursorW(None, cur))
@@ -544,28 +542,20 @@ class LayeredPetWindow:
             user32.GetCursorPos(ctypes.byref(pt))
             dx = pt.x - self._resize_opx
             dy = pt.y - self._resize_opy
+            ow, oh = self._resize_ow, self._resize_oh
+            raw_w = ow + dx if self._resize_right else ow - dx
+            raw_h = oh + dy if self._resize_bottom else oh - dy
+            sw = raw_w / max(1, ow)
+            sh = raw_h / max(1, oh)
+            scale = sw if abs(sw - 1.0) >= abs(sh - 1.0) else sh
+            nw = int(round(ow * scale))
+            nh = int(round(nw / ASPECT))
+            nw, nh = snap_size(nw, nh)
             nx, ny = self._resize_ox, self._resize_oy
-            nw, nh = self._resize_ow, self._resize_oh
             if self._resize_left:
-                nx = self._resize_ox + dx
-                nw = self._resize_ow - dx
-            if self._resize_right:
-                nw = self._resize_ow + dx
+                nx = self._resize_ox + ow - nw
             if self._resize_top:
-                ny = self._resize_oy + dy
-                nh = self._resize_oh - dy
-            if self._resize_bottom:
-                nh = self._resize_oh + dy
-            if nw < MIN_W:
-                if self._resize_left:
-                    nx = self._resize_ox + self._resize_ow - MIN_W
-                nw = MIN_W
-            if nh < MIN_H:
-                if self._resize_top:
-                    ny = self._resize_oy + self._resize_oh - MIN_H
-                nh = MIN_H
-            nw = min(MAX_W, nw)
-            nh = min(MAX_H, nh)
+                ny = self._resize_oy + oh - nh
             if abs(nw - self.width) >= 2 or abs(nh - self.height) >= 2 or nx != self.x or ny != self.y:
                 self._drag_moved = True
                 self.resize(nw, nh, x=nx, y=ny)
@@ -763,6 +753,23 @@ def monitor_work_at(x: int, y: int) -> RECT:
     if hmon and user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
         return mi.rcWork
     return work_area()
+
+
+def snap_size(w: int, h: int) -> tuple[int, int]:
+    """锁定 248:92 比例；不小于最小尺寸。"""
+    w = int(w)
+    # 以宽为准等比，再夹到合法范围
+    w = max(MIN_W, min(MAX_W, w))
+    h = int(round(w * BASE_H / BASE_W))
+    if h > MAX_H:
+        h = MAX_H
+        w = int(round(h * BASE_W / BASE_H))
+    if h < MIN_H:
+        h = MIN_H
+        w = int(round(h * BASE_W / BASE_H))
+    w = max(MIN_W, min(MAX_W, w))
+    h = int(round(w * BASE_H / BASE_W))
+    return w, h
 
 
 def clamp_pos(x: int, y: int, w: int, h: int) -> tuple[int, int]:

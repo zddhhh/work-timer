@@ -108,7 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 沙漏颈部可见漏沙动画，上下仓随剩余时间变化"
+                    "- 四角等比缩放（最小 248×92）\n"
+                    "- 沙漏按最近设置的下班时长漏完，改时间重置满沙"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

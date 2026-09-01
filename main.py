@@ -354,10 +354,19 @@ class WorkTimer:
         if not isinstance(w, int) or not isinstance(h, int):
             legacy = str(self.cfg.get("win_size") or "")
             w, h = _LEGACY_SIZES.get(legacy, (248, 92))
-        w = max(layered_win.MIN_W, min(layered_win.MAX_W, int(w)))
-        h = max(layered_win.MIN_H, min(layered_win.MAX_H, int(h)))
+        w, h = layered_win.snap_size(int(w), int(h))
         self.cfg["win_w"], self.cfg["win_h"] = w, h
         return w, h
+
+    def _reset_sand_clock(self) -> None:
+        """按「此刻到下班」重置沙漏：上仓满沙，漏完时长=这段剩余时间。"""
+        off = self._off_hm()
+        if off is None:
+            return
+        td = flex_time.remaining_to(datetime.now(), off[0], off[1])
+        sec = int(td.total_seconds())
+        self.cfg["sand_total_sec"] = max(60, sec) if sec > 0 else 60
+        self._last_key = ""
 
     def _sync_layout_from_window(self) -> None:
         w, h = self.win.width, self.win.height
@@ -484,6 +493,7 @@ class WorkTimer:
         self.cfg["time_mode"] = "flex"
         self.cfg["start_h"], self.cfg["start_m"] = picked
         self.cfg["start_date"] = self._today()
+        self._reset_sand_clock()
         store.save_config(self.cfg)
         self._last_key = ""
 
@@ -499,6 +509,7 @@ class WorkTimer:
         self.cfg["time_mode"] = "direct"
         self.cfg["off_h"], self.cfg["off_m"] = picked
         self.cfg["start_date"] = self._today()
+        self._reset_sand_clock()
         store.save_config(self.cfg)
         self._last_key = ""
 
@@ -745,18 +756,15 @@ class WorkTimer:
             time.sleep(0.03)
 
     def _remain_ratio(self, remain_sec: int, done: bool) -> float:
-        """上仓沙子比例：1=刚上班满仓，0=到点清空。"""
+        """上仓沙子比例：最近一次设置时满仓，按 sand_total_sec 漏完。"""
         if done:
             return 0.0
-        span = max(60, int(flex_time.WORK_MINUTES) * 60)
-        start = self._start_hm()
-        off = self._off_hm()
-        if start is not None and off is not None:
-            sm = start[0] * 60 + start[1]
-            om = off[0] * 60 + off[1]
-            if om <= sm:
-                om += 24 * 60
-            span = max(60, (om - sm) * 60)
+        span = self.cfg.get("sand_total_sec")
+        if not isinstance(span, int) or span < 60:
+            # 旧配置：以当前剩余为总时长，避免突然跳变
+            span = max(60, int(remain_sec))
+            self.cfg["sand_total_sec"] = span
+            store.save_config(self.cfg)
         return max(0.0, min(1.0, float(remain_sec) / float(span)))
 
     def _paint(self) -> None:
