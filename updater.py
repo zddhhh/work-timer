@@ -59,12 +59,12 @@ def parse_repo(repo: str) -> tuple[str, str]:
     raise ValueError(f"仓库地址格式不对：{repo}（例：owner/repo 或 https://gitcode.com/owner/repo）")
 
 
-def _http_get_json(url: str, token: str = "") -> object:
+def _http_get_json(url: str, token: str = "", *, timeout: float = 10.0) -> object:
     headers = {"User-Agent": f"WorkTimer/{APP_VERSION}", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -119,7 +119,7 @@ def fetch_latest_release(
     if token:
         url += f"&access_token={urllib.parse.quote(token)}"
 
-    data = _http_get_json(url, token=token)
+    data = _http_get_json(url, token=token, timeout=10.0)
     if not isinstance(data, list) or not data:
         raise RuntimeError("仓库还没有 Release，请先在 GitCode 发布并上传 exe")
 

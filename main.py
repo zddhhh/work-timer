@@ -493,14 +493,12 @@ class WorkTimer:
         dlg.resizable(False, False)
         dlg.attributes("-topmost", True)
         dlg.configure(bg="#1b1e26")
-        dlg.geometry(f"360x168+{near[0]}+{near[1]}")
+        dlg.geometry(f"360x150+{near[0]}+{near[1]}")
         try:
             dlg.lift()
             dlg.focus_force()
         except Exception:
             pass
-        dlg.grab_set()
-        dlg.protocol("WM_DELETE_WINDOW", lambda: None)
 
         status = tk.StringVar(value="正在连接 GitCode…")
         detail = tk.StringVar(value=f"当前版本 {APP_VERSION}")
@@ -511,126 +509,167 @@ class WorkTimer:
             padx=16, anchor="w"
         )
         bar = ttk.Progressbar(dlg, mode="indeterminate", length=320)
-        bar.pack(pady=16, padx=16)
+        bar.pack(pady=(16, 8), padx=16)
         bar.start(12)
         btn_row = tk.Frame(dlg, bg="#1b1e26")
-        btn_row.pack(pady=(0, 14))
-        close_btn = tk.Button(
-            btn_row, text="关闭", width=8, bg="#3a3f4b", fg="white", relief="flat", state="disabled",
-            command=dlg.destroy,
-        )
-        close_btn.pack()
+        btn_row.pack(pady=(4, 14))
 
-        state: dict = {"busy": True, "info": None}
+        state: dict = {"closed": False, "phase": "check", "yes": None, "pending_dl": None}
 
-        def ui(fn) -> None:
+        def alive() -> bool:
+            return not state["closed"] and bool(dlg.winfo_exists())
+
+        def on_close() -> None:
+            state["closed"] = True
             try:
-                dlg.after(0, fn)
+                bar.stop()
+            except Exception:
+                pass
+            try:
+                dlg.destroy()
             except Exception:
                 pass
 
+        dlg.protocol("WM_DELETE_WINDOW", on_close)
+
         def finish_idle(msg: str, sub: str = "", *, error: bool = False) -> None:
-            state["busy"] = False
+            if not alive():
+                return
+            state["phase"] = "idle"
             bar.stop()
-            bar.configure(mode="determinate", value=100 if not error else 0)
+            bar.configure(mode="determinate", value=0 if error else 100)
             status.set(msg)
-            if sub:
-                detail.set(sub)
-            close_btn.configure(state="normal")
-            dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+            detail.set(sub or "可以关闭窗口")
 
         def start_download(info: updater.ReleaseInfo) -> None:
+            if not alive():
+                return
             if updater.current_exe_path() is None:
                 finish_idle("当前是源码运行", "请重新打包 exe，或手动下载 Release 附件。", error=True)
                 return
+            state["phase"] = "download"
             status.set(f"正在下载 {info.version}…")
             detail.set("准备下载安装包")
             bar.stop()
             bar.configure(mode="determinate", maximum=100, value=0)
+            if state["yes"] is not None:
+                try:
+                    state["yes"].pack_forget()
+                except Exception:
+                    pass
+
+            done_box: list[object] = []
 
             def on_progress(done: int, total: int) -> None:
-                def _upd() -> None:
-                    if total > 0:
-                        pct = max(0, min(100, int(done * 100 / total)))
-                        bar.configure(value=pct)
-                        detail.set(f"{done / (1024 * 1024):.1f} / {total / (1024 * 1024):.1f} MB（{pct}%）")
-                    else:
-                        detail.set(f"已下载 {done / (1024 * 1024):.1f} MB")
-
-                ui(_upd)
+                done_box.clear()
+                done_box.append(("progress", done, total))
 
             def worker_dl() -> None:
                 try:
                     path = updater.download_update(info, self.cfg, on_progress=on_progress)
+                    done_box.clear()
+                    done_box.append(("ok", path))
+                except Exception as e:  # noqa: BLE001
+                    done_box.clear()
+                    done_box.append(("err", str(e)))
 
-                    def _install() -> None:
+            threading.Thread(target=worker_dl, daemon=True, name="update-download").start()
+            while alive() and state["phase"] == "download":
+                if done_box:
+                    kind = done_box[0][0]
+                    if kind == "progress":
+                        _k, done, total = done_box.pop(0)
+                        if total > 0:
+                            pct = max(0, min(100, int(done * 100 / total)))
+                            bar.configure(value=pct)
+                            detail.set(f"{done / (1024 * 1024):.1f} / {total / (1024 * 1024):.1f} MB（{pct}%）")
+                        else:
+                            detail.set(f"已下载 {done / (1024 * 1024):.1f} MB")
+                    elif kind == "ok":
+                        path = done_box[0][1]
                         status.set("正在安装并重启…")
                         detail.set("替换完成后会自动重新打开")
                         bar.configure(value=100)
                         dlg.update_idletasks()
                         try:
-                            updater.apply_update_and_restart(path)
+                            updater.apply_update_and_restart(path)  # type: ignore[arg-type]
                             updater.force_exit_for_update()
                         except Exception as e:  # noqa: BLE001
                             finish_idle("更新失败", str(e), error=True)
+                        return
+                    else:
+                        finish_idle("下载失败", str(done_box[0][1]), error=True)
+                        return
+                try:
+                    dlg.update()
+                except Exception:
+                    state["closed"] = True
+                    return
+                time.sleep(0.03)
 
-                    ui(_install)
-                except Exception as e:  # noqa: BLE001
-                    err = str(e)
-                    ui(lambda: finish_idle("下载失败", err, error=True))
-
-            threading.Thread(target=worker_dl, daemon=True, name="update-download").start()
-
-        def after_check(result: tuple[str, updater.ReleaseInfo | None]) -> None:
-            st, info = result
-            if st == "no_repo":
-                finish_idle(
-                    "还没配置仓库",
-                    f"请写入 {store.config_path()} 的 gitcode_repo",
-                    error=True,
-                )
+        def show_available(info: updater.ReleaseInfo) -> None:
+            if not alive():
                 return
-            if st.startswith("error:"):
-                finish_idle("检查失败", st[6:], error=True)
-                return
-            if st == "latest":
-                finish_idle("已是最新版", f"当前 {APP_VERSION} · 远端 {info.version if info else '-'}")
-                return
-            if st != "available" or info is None:
-                finish_idle("检查结束", "没有可用更新", error=True)
-                return
-            state["info"] = info
+            state["phase"] = "ask"
             bar.stop()
             bar.configure(mode="determinate", value=0)
             body = (info.body or "").strip()
             tip = body[:180] + ("…" if len(body) > 180 else "")
             status.set(f"发现新版本 {info.version}")
             detail.set(tip or f"标签 {info.tag}")
-            close_btn.configure(state="normal", text="稍后")
-            dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
             def go() -> None:
-                close_btn.configure(state="disabled", text="关闭")
-                dlg.protocol("WM_DELETE_WINDOW", lambda: None)
-                yes.pack_forget()
-                start_download(info)
+                state["pending_dl"] = info
 
             yes = tk.Button(
                 btn_row, text="下载并更新", width=12, bg="#3d7eff", fg="white", relief="flat", command=go
             )
-            yes.pack(side="left", padx=8)
-            close_btn.pack_forget()
-            close_btn.pack(side="left", padx=8)
+            state["yes"] = yes
+            yes.pack()
+
+        result_box: list[tuple[str, updater.ReleaseInfo | None]] = []
 
         def worker_check() -> None:
             try:
-                result = updater.check_update(self.cfg)
+                result_box.append(updater.check_update(self.cfg))
             except Exception as e:  # noqa: BLE001
-                result = (f"error:{e}", None)
-            ui(lambda: after_check(result))
+                result_box.append((f"error:{e}", None))
 
         threading.Thread(target=worker_check, daemon=True, name="update-check").start()
-        dlg.wait_window()
+        # 不用 wait_window：和 Win32 主循环混用时 after 回调可能一直不跑，表现为「一直连接中」
+        while alive() and state["phase"] == "check":
+            if result_box:
+                st, info = result_box[0]
+                if st == "no_repo":
+                    finish_idle("还没配置仓库", f"请写入 {store.config_path()} 的 gitcode_repo", error=True)
+                elif st.startswith("error:"):
+                    finish_idle("检查失败", st[6:], error=True)
+                elif st == "latest":
+                    finish_idle("已是最新版", f"当前 {APP_VERSION} · 远端 {info.version if info else '-'}")
+                elif st == "available" and info is not None:
+                    show_available(info)
+                else:
+                    finish_idle("检查结束", "没有可用更新", error=True)
+                break
+            try:
+                dlg.update()
+            except Exception:
+                state["closed"] = True
+                break
+            time.sleep(0.03)
+
+        # 询问/结果阶段：泵事件直到关闭，或点了下载
+        while alive() and state["phase"] in ("ask", "idle"):
+            pending = state.get("pending_dl")
+            if pending is not None:
+                state["pending_dl"] = None
+                start_download(pending)
+                break
+            try:
+                dlg.update()
+            except Exception:
+                break
+            time.sleep(0.03)
 
     def _paint(self) -> None:
         try:

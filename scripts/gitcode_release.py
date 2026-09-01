@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 霜白/极光/墨金/玻璃：浅色墙纸下字更清晰\n"
-                    "- 卡片加托底，避免半透明把字洗淡"
+                    "- 修复检查更新卡在「正在连接」且窗口关不掉\n"
+                    "- 去掉多余关闭按钮，用窗口右上角关闭即可"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
