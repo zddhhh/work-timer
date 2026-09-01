@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修复启动报错 WorkTimer is not defined"
+                    "- Esc 广告伪装改为开关，默认关闭"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

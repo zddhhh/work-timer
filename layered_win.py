@@ -438,7 +438,15 @@ class LayeredPetWindow:
             return 0
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
-    def popup_menu(self, x: int, y: int, display_mode: str = "hms", theme_id: str = "ghost") -> str:
+    def popup_menu(
+        self,
+        x: int,
+        y: int,
+        display_mode: str = "hms",
+        theme_id: str = "ghost",
+        *,
+        esc_disguise: bool = False,
+    ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
             return ""
@@ -463,7 +471,12 @@ class LayeredPetWindow:
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
-        user32.AppendMenuW(hmenu, MF_STRING, ID_DISGUISE, "伪装成广告 (Esc)")
+        user32.AppendMenuW(
+            hmenu,
+            MF_STRING | (MF_CHECKED if esc_disguise else 0),
+            ID_DISGUISE,
+            "Esc 广告伪装",
+        )
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
@@ -493,7 +506,7 @@ class LayeredPetWindow:
         if cmd == ID_SET_OFF:
             return "set_off"
         if cmd == ID_DISGUISE:
-            return "disguise"
+            return "toggle_esc_disguise"
         if cmd == ID_FMT_HMS:
             return "fmt_hms"
         if cmd == ID_FMT_MIN:

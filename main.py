@@ -271,6 +271,7 @@ class WorkTimer:
             ssl.create_default_context()
         except Exception:
             pass
+        self.cfg["esc_disguise"] = bool(self.cfg.get("esc_disguise"))
         themes.refresh_async(self.cfg)
 
     def _today(self) -> str:
@@ -354,7 +355,21 @@ class WorkTimer:
             return
         self._need_dialog = True
 
+    def _esc_disguise_on(self) -> bool:
+        return bool(self.cfg.get("esc_disguise"))
+
+    def _set_esc_disguise(self, on: bool) -> None:
+        self.cfg["esc_disguise"] = bool(on)
+        store.save_config(self.cfg)
+        if not on and self._disguised:
+            self.ad.hide()
+            self.win.show()
+            self._disguised = False
+            self._last_key = ""
+
     def _toggle_disguise(self) -> None:
+        if not self._esc_disguise_on() and not self._disguised:
+            return
         if self._disguised:
             self.ad.hide()
             self.win.show()
@@ -367,7 +382,7 @@ class WorkTimer:
 
     def _poll_esc(self) -> None:
         down = bool(layered_win.user32.GetAsyncKeyState(0x1B) & 0x8000)
-        if down and not self._esc_held:
+        if down and not self._esc_held and self._esc_disguise_on():
             self._toggle_disguise()
         self._esc_held = down
 
@@ -419,7 +434,9 @@ class WorkTimer:
         self._open_time_dialog()
 
     def _handle_menu(self, sx: int, sy: int) -> None:
-        op = self.win.popup_menu(sx, sy, self._display_mode(), self._theme().id)
+        op = self.win.popup_menu(
+            sx, sy, self._display_mode(), self._theme().id, esc_disguise=self._esc_disguise_on()
+        )
         if op == "quit":
             self.running = False
         elif op == "update":
@@ -428,8 +445,8 @@ class WorkTimer:
             self._open_time_dialog()
         elif op == "set_off":
             self._open_off_dialog()
-        elif op == "disguise":
-            self._toggle_disguise()
+        elif op == "toggle_esc_disguise":
+            self._set_esc_disguise(not self._esc_disguise_on())
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":
