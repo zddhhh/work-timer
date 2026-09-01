@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 玻璃/霜白/终端/极光/墨金：深浅墙纸各用一套配色\n"
-                    "- 极光简化；浅色下不再整块黑底难看"
+                    "- 检查更新：底部固定显示「下载并更新」按钮\n"
+                    "- 说明文字缩短，避免按钮被裁掉"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

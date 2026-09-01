@@ -493,7 +493,7 @@ class WorkTimer:
         dlg.resizable(False, False)
         dlg.attributes("-topmost", True)
         dlg.configure(bg="#1b1e26")
-        dlg.geometry(f"360x150+{near[0]}+{near[1]}")
+        dlg.geometry(f"380x210+{near[0]}+{near[1]}")
         try:
             dlg.lift()
             dlg.focus_force()
@@ -503,16 +503,18 @@ class WorkTimer:
         status = tk.StringVar(value="正在连接 GitCode…")
         detail = tk.StringVar(value=f"当前版本 {APP_VERSION}")
         tk.Label(dlg, textvariable=status, fg="#f4f6fb", bg="#1b1e26", font=("Microsoft YaHei UI", 11, "bold")).pack(
-            pady=(18, 6), padx=16, anchor="w"
+            pady=(16, 6), padx=16, anchor="w"
         )
-        tk.Label(dlg, textvariable=detail, fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9)).pack(
-            padx=16, anchor="w"
+        detail_lbl = tk.Label(
+            dlg, textvariable=detail, fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9),
+            justify="left", wraplength=340, anchor="w",
         )
-        bar = ttk.Progressbar(dlg, mode="indeterminate", length=320)
-        bar.pack(pady=(16, 8), padx=16)
+        detail_lbl.pack(padx=16, anchor="w")
+        bar = ttk.Progressbar(dlg, mode="indeterminate", length=340)
+        bar.pack(pady=(14, 8), padx=16)
         bar.start(12)
         btn_row = tk.Frame(dlg, bg="#1b1e26")
-        btn_row.pack(pady=(4, 14))
+        btn_row.pack(side="bottom", pady=(4, 16))
 
         state: dict = {"closed": False, "phase": "check", "yes": None, "pending_dl": None}
 
@@ -552,6 +554,10 @@ class WorkTimer:
             detail.set("准备下载安装包")
             bar.stop()
             bar.configure(mode="determinate", maximum=100, value=0)
+            try:
+                bar.pack(pady=(14, 8), padx=16, before=btn_row)
+            except Exception:
+                bar.pack(pady=(14, 8), padx=16)
             if state["yes"] is not None:
                 try:
                     state["yes"].pack_forget()
@@ -612,20 +618,34 @@ class WorkTimer:
                 return
             state["phase"] = "ask"
             bar.stop()
-            bar.configure(mode="determinate", value=0)
-            body = (info.body or "").strip()
-            tip = body[:180] + ("…" if len(body) > 180 else "")
+            try:
+                bar.pack_forget()
+            except Exception:
+                pass
+            body = (info.body or "").strip().replace("\n", " ")
+            tip = body[:90] + ("…" if len(body) > 90 else "")
             status.set(f"发现新版本 {info.version}")
             detail.set(tip or f"标签 {info.tag}")
+            dlg.geometry(f"380x200+{dlg.winfo_x()}+{dlg.winfo_y()}")
 
             def go() -> None:
                 state["pending_dl"] = info
 
             yes = tk.Button(
-                btn_row, text="下载并更新", width=12, bg="#3d7eff", fg="white", relief="flat", command=go
+                btn_row,
+                text="下载并更新",
+                width=16,
+                height=1,
+                bg="#3d7eff",
+                fg="white",
+                activebackground="#5a92ff",
+                activeforeground="white",
+                relief="flat",
+                font=("Microsoft YaHei UI", 10, "bold"),
+                command=go,
             )
             state["yes"] = yes
-            yes.pack()
+            yes.pack(ipady=4)
 
         result_box: list[tuple[str, updater.ReleaseInfo | None]] = []
 
