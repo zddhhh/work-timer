@@ -121,9 +121,9 @@ def _fallback() -> list[Theme]:
     return [
         Theme(
             "ghost", "淡影",
-            (16, 18, 22, 36), (255, 255, 255, 0),
-            (220, 224, 230, 120), (236, 238, 242, 200), (200, 204, 210, 100),
-            (210, 218, 226, 170), (232, 214, 180, 190), (190, 220, 200, 190),
+            (16, 18, 22, 18), (255, 255, 255, 0),
+            (226, 230, 236, 78), (246, 248, 252, 236), (200, 204, 210, 90),
+            (214, 220, 228, 200), (236, 196, 140, 230), (176, 204, 188, 210),
             16, "ghost",
         )
     ]
@@ -245,11 +245,42 @@ def refresh_async(cfg: dict) -> None:
 def _halo_text(d: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, font, fill, *, ghost: bool) -> None:
     x, y = xy
     if ghost:
-        d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 70))
-        d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 40))
+        # 多层软阴影：深色/浅色墙纸都能托住近白数字
+        for ox, oy, a in (
+            (2, 2, 55),
+            (1, 2, 80),
+            (2, 1, 60),
+            (0, 2, 90),
+            (1, 1, 110),
+            (0, 1, 70),
+        ):
+            d.text((x + ox, y + oy), text, font=font, fill=(0, 0, 0, a))
     else:
         d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 50))
     d.text((x, y), text, font=font, fill=fill)
+
+
+def _ghost_progress(
+    d: ImageDraw.ImageDraw,
+    x1: int,
+    x2: int,
+    y: int,
+    accent: tuple[int, int, int, int],
+    progress: float | None,
+) -> None:
+    if progress is None:
+        return
+    # 深浅底都看得见：暗底轨 + 淡亮轨，填充再压一层暗描边
+    d.line((x1, y, x2, y), fill=(0, 0, 0, 70), width=3)
+    d.line((x1, y, x2, y), fill=(255, 255, 255, 48), width=2)
+    ratio = max(0.0, min(1.0, float(progress)))
+    width = x2 - x1
+    if ratio <= 0.008:
+        xf = x1 + 16
+    else:
+        xf = x1 + max(2, int(width * ratio))
+    d.line((x1, y, xf, y), fill=(0, 0, 0, 90), width=3)
+    d.line((x1, y, xf, y), fill=accent, width=2)
 
 
 def paint_card(
@@ -264,6 +295,7 @@ def paint_card(
     font_title: ImageFont.ImageFont,
     font_big: ImageFont.ImageFont,
     font_sub: ImageFont.ImageFont,
+    progress: float | None = None,
 ) -> None:
     box = (6, 6, w - 7, h - 7)
     kind = theme.kind
@@ -286,19 +318,14 @@ def paint_card(
                 d.line((10, y, w - 11, y), fill=(0, 40, 16, 26))
 
     ghost = kind == "ghost"
-    big_y = 42 if sub else 40
-    _halo_text(d, (22, 12), title, font_title, theme.title, ghost=ghost)
+    title_y = 8 if ghost else 12
+    big_y = 30 if ghost else (42 if sub else 40)
+    _halo_text(d, (22, title_y), title, font_title, theme.title, ghost=ghost)
     _halo_text(d, (22, big_y), big, font_big, accent, ghost=ghost)
     if sub:
         _halo_text(d, (22, 90), sub, font_sub, theme.sub, ghost=ghost)
     if ghost:
-        try:
-            bb = d.textbbox((22, big_y), big, font=font_big)
-            yline = min(int(bb[3]) + 5, h - 22)
-            x2 = min(max(int(bb[2]), 102), w - 28)
-            d.line((22, yline, x2, yline), fill=(255, 255, 255, 42), width=1)
-        except Exception:
-            pass
+        _ghost_progress(d, 22, w - 28, h - 18, accent, progress)
 
 
 load_local_catalog()

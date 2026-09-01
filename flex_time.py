@@ -102,6 +102,28 @@ def remaining_parts(td: timedelta) -> tuple[int, bool]:
     return abs(total), total <= 0
 
 
+def remaining_ratio(
+    now: datetime,
+    off_h: int,
+    off_m: int,
+    start: tuple[int, int] | None = None,
+) -> float:
+    """剩余工时占比：刚上班约 1，到点为 0。"""
+    left = remaining_to(now, off_h, off_m).total_seconds()
+    if left <= 0:
+        return 0.0
+    if start is not None:
+        sh, sm = start
+        begin = now.replace(hour=int(sh), minute=int(sm), second=0, microsecond=0)
+        end = now.replace(hour=int(off_h), minute=int(off_m), second=0, microsecond=0)
+        span = (end - begin).total_seconds()
+        if span <= 0:
+            span = WORK_MINUTES * 60.0
+    else:
+        span = WORK_MINUTES * 60.0
+    return min(1.0, left / span)
+
+
 def format_remaining(total_seconds: int, mode: str) -> str:
     total = max(0, int(total_seconds))
     if mode == "sec":

@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修复 OTA 替换失败留下 WorkTimer.exe.new 的问题\n"
-                    "- 启动时自动收尾未完成的更新"
+                    "- 淡影默认皮：标题更弱、数字对比更高\n"
+                    "- 计时中底部细进度条，长度跟剩余工时走"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
