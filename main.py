@@ -772,7 +772,7 @@ class WorkTimer:
                     mins = total // 60
                     accent = theme.warn if mins < 30 else theme.big
                     key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-{w}x{h}"
-            if theme.kind == "aurora":
+            if ornaments.has_skin(theme.kind):
                 key = f"{key}-a{int(phase * 4)}"
 
             if key == self._last_key:

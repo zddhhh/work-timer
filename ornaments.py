@@ -1,4 +1,4 @@
-"""极光贴图等装饰。"""
+"""皮肤生图贴图等装饰。"""
 from __future__ import annotations
 
 import time
@@ -9,6 +9,16 @@ from PIL import Image, ImageChops, ImageDraw
 import store
 
 _ASSET_CACHE: dict[str, Image.Image] = {}
+
+# kind -> (主贴图, 可选第二层)；淡影(ghost)不用生图
+_SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
+    "glass": ("skin_glass.png", None),
+    "frost": ("skin_frost.png", None),
+    "neon": ("skin_neon.png", None),
+    "terminal": ("skin_terminal.png", None),
+    "aurora": ("aurora_drape.png", "aurora_glow.png"),
+    "inkgold": ("skin_inkgold.png", None),
+}
 
 
 def asset_path(name: str) -> Path:
@@ -46,38 +56,67 @@ def _scale_alpha(im: Image.Image, factor: float) -> Image.Image:
     return out
 
 
-def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: bool = False) -> None:
-    """把生图极光贴到卡片圆角区域。"""
+def has_skin(kind: str) -> bool:
+    return kind in _SKIN_LAYERS
+
+
+def paste_skin(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    kind: str,
+    *,
+    light: bool = False,
+) -> bool:
+    """把对应皮肤的生图贴进圆角区域；成功返回 True。"""
+    layers = _SKIN_LAYERS.get(kind)
+    if layers is None:
+        return False
+    name_a, name_b = layers
+    drape = load_asset(name_a)
+    glow = load_asset(name_b) if name_b else None
+    if drape is None and glow is None:
+        return False
+
     x0, y0, x1, y1 = box
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
-    drape = load_asset("aurora_drape.png")
-    glow = load_asset("aurora_glow.png")
-    if drape is None and glow is None:
-        return
     phase = time.monotonic()
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+
+    # 整块纹理皮略淡一点，避免压字；霓虹/终端/极光提亮一点
+    glow_kinds = {"neon", "terminal", "aurora"}
+    if kind in glow_kinds:
+        a0 = 0.90 if not light else 0.55
+        a1 = 0.72 if not light else 0.40
+    else:
+        a0 = 0.82 if not light else 0.62
+        a1 = 0.55 if not light else 0.38
+
     if drape is not None:
         tw = max(bw + 80, drape.width)
         th = max(bh, drape.height)
         src = drape.resize((tw, th), Image.Resampling.LANCZOS)
-        ox = int((phase * 12) % max(1, src.width - bw))
+        ox = int((phase * 10) % max(1, src.width - bw))
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
-        # 底板已尽量淡，极光贴图略提亮一点
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, 0.92 if not light else 0.58))
+        layer = Image.alpha_composite(layer, _scale_alpha(crop, a0))
     if glow is not None:
         tw = max(bw + 60, glow.width)
         th = max(bh, glow.height)
         src = glow.resize((tw, th), Image.Resampling.LANCZOS)
-        ox = int((phase * -9) % max(1, src.width - bw))
+        ox = int((phase * -8) % max(1, src.width - bw))
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, 0.72 if not light else 0.42))
+        layer = Image.alpha_composite(layer, _scale_alpha(crop, a1))
 
     mask = Image.new("L", (bw, bh), 0)
     md = ImageDraw.Draw(mask)
     md.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=max(8, min(bw, bh) // 6), fill=255)
-    # 用圆角乘进 alpha 再合成，避免 paste+L 遮罩把透明区糊成黑底板
     r, g, b, a = layer.split()
     layer = Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
     img.alpha_composite(layer, (x0, y0))
+    return True
+
+
+def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: bool = False) -> None:
+    """兼容旧调用。"""
+    paste_skin(img, box, "aurora", light=light)

@@ -395,11 +395,18 @@ def paint_card(
 
     if kind != "ghost":
         light_card = _luma(theme.fill) >= 160
-        if kind == "aurora":
-            # 几乎不铺黑底：极光直接露出来，只留很淡的托底 + 描边
-            base = (248, 246, 255, 22) if light_card else (12, 14, 24, 16)
+        if ornaments.has_skin(kind):
+            # 生图整块贴图：淡托底 + 纹理 + 描边，不加色条/竖杠
+            if kind in ("aurora", "neon", "terminal"):
+                base = (248, 246, 255, 22) if light_card else (12, 14, 24, 16)
+            elif kind == "frost":
+                base = (248, 250, 252, 40) if light_card else (20, 24, 32, 36)
+            elif kind == "inkgold":
+                base = (250, 244, 230, 36) if light_card else (16, 12, 10, 28)
+            else:  # glass
+                base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)
-            ornaments.paste_aurora(img, box, light=light_card)
+            ornaments.paste_skin(img, box, kind, light=light_card)
             if theme.outline[3] > 8:
                 d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
         else:
@@ -413,14 +420,6 @@ def paint_card(
             d.rounded_rectangle(box, radius=r, fill=theme.fill)
             if theme.outline[3] > 8:
                 d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
-        # 玻璃 / 霜白 / 霓虹 / 终端：整块背景，不加顶部色条或侧杠
-        if kind == "inkgold":
-            line = (180, 130, 50, 170) if light_card else (212, 175, 90, 180)
-            top = (255, 220, 150, 28) if light_card else (255, 214, 140, 20)
-            band_b = max(16, min(34, int(h * 0.38)))
-            d.rounded_rectangle((10, 9, w - 11, band_b), radius=max(8, r - 6), fill=top)
-            d.line((22, band_b + 2, min(96, w - 36), band_b + 2), fill=line, width=1)
-            d.rectangle((10, h - 13, w - 11, h - 11), fill=line)
 
     ghost = kind == "ghost"
     _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)

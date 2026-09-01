@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 玻璃/霜白去顶条；霓虹/终端去竖横杠；极光底板更淡"
+                    "- 除淡影外皮肤改生图贴图；墨金去掉色条，整块背景"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
