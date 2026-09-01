@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 去掉沙漏；最小可缩到约 148×55"
+                    "- 玻璃/霜白去顶条；霓虹/终端去竖横杠；极光底板更淡"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

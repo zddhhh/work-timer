@@ -394,29 +394,16 @@ def paint_card(
     big_y = int(h * (0.42 if sub else 0.38))
 
     if kind != "ghost":
-        d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 40))
         light_card = _luma(theme.fill) >= 160
         if kind == "aurora":
-            # 底色薄一点，把生图极光露出来
-            base = (248, 246, 255, 200) if light_card else (6, 8, 16, 170)
+            # 几乎不铺黑底：极光直接露出来，只留很淡的托底 + 描边
+            base = (248, 246, 255, 22) if light_card else (12, 14, 24, 16)
             d.rounded_rectangle(box, radius=r, fill=base)
-            tint = (
-                theme.fill[0],
-                theme.fill[1],
-                theme.fill[2],
-                min(90, theme.fill[3]),
-            )
-            d.rounded_rectangle(box, radius=r, fill=tint)
+            ornaments.paste_aurora(img, box, light=light_card)
             if theme.outline[3] > 8:
                 d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
-            ornaments.paste_aurora(img, box, light=light_card)
-            veil = (252, 250, 255, 70) if light_card else (6, 8, 16, 85)
-            d.rounded_rectangle(
-                (pad_x - 4, 8, min(right_limit + 2, w - 12), h - 10),
-                radius=max(6, r - 8),
-                fill=veil,
-            )
         else:
+            d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 40))
             # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
             if theme.fill[3] < 230:
                 if light_card:
@@ -426,26 +413,8 @@ def paint_card(
             d.rounded_rectangle(box, radius=r, fill=theme.fill)
             if theme.outline[3] > 8:
                 d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
-        if kind == "glass":
-            shine = (255, 255, 255, 70) if light_card else (255, 255, 255, 26)
-            shine_b = max(16, min(38, int(h * 0.42)))
-            d.rounded_rectangle((10, 9, w - 11, shine_b), radius=max(8, r - 6), fill=shine)
-        elif kind == "frost":
-            shine = (255, 255, 255, 100) if light_card else (255, 255, 255, 28)
-            shine_b = max(16, min(36, int(h * 0.40)))
-            d.rounded_rectangle((10, 9, w - 11, shine_b), radius=max(8, r - 6), fill=shine)
-        elif kind == "neon":
-            d.rounded_rectangle((9, 16, 13, h - 16), radius=2, fill=(0, 230, 210, 190))
-        elif kind == "terminal":
-            if light_card:
-                d.rectangle((8, 8, w - 9, 10), fill=(60, 140, 80, 120))
-                for y in range(18, h - 12, 6):
-                    d.line((12, y, w - 13, y), fill=(40, 100, 60, 18))
-            else:
-                d.rectangle((8, 8, w - 9, 10), fill=(70, 180, 100, 150))
-                for y in range(16, h - 10, 5):
-                    d.line((10, y, w - 11, y), fill=(0, 40, 16, 22))
-        elif kind == "inkgold":
+        # 玻璃 / 霜白 / 霓虹 / 终端：整块背景，不加顶部色条或侧杠
+        if kind == "inkgold":
             line = (180, 130, 50, 170) if light_card else (212, 175, 90, 180)
             top = (255, 220, 150, 28) if light_card else (255, 214, 140, 20)
             band_b = max(16, min(34, int(h * 0.38)))

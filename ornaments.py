@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 import store
 
@@ -63,7 +63,8 @@ def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: boo
         ox = int((phase * 12) % max(1, src.width - bw))
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, 0.78 if not light else 0.48))
+        # 底板已尽量淡，极光贴图略提亮一点
+        layer = Image.alpha_composite(layer, _scale_alpha(crop, 0.92 if not light else 0.58))
     if glow is not None:
         tw = max(bw + 60, glow.width)
         th = max(bh, glow.height)
@@ -71,9 +72,12 @@ def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: boo
         ox = int((phase * -9) % max(1, src.width - bw))
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, 0.55 if not light else 0.32))
+        layer = Image.alpha_composite(layer, _scale_alpha(crop, 0.72 if not light else 0.42))
 
     mask = Image.new("L", (bw, bh), 0)
     md = ImageDraw.Draw(mask)
     md.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=max(8, min(bw, bh) // 6), fill=255)
-    img.paste(layer, (x0, y0), mask)
+    # 用圆角乘进 alpha 再合成，避免 paste+L 遮罩把透明区糊成黑底板
+    r, g, b, a = layer.split()
+    layer = Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
+    img.alpha_composite(layer, (x0, y0))
