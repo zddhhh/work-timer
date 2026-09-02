@@ -15,6 +15,7 @@ from tkinter import messagebox, ttk
 from PIL import Image, ImageFont
 
 import ad_disguise
+import autostart
 import backdrop
 import flex_time
 import layered_win
@@ -362,6 +363,11 @@ class WorkTimer:
         except Exception:
             pass
         self.cfg["esc_disguise"] = bool(self.cfg.get("esc_disguise"))
+        self.cfg["auto_start"] = bool(self.cfg.get("auto_start"))
+        try:
+            autostart.sync(self.cfg["auto_start"])
+        except OSError:
+            pass
         themes.refresh_async(self.cfg)
         self._silent_check_update()
 
@@ -540,6 +546,22 @@ class WorkTimer:
             self.win.show()
             self._disguised = False
             self._last_key = ""
+
+    def _auto_start_on(self) -> bool:
+        return bool(self.cfg.get("auto_start"))
+
+    def _set_auto_start(self, on: bool) -> None:
+        on = bool(on)
+        try:
+            autostart.sync(on)
+        except OSError as e:
+            try:
+                messagebox.showwarning("开机自启动", f"设置失败：{e}", parent=self._tk_root())
+            except Exception:
+                pass
+            return
+        self.cfg["auto_start"] = on
+        store.save_config(self.cfg)
 
     def _toggle_disguise(self) -> None:
         if not self._esc_disguise_on() and not self._disguised:
@@ -981,6 +1003,7 @@ class WorkTimer:
             self._display_mode(),
             self._theme().id,
             esc_disguise=self._esc_disguise_on(),
+            auto_start=self._auto_start_on(),
         )
         if op == "quit":
             self.running = False
@@ -995,6 +1018,8 @@ class WorkTimer:
                 self._open_schedule_list()
         elif op == "toggle_esc_disguise":
             self._set_esc_disguise(not self._esc_disguise_on())
+        elif op == "toggle_auto_start":
+            self._set_auto_start(not self._auto_start_on())
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":

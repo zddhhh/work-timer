@@ -37,6 +37,7 @@ def load_config() -> dict:
         "win_w": 248,
         "win_h": 92,
         "esc_disguise": False,
+        "auto_start": False,
         "win_x": None,
         "win_y": None,
         "gitcode_repo": "",

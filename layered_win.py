@@ -72,6 +72,7 @@ ID_DISGUISE = 4
 ID_REFRESH_THEMES = 5
 ID_SET_OFF = 6
 ID_SCHEDULES = 7
+ID_AUTO_START = 8
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
@@ -632,6 +633,7 @@ class LayeredPetWindow:
         theme_id: str = "ghost",
         *,
         esc_disguise: bool = False,
+        auto_start: bool = False,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -662,6 +664,12 @@ class LayeredPetWindow:
             MF_STRING | (MF_CHECKED if esc_disguise else 0),
             ID_DISGUISE,
             "Esc 广告伪装",
+        )
+        user32.AppendMenuW(
+            hmenu,
+            MF_STRING | (MF_CHECKED if auto_start else 0),
+            ID_AUTO_START,
+            "开机自启动",
         )
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
@@ -695,6 +703,8 @@ class LayeredPetWindow:
             return "schedules"
         if cmd == ID_DISGUISE:
             return "toggle_esc_disguise"
+        if cmd == ID_AUTO_START:
+            return "toggle_auto_start"
         if cmd == ID_FMT_HMS:
             return "fmt_hms"
         if cmd == ID_FMT_MIN:

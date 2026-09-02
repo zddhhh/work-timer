@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 新建日程不再闪一下：盖住列表打开，取消后仍回到列表"
+                    "- 右键菜单增加「开机自启动」开关"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

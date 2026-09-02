@@ -54,6 +54,8 @@ def main() -> None:
         "--hidden-import",
         "ad_disguise",
         "--hidden-import",
+        "autostart",
+        "--hidden-import",
         "store",
         "--hidden-import",
         "layered_win",
