@@ -76,6 +76,19 @@ def has_skin(kind: str) -> bool:
     return kind in _SKIN_LAYERS
 
 
+def _pingpong_offset(distance: float, span: int, *, reverse: bool = False) -> int:
+    """走到头再原路返回，避免循环跳动。"""
+    span = max(1, int(span))
+    cycle = span * 2
+    p = abs(float(distance)) % cycle
+    if p > span:
+        p = cycle - p
+    off = int(p)
+    if reverse:
+        off = span - off
+    return max(0, min(span, off))
+
+
 def paste_skin(
     img: Image.Image,
     box: tuple[int, int, int, int],
@@ -111,7 +124,7 @@ def paste_skin(
         tw = max(bw + 80, drape.width)
         th = max(bh, drape.height)
         src = _resized(name_a, drape, tw, th)
-        ox = int((phase * 28) % max(1, src.width - bw))
+        ox = _pingpong_offset(phase * 28, src.width - bw)
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
         layer = Image.alpha_composite(layer, _scale_alpha(crop, a0))
@@ -119,7 +132,7 @@ def paste_skin(
         tw = max(bw + 60, glow.width)
         th = max(bh, glow.height)
         src = _resized(name_b or "glow", glow, tw, th)
-        ox = int((phase * -22) % max(1, src.width - bw))
+        ox = _pingpong_offset(phase * 22, src.width - bw, reverse=True)
         oy = max(0, (src.height - bh) // 2)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
         layer = Image.alpha_composite(layer, _scale_alpha(crop, a1))
@@ -151,13 +164,17 @@ def paint_chevron(
     *,
     color: tuple[int, int, int, int] = (255, 255, 255, 90),
     pin_dots: tuple[int, int] = (0, 0),
+    opened: bool = False,
 ) -> None:
-    """主卡片底部只画淡倒三角（无胶囊底板）。"""
+    """主卡片底部只画淡倒三角；列表打开时朝上表示可收回。"""
     d = ImageDraw.Draw(img)
     cx = w // 2
     y0 = h - 13
     arrow = (color[0], color[1], color[2], min(130, max(70, color[3])))
-    d.polygon([(cx - 7, y0), (cx + 7, y0), (cx, y0 + 6)], fill=arrow)
+    if opened:
+        d.polygon([(cx - 7, y0 + 6), (cx + 7, y0 + 6), (cx, y0)], fill=arrow)
+    else:
+        d.polygon([(cx - 7, y0), (cx + 7, y0), (cx, y0 + 6)], fill=arrow)
     idx, total = pin_dots
     if total >= 2 and idx >= 1:
         span = (total - 1) * 7

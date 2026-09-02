@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 日程列表按钮不再被裁掉；有新版本会弹短提示，检查更新菜单不再塞长文案"
+                    "- 新增日程不再叠窗乱跳；倒三角可收回列表；外观贴图来回播更丝滑"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

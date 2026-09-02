@@ -314,6 +314,8 @@ class WorkTimer:
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
         self._need_schedule_list = False
+        self._schedule_list_open = False
+        self._need_close_schedule_list = False
         self._tk: tk.Tk | None = None
         self._update_available = False
         self._update_info: updater.ReleaseInfo | None = None
@@ -509,9 +511,12 @@ class WorkTimer:
     def _on_click(self, lx: int, ly: int) -> None:
         if self._disguised:
             return
-        # 仅倒三角热区打开日程列表
+        # 倒三角：打开 / 再点收回
         if ornaments.chevron_hit(lx, ly, self._win_w, self._win_h):
-            self._need_schedule_list = True
+            if self._schedule_list_open:
+                self._need_close_schedule_list = True
+            else:
+                self._need_schedule_list = True
             return
         pins = self.cfg.get("pin_order") or []
         if isinstance(pins, list) and len(pins) >= 2:
@@ -628,10 +633,12 @@ class WorkTimer:
             title = f"{title} · 到点"
         return title, left, done, False
 
-    def _ask_new_schedule(self) -> dict | None:
+    def _ask_new_schedule(self, *, near: tuple[int, int] | None = None) -> dict | None:
         result: list[dict | None] = [None]
         now = datetime.now()
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=400, height=420)
+        near = near or self._dialog_near()
+        # 按内容收紧宽度，避免右边空出一大块灰色
+        dlg = _card_dialog(self._tk_root(), near=near, width=320, height=380)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         kind_var = tk.StringVar(value="clock")
@@ -641,28 +648,30 @@ class WorkTimer:
         m_var = tk.StringVar(value=str(now.month))
         d_var = tk.StringVar(value=str(now.day))
         tip = tk.StringVar()
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
 
-        tk.Label(dlg, text="新增日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(
-            pady=(16, 6), padx=18, anchor="w"
+        tk.Label(body, text="新增日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(
+            pady=(16, 6), anchor="w"
         )
-        box = tk.Frame(dlg, bg=_CARD_BG)
-        box.pack(padx=18, anchor="w")
+        box = tk.Frame(body, bg=_CARD_BG)
+        box.pack(anchor="w")
         for val, lab in (("clock", "指定日期+时刻"), ("duration", "倒计时长（分钟）")):
             tk.Radiobutton(
                 box, text=lab, variable=kind_var, value=val, fg=_CARD_FG, bg=_CARD_BG,
                 selectcolor=_CARD_BTN, activebackground=_CARD_BG, font=("Microsoft YaHei UI", 10),
             ).pack(anchor="w")
 
-        tk.Label(dlg, text="名称", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
-            padx=18, anchor="w", pady=(8, 0)
+        tk.Label(body, text="名称", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w", pady=(8, 0)
         )
         tk.Entry(
-            dlg, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
-            insertbackground=_CARD_FG, relief="flat",
-        ).pack(padx=18, fill="x", ipady=5)
+            body, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat", width=28,
+        ).pack(anchor="w", ipady=5)
 
-        date_row = tk.Frame(dlg, bg=_CARD_BG)
-        date_row.pack(padx=18, pady=(10, 0), anchor="w")
+        date_row = tk.Frame(body, bg=_CARD_BG)
+        date_row.pack(pady=(10, 0), anchor="w")
         tk.Label(date_row, text="日期", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(side="left")
         for var, lab, w in ((y_var, "年", 5), (m_var, "月", 3), (d_var, "日", 3)):
             tk.Entry(
@@ -671,18 +680,18 @@ class WorkTimer:
             ).pack(side="left", padx=(6, 2), ipady=3)
             tk.Label(date_row, text=lab, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 8)).pack(side="left")
 
-        tk.Label(dlg, textvariable=tip, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
-            padx=18, anchor="w", pady=(10, 0)
+        tk.Label(body, textvariable=tip, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w", pady=(10, 0)
         )
         tk.Entry(
-            dlg, textvariable=time_var, font=("Microsoft YaHei UI", 14), justify="center",
-            bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
-        ).pack(padx=18, pady=8, fill="x", ipady=6)
+            body, textvariable=time_var, font=("Microsoft YaHei UI", 14), justify="center",
+            bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat", width=28,
+        ).pack(anchor="w", pady=8, ipady=6)
 
         def sync(*_a) -> None:
             if kind_var.get() == "clock":
                 tip.set("时刻，例如 15:00")
-                date_row.pack(padx=18, pady=(10, 0), anchor="w")
+                date_row.pack(pady=(10, 0), anchor="w")
                 if ":" not in time_var.get() and "." not in time_var.get():
                     time_var.set("15:00")
             else:
@@ -695,9 +704,7 @@ class WorkTimer:
         sync()
 
         err = tk.StringVar(value="")
-        tk.Label(dlg, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
-            padx=18, anchor="w"
-        )
+        tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
 
         def ok() -> None:
             err.set("")
@@ -729,15 +736,21 @@ class WorkTimer:
         _card_btn(bar, "开始倒计时", ok, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: ok())
-        _fit_card(dlg, min_w=400, min_h=400, near=self._dialog_near())
+        _fit_card(dlg, min_w=300, min_h=340, near=near)
         _run_card_modal(dlg, self.win)
         return result[0]
 
     def _open_schedule_list(self) -> None:
+        if self._schedule_list_open:
+            self._need_close_schedule_list = True
+            return
         schedules.ensure_fields(self.cfg)
         near = self._dialog_near()
         dlg = _card_dialog(self._tk_root(), near=near, width=440, height=520)
         closed = {"v": False}
+        self._schedule_list_open = True
+        self._need_close_schedule_list = False
+        self._last_key = ""
 
         def close() -> None:
             closed["v"] = True
@@ -873,7 +886,25 @@ class WorkTimer:
         def add() -> None:
             hint.set("")
             _unbind_wheel()
-            item = self._ask_new_schedule()
+            # 先藏起列表，避免和新增窗叠在一起乱点/乱跳
+            try:
+                pos = (int(dlg.winfo_rootx()), int(dlg.winfo_rooty()))
+                dlg.withdraw()
+            except Exception:
+                pos = near
+            try:
+                item = self._ask_new_schedule(near=pos)
+            finally:
+                try:
+                    if dlg.winfo_exists() and not self._need_close_schedule_list:
+                        dlg.deiconify()
+                        dlg.lift()
+                        dlg.focus_force()
+                except Exception:
+                    pass
+            if self._need_close_schedule_list:
+                close()
+                return
             if item is None:
                 return
             schedules.add_schedule(self.cfg, item)
@@ -895,14 +926,27 @@ class WorkTimer:
                 try:
                     if not dlg.winfo_exists():
                         break
+                    if self._need_close_schedule_list:
+                        close()
+                        break
+                    if self._menu_pos is not None:
+                        sx, sy = self._menu_pos
+                        self._menu_pos = None
+                        self._handle_menu(sx, sy)
+                        if closed["v"] or self._need_close_schedule_list:
+                            close()
+                            break
                     dlg.update()
                     self.win.pump()
+                    self._paint()
                 except Exception:
                     break
                 time.sleep(0.02)
         finally:
             _unbind_wheel()
-        self._last_key = ""
+            self._schedule_list_open = False
+            self._need_close_schedule_list = False
+            self._last_key = ""
 
     def _handle_menu(self, sx: int, sy: int) -> None:
         op = self.win.popup_menu(
@@ -919,7 +963,10 @@ class WorkTimer:
         elif op in ("set_time", "set_off"):
             self._open_setup_dialog()
         elif op == "schedules":
-            self._open_schedule_list()
+            if self._schedule_list_open:
+                self._need_close_schedule_list = True
+            else:
+                self._open_schedule_list()
         elif op == "toggle_esc_disguise":
             self._set_esc_disguise(not self._esc_disguise_on())
         elif op == "fmt_hms":
@@ -1164,7 +1211,7 @@ class WorkTimer:
                 key = f"run-{mode}-{theme.id}-{title}-{big}-{theme.fill}-{surface}-{w}x{h}"
             aid = schedules.active_id(self.cfg) or "-"
             idx, n = schedules.pin_index(self.cfg)
-            key = f"{key}-{aid}-{idx}/{n}"
+            key = f"{key}-{aid}-{idx}/{n}-o{int(self._schedule_list_open)}"
             if ornaments.has_skin(theme.kind):
                 key = f"{key}-a{int(phase * 24)}"
 
@@ -1189,7 +1236,9 @@ class WorkTimer:
             if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
                 chev = (40, 44, 52, 90)
             dots = (idx, n) if n >= 2 and bool(self.cfg.get("auto_rotate_pins")) else (0, 0)
-            ornaments.paint_chevron(img, w, h, color=chev, pin_dots=dots)
+            ornaments.paint_chevron(
+                img, w, h, color=chev, pin_dots=dots, opened=self._schedule_list_open
+            )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
             self._last_key = key
