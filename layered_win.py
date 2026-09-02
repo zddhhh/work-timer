@@ -71,6 +71,7 @@ ID_SET_TIME = 3
 ID_DISGUISE = 4
 ID_REFRESH_THEMES = 5
 ID_SET_OFF = 6
+ID_SCHEDULES = 7
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
@@ -654,6 +655,7 @@ class LayeredPetWindow:
         user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(htheme, MF_STRING, ID_REFRESH_THEMES, "刷新在线外观")
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间…")
+        user32.AppendMenuW(hmenu, MF_STRING, ID_SCHEDULES, "日程列表…")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(
@@ -691,6 +693,8 @@ class LayeredPetWindow:
             return "set_time"
         if cmd == ID_SET_OFF:
             return "set_off"
+        if cmd == ID_SCHEDULES:
+            return "schedules"
         if cmd == ID_DISGUISE:
             return "toggle_esc_disguise"
         if cmd == ID_FMT_HMS:

@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 日程列表/优先显示/轮播；检查更新提示；暖光皮肤"
+                    "- 修复日程下拉闪退与按钮挤没；底边箭头更好点"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
