@@ -112,10 +112,14 @@ def paste_skin(
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
 
     # 整块纹理皮略淡一点，避免压字；霓虹/终端/极光提亮一点
+    # 暖光浅底单独加浓，否则自适应到浅色墙纸会发虚
     glow_kinds = {"neon", "terminal", "aurora"}
     if kind in glow_kinds:
         a0 = 0.90 if not light else 0.55
         a1 = 0.72 if not light else 0.40
+    elif kind == "warmglow":
+        a0 = 0.88 if not light else 0.92
+        a1 = 0.60 if not light else 0.70
     else:
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38

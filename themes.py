@@ -403,7 +403,8 @@ def paint_card(
             elif kind == "inkgold":
                 base = (250, 244, 230, 36) if light_card else (16, 12, 10, 28)
             elif kind == "warmglow":
-                base = (255, 244, 230, 40) if light_card else (28, 18, 12, 36)
+                # 浅底托底加厚，避免暖色纹理被墙纸洗掉
+                base = (255, 236, 214, 96) if light_card else (28, 18, 12, 36)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)

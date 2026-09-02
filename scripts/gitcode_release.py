@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 右键菜单增加「开机自启动」开关"
+                    "- 暖光在浅色背景下更实、更清晰，不再发虚"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
