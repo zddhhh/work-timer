@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 取消下载后可再次检查更新，不再提示文件被占用"
+                    "- 新建日程不再闪一下：盖住列表打开，取消后仍回到列表"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -633,12 +633,27 @@ class WorkTimer:
             title = f"{title} · 到点"
         return title, left, done, False
 
-    def _ask_new_schedule(self, *, near: tuple[int, int] | None = None) -> dict | None:
+    def _ask_new_schedule(
+        self,
+        *,
+        near: tuple[int, int] | None = None,
+        cover: tuple[int, int, int, int] | None = None,
+    ) -> dict | None:
+        """cover=(x,y,w,h) 时盖在日程列表上，避免先藏列表再弹窗造成闪烁。"""
         result: list[dict | None] = [None]
         now = datetime.now()
-        near = near or self._dialog_near()
-        # 按内容收紧宽度，避免右边空出一大块灰色
-        dlg = _card_dialog(self._tk_root(), near=near, width=320, height=380)
+        if cover is not None:
+            cx, cy, cw, ch = (int(v) for v in cover)
+            near = (cx, cy)
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(340, ch))
+        else:
+            near = near or self._dialog_near()
+            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=380)
+        # 先藏着排版，排完再显示，避免空壳闪一下
+        try:
+            dlg.withdraw()
+        except Exception:
+            pass
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         kind_var = tk.StringVar(value="clock")
@@ -736,7 +751,18 @@ class WorkTimer:
         _card_btn(bar, "开始倒计时", ok, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: ok())
-        _fit_card(dlg, min_w=300, min_h=340, near=near)
+        if cover is not None:
+            cx, cy, cw, ch = (int(v) for v in cover)
+            dlg.geometry(f"{max(300, cw)}x{max(340, ch)}+{cx}+{cy}")
+        else:
+            _fit_card(dlg, min_w=300, min_h=340, near=near)
+        try:
+            dlg.update_idletasks()
+            dlg.deiconify()
+            dlg.lift()
+            dlg.focus_force()
+        except Exception:
+            pass
         _run_card_modal(dlg, self.win)
         return result[0]
 
@@ -886,22 +912,22 @@ class WorkTimer:
         def add() -> None:
             hint.set("")
             _unbind_wheel()
-            # 先藏起列表，避免和新增窗叠在一起乱点/乱跳
+            # 用同位置同尺寸盖住列表，不 withdraw，避免闪一下露桌面
             try:
-                pos = (int(dlg.winfo_rootx()), int(dlg.winfo_rooty()))
-                dlg.withdraw()
+                cover = (
+                    int(dlg.winfo_rootx()),
+                    int(dlg.winfo_rooty()),
+                    max(300, int(dlg.winfo_width())),
+                    max(340, int(dlg.winfo_height())),
+                )
             except Exception:
-                pos = near
+                cover = None
+            item = self._ask_new_schedule(cover=cover)
             try:
-                item = self._ask_new_schedule(near=pos)
-            finally:
-                try:
-                    if dlg.winfo_exists() and not self._need_close_schedule_list:
-                        dlg.deiconify()
-                        dlg.lift()
-                        dlg.focus_force()
-                except Exception:
-                    pass
+                if dlg.winfo_exists():
+                    dlg.lift()
+            except Exception:
+                pass
             if self._need_close_schedule_list:
                 close()
                 return
