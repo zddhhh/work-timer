@@ -1,4 +1,4 @@
-"""日程与优先显示：今日下班 + 到点/时长自建项。"""
+"""日程与优先显示：今日下班 + 到点(可跨日)/时长自建项。"""
 from __future__ import annotations
 
 import uuid
@@ -12,6 +12,12 @@ MAX_PINS = 3
 def ensure_fields(cfg: dict) -> None:
     if not isinstance(cfg.get("schedules"), list):
         cfg["schedules"] = []
+    # 旧数据补 date
+    for s in cfg["schedules"]:
+        if not isinstance(s, dict):
+            continue
+        if s.get("kind") == "clock" and not s.get("date"):
+            s["date"] = datetime.now().strftime("%Y-%m-%d")
     pins = cfg.get("pin_order")
     if not isinstance(pins, list):
         cfg["pin_order"] = [OFFWORK_ID]
@@ -24,7 +30,6 @@ def ensure_fields(cfg: dict) -> None:
         cfg["rotate_sec"] = max(3, min(60, int(cfg.get("rotate_sec") or 5)))
     except (TypeError, ValueError):
         cfg["rotate_sec"] = 5
-    # 清理无效 pin
     valid = {OFFWORK_ID} | {str(s.get("id")) for s in cfg["schedules"] if isinstance(s, dict) and s.get("id")}
     cfg["pin_order"] = [p for p in cfg["pin_order"] if p in valid][:MAX_PINS]
     if cfg["active_pin_id"] not in cfg["pin_order"]:
@@ -40,18 +45,44 @@ def _parse_started(raw: object) -> datetime | None:
         return None
 
 
+def _parse_date(raw: object) -> tuple[int, int, int] | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        d = datetime.strptime(raw.strip()[:10], "%Y-%m-%d")
+        return d.year, d.month, d.day
+    except ValueError:
+        return None
+
+
+def schedule_target(item: dict) -> datetime | None:
+    if str(item.get("kind") or "") != "clock":
+        return None
+    hm = item.get("hm")
+    if not isinstance(hm, (list, tuple)) or len(hm) != 2:
+        return None
+    try:
+        h, m = int(hm[0]), int(hm[1])
+    except (TypeError, ValueError):
+        return None
+    ymd = _parse_date(item.get("date"))
+    if ymd is None:
+        now = datetime.now()
+        ymd = (now.year, now.month, now.day)
+    y, mo, d = ymd
+    try:
+        return datetime(y, mo, d, h, m, 0)
+    except ValueError:
+        return None
+
+
 def schedule_remaining(item: dict, now: datetime) -> tuple[int, bool]:
-    """返回 (剩余秒, 是否到点)。"""
+    """返回 (剩余秒绝对值, 是否到点)。"""
     kind = str(item.get("kind") or "")
     if kind == "clock":
-        hm = item.get("hm")
-        if not isinstance(hm, (list, tuple)) or len(hm) != 2:
+        target = schedule_target(item)
+        if target is None:
             return 0, True
-        try:
-            h, m = int(hm[0]), int(hm[1])
-        except (TypeError, ValueError):
-            return 0, True
-        target = now.replace(hour=h, minute=m, second=0, microsecond=0)
         sec = int((target - now).total_seconds())
         return abs(sec), sec <= 0
     if kind == "duration":
@@ -67,11 +98,30 @@ def schedule_remaining(item: dict, now: datetime) -> tuple[int, bool]:
     return 0, True
 
 
-def new_clock(title: str, h: int, m: int) -> dict[str, Any]:
+def format_schedule_when(item: dict) -> str:
+    """列表副标题用的时间描述。"""
+    kind = str(item.get("kind") or "")
+    if kind == "clock":
+        target = schedule_target(item)
+        if target is None:
+            return ""
+        return target.strftime("%m-%d %H:%M")
+    if kind == "duration":
+        try:
+            mins = max(1, int(item.get("duration_sec") or 0) // 60)
+        except (TypeError, ValueError):
+            mins = 0
+        return f"{mins}分钟"
+    return ""
+
+
+def new_clock(title: str, h: int, m: int, *, date: str | None = None) -> dict[str, Any]:
+    day = date or datetime.now().strftime("%Y-%m-%d")
     return {
         "id": uuid.uuid4().hex[:12],
         "title": title.strip() or "日程",
         "kind": "clock",
+        "date": day,
         "hm": [int(h), int(m)],
         "duration_sec": None,
         "started_at": None,
@@ -85,6 +135,7 @@ def new_duration(title: str, minutes: int, *, now: datetime | None = None) -> di
         "id": uuid.uuid4().hex[:12],
         "title": title.strip() or "倒计时",
         "kind": "duration",
+        "date": None,
         "hm": None,
         "duration_sec": sec,
         "started_at": now.isoformat(timespec="seconds"),
@@ -119,7 +170,6 @@ def is_pinned(cfg: dict, sid: str) -> bool:
 
 
 def set_pinned(cfg: dict, sid: str, pinned: bool) -> tuple[bool, str]:
-    """返回 (ok, message)。"""
     ensure_fields(cfg)
     if pinned:
         if sid in cfg["pin_order"]:
@@ -137,7 +187,6 @@ def set_pinned(cfg: dict, sid: str, pinned: bool) -> tuple[bool, str]:
 
 
 def cycle_active(cfg: dict) -> bool:
-    """切换到下一个优先项；不足 2 个返回 False。"""
     ensure_fields(cfg)
     pins = cfg["pin_order"]
     if len(pins) < 2:
@@ -152,7 +201,6 @@ def cycle_active(cfg: dict) -> bool:
 
 
 def rotate_tick(cfg: dict, last_rotate: float, now_mono: float) -> bool:
-    """若应轮播则切换并返回 True。"""
     ensure_fields(cfg)
     if not cfg.get("auto_rotate_pins"):
         return False
@@ -174,7 +222,6 @@ def active_id(cfg: dict) -> str | None:
 
 
 def pin_index(cfg: dict) -> tuple[int, int]:
-    """(当前序号从1, 总数)。"""
     ensure_fields(cfg)
     pins = cfg["pin_order"]
     if not pins:

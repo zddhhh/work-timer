@@ -60,6 +60,13 @@ def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
     return bytes(bgra), bytes(mask)
 
 
+_CARD_BG = "#161a22"
+_CARD_FG = "#f0f3f8"
+_CARD_MUTED = "#8b93a5"
+_CARD_ACCENT = "#3d7eff"
+_CARD_BTN = "#2a3140"
+
+
 def _place_dialog(dlg: tk.Toplevel, near: tuple[int, int] | None, *, min_w: int, min_h: int) -> None:
     """按内容自适应尺寸，避免高 DPI 下按钮被裁切。"""
     dlg.update_idletasks()
@@ -71,6 +78,73 @@ def _place_dialog(dlg: tk.Toplevel, near: tuple[int, int] | None, *, min_w: int,
         dlg.geometry(f"{w}x{h}")
 
 
+def _round_card(dlg: tk.Toplevel, radius: int = 16) -> None:
+    """无边框卡片裁成圆角，避免系统窗口矩形感。"""
+    dlg.update_idletasks()
+    try:
+        hwnd = int(dlg.winfo_id())
+        w = max(1, int(dlg.winfo_width()))
+        h = max(1, int(dlg.winfo_height()))
+        hrgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2)
+        ctypes.windll.user32.SetWindowRgn(hwnd, hrgn, True)
+    except Exception:
+        pass
+
+
+def _card_dialog(
+    parent: tk.Tk | None,
+    *,
+    near: tuple[int, int] | None,
+    width: int,
+    height: int,
+) -> tk.Toplevel:
+    """无边框、置顶、深色圆角卡片（贴近主界面，不像系统窗口）。"""
+    dlg = tk.Toplevel(parent)
+    dlg.overrideredirect(True)
+    dlg.resizable(False, False)
+    dlg.attributes("-topmost", True)
+    dlg.configure(bg=_CARD_BG)
+    if near:
+        dlg.geometry(f"{width}x{height}+{int(near[0])}+{int(near[1])}")
+    else:
+        dlg.geometry(f"{width}x{height}")
+    try:
+        dlg.lift()
+        dlg.focus_force()
+    except Exception:
+        pass
+    _round_card(dlg)
+    # 拖拽移动
+    state = {"x": 0, "y": 0}
+
+    def start(e) -> None:
+        state["x"], state["y"] = e.x_root, e.y_root
+
+    def drag(e) -> None:
+        dx, dy = e.x_root - state["x"], e.y_root - state["y"]
+        state["x"], state["y"] = e.x_root, e.y_root
+        dlg.geometry(f"+{dlg.winfo_x() + dx}+{dlg.winfo_y() + dy}")
+
+    dlg.bind("<ButtonPress-1>", start)
+    dlg.bind("<B1-Motion>", drag)
+    return dlg
+
+
+def _run_card_modal(dlg: tk.Toplevel, win: layered_win.LayeredPetWindow | None = None) -> None:
+    """与分层窗泵兼容的模态循环；调用方 destroy 即结束。"""
+    dlg.bind("<Escape>", lambda _e: dlg.destroy())
+    while True:
+        try:
+            if not dlg.winfo_exists():
+                break
+            dlg.update()
+            if win is not None:
+                win.pump()
+        except Exception:
+            break
+        time.sleep(0.02)
+
+
 def _ask_offwork_setup(
     parent: tk.Tk | None,
     *,
@@ -78,21 +152,11 @@ def _ask_offwork_setup(
     start_preset: tuple[int, int] | None,
     off_preset: tuple[int, int] | None,
     near: tuple[int, int] | None = None,
+    win: layered_win.LayeredPetWindow | None = None,
 ) -> tuple[str, tuple[int, int]] | None:
-    """统一设置下班：直接设点，或按到岗时间推算。返回 (mode, hm)。"""
+    """统一设置下班：卡片风无边框。返回 (mode, hm)。"""
     result: list[tuple[str, tuple[int, int]] | None] = [None]
-    dlg = tk.Toplevel(parent)
-    dlg.title("设置下班时间")
-    dlg.resizable(False, False)
-    dlg.attributes("-topmost", True)
-    dlg.configure(bg="#1b1e26")
-    try:
-        dlg.lift()
-        dlg.focus_force()
-    except Exception:
-        pass
-    dlg.grab_set()
-
+    dlg = _card_dialog(parent, near=near, width=380, height=320)
     init_mode = "flex" if mode == "flex" else "direct"
     mode_var = tk.StringVar(value=init_mode)
     sh, sm = start_preset if start_preset else (9, 0)
@@ -102,76 +166,75 @@ def _ask_offwork_setup(
     tip = tk.StringVar()
     preview = tk.StringVar()
 
-    tk.Label(
-        dlg,
-        text="怎么设置今天下班？",
-        fg="#f4f6fb",
-        bg="#1b1e26",
-        font=("Microsoft YaHei UI", 13, "bold"),
-    ).pack(pady=(16, 8), padx=18, anchor="w")
-
-    radios = tk.Frame(dlg, bg="#1b1e26")
-    radios.pack(padx=18, anchor="w")
+    tk.Label(dlg, text="设置下班时间", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(
+        pady=(18, 8), padx=20, anchor="w"
+    )
+    radios = tk.Frame(dlg, bg=_CARD_BG)
+    radios.pack(padx=20, anchor="w")
     for value, label in (
-        ("direct", "我知道下班几点（直接倒计时）"),
-        ("flex", "按到岗时间推算（8:30–9:30 → 18:00–19:00）"),
+        ("direct", "我知道下班几点"),
+        ("flex", "按到岗时间推算（8:30–9:30）"),
     ):
         tk.Radiobutton(
             radios,
             text=label,
             variable=mode_var,
             value=value,
-            fg="#e8ecf4",
-            bg="#1b1e26",
-            activebackground="#1b1e26",
-            activeforeground="#e8ecf4",
-            selectcolor="#2a3140",
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            activebackground=_CARD_BG,
+            activeforeground=_CARD_FG,
+            selectcolor=_CARD_BTN,
             font=("Microsoft YaHei UI", 10),
             anchor="w",
-            justify="left",
-        ).pack(anchor="w", pady=2)
-
-    tk.Label(
+        ).pack(anchor="w", pady=1)
+    tk.Label(dlg, textvariable=tip, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+        padx=20, pady=(10, 4), anchor="w"
+    )
+    entry = tk.Entry(
         dlg,
-        textvariable=tip,
-        fg="#9aa3b5",
-        bg="#1b1e26",
-        font=("Microsoft YaHei UI", 9),
-        wraplength=360,
-        justify="left",
-    ).pack(padx=18, pady=(10, 4), anchor="w")
+        font=("Microsoft YaHei UI", 16),
+        justify="center",
+        bg="#222733",
+        fg=_CARD_FG,
+        insertbackground=_CARD_FG,
+        relief="flat",
+        width=14,
+    )
+    entry.pack(pady=8, ipady=6)
 
-    entry = ttk.Entry(dlg, font=("Microsoft YaHei UI", 16), justify="center", width=14)
-    entry.pack(pady=10, padx=18)
-
-    tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg="#1b1e26", font=("Microsoft YaHei UI", 10)).pack(
-        padx=18, anchor="w"
+    tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg=_CARD_BG, font=("Microsoft YaHei UI", 10)).pack(
+        padx=20, anchor="w"
+    )
+    err = tk.StringVar(value="")
+    tk.Label(dlg, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+        padx=20, pady=(6, 0), anchor="w"
     )
 
     def current_var() -> tk.StringVar:
         return start_var if mode_var.get() == "flex" else off_var
 
     def sync_entry_from_mode(*_a) -> None:
-        v = current_var()
-        entry.configure(textvariable=v)
-        if mode_var.get() == "flex":
-            tip.set("填写今天几点到岗，自动按 9.5 小时推算下班点")
-        else:
-            tip.set("填写今天下班几点，例如 18:00（固定下班选这个）")
+        entry.configure(textvariable=current_var())
+        tip.set(
+            "到岗时间，例如 8.45 / 9:10"
+            if mode_var.get() == "flex"
+            else "下班时刻，例如 18:00"
+        )
         refresh_preview()
 
     def refresh_preview(*_a) -> None:
         if mode_var.get() == "flex":
             parsed = flex_time.parse_start(start_var.get())
             if parsed is None:
-                preview.set("请输入 8:30–9:30，例如 8.45 或 9:10")
+                preview.set("请输入 8:30–9:30")
                 return
             ph, pm = flex_time.offwork_hm(*parsed)
-            preview.set(f"推算下班：{flex_time.format_hm(ph, pm)}")
+            preview.set(f"推算下班 {flex_time.format_hm(ph, pm)}")
             return
         parsed = flex_time.parse_clock(off_var.get())
         if parsed is None:
-            preview.set("请输入 0:00–23:59，例如 18:00")
+            preview.set("请输入 0:00–23:59")
             return
         preview.set(f"倒计时到 {flex_time.format_hm(*parsed)}")
 
@@ -179,67 +242,36 @@ def _ask_offwork_setup(
     start_var.trace_add("write", refresh_preview)
     off_var.trace_add("write", refresh_preview)
     sync_entry_from_mode()
-    entry.select_range(0, tk.END)
     entry.focus_set()
 
     def ok() -> None:
+        err.set("")
         if mode_var.get() == "flex":
             parsed = flex_time.parse_start(start_var.get())
             if parsed is None:
-                messagebox.showwarning(
-                    "设置下班时间",
-                    "到岗时间请填 8:30 到 9:30，例如 8.45 或 9:10",
-                    parent=dlg,
-                )
+                err.set("到岗请填 8:30–9:30")
                 return
             result[0] = ("flex", parsed)
         else:
             parsed = flex_time.parse_clock(off_var.get())
             if parsed is None:
-                messagebox.showwarning(
-                    "设置下班时间",
-                    "下班时间请填 0:00 到 23:59，例如 18:00 或 18.30",
-                    parent=dlg,
-                )
+                err.set("请填合法时刻，例如 18:00")
                 return
             result[0] = ("direct", parsed)
         dlg.destroy()
 
-    def cancel() -> None:
-        dlg.destroy()
-
-    bar = tk.Frame(dlg, bg="#1b1e26")
-    bar.pack(pady=(14, 16))
+    bar = tk.Frame(dlg, bg=_CARD_BG)
+    bar.pack(side="bottom", pady=16)
     tk.Button(
-        bar,
-        text="开始计时",
-        command=ok,
-        bg="#3d7eff",
-        fg="white",
-        activebackground="#5a92ff",
-        activeforeground="white",
-        relief="flat",
-        font=("Microsoft YaHei UI", 10, "bold"),
-        padx=18,
-        pady=6,
-    ).pack(side="left", padx=8)
+        bar, text="开始计时", command=ok, bg=_CARD_ACCENT, fg="white", relief="flat",
+        font=("Microsoft YaHei UI", 10, "bold"), padx=16, pady=6,
+    ).pack(side="left", padx=6)
     tk.Button(
-        bar,
-        text="取消",
-        command=cancel,
-        bg="#3a3f4b",
-        fg="white",
-        activebackground="#4a5160",
-        activeforeground="white",
-        relief="flat",
-        font=("Microsoft YaHei UI", 10),
-        padx=18,
-        pady=6,
-    ).pack(side="left", padx=8)
+        bar, text="取消", command=dlg.destroy, bg=_CARD_BTN, fg="white", relief="flat",
+        font=("Microsoft YaHei UI", 10), padx=16, pady=6,
+    ).pack(side="left", padx=6)
     dlg.bind("<Return>", lambda _e: ok())
-    dlg.bind("<Escape>", lambda _e: cancel())
-    _place_dialog(dlg, near, min_w=400, min_h=300)
-    dlg.wait_window()
+    _run_card_modal(dlg, win)
     return result[0]
 
 
@@ -454,8 +486,8 @@ class WorkTimer:
     def _on_click(self, lx: int, ly: int) -> None:
         if self._disguised:
             return
-        # 整条底边（含小箭头）打开日程列表
-        if ly >= self._win_h - 20:
+        # 仅倒三角热区打开日程列表
+        if ornaments.chevron_hit(lx, ly, self._win_w, self._win_h):
             self._need_schedule_list = True
             return
         pins = self.cfg.get("pin_order") or []
@@ -530,6 +562,7 @@ class WorkTimer:
             start_preset=start_preset,
             off_preset=off_preset,
             near=self._dialog_near(),
+            win=self.win,
         )
         if picked is None:
             return
@@ -561,7 +594,7 @@ class WorkTimer:
                 return "距离下班", 0, False, True
             td = flex_time.remaining_to(now, off[0], off[1])
             total, done = flex_time.remaining_parts(td)
-            title = "已经到点" if done else "下班"
+            title = "已经到点" if done else "距离您下班还有"
             return title, total, done, False
         item = schedules.find_schedule(self.cfg, aid)
         if item is None:
@@ -574,118 +607,117 @@ class WorkTimer:
 
     def _ask_new_schedule(self) -> dict | None:
         result: list[dict | None] = [None]
-        dlg = tk.Toplevel(self._tk_root())
-        dlg.title("新增日程")
-        dlg.resizable(False, False)
-        dlg.attributes("-topmost", True)
-        dlg.configure(bg="#1b1e26")
-        try:
-            dlg.lift()
-            dlg.focus_force()
-        except Exception:
-            pass
-        dlg.grab_set()
+        now = datetime.now()
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=380, height=360)
         kind_var = tk.StringVar(value="clock")
         title_var = tk.StringVar(value="")
         time_var = tk.StringVar(value="15:00")
+        y_var = tk.StringVar(value=str(now.year))
+        m_var = tk.StringVar(value=str(now.month))
+        d_var = tk.StringVar(value=str(now.day))
         tip = tk.StringVar()
 
-        tk.Label(dlg, text="新增日程", fg="#f4f6fb", bg="#1b1e26", font=("Microsoft YaHei UI", 13, "bold")).pack(
-            pady=(14, 6), padx=16, anchor="w"
+        tk.Label(dlg, text="新增日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(
+            pady=(16, 6), padx=18, anchor="w"
         )
-        box = tk.Frame(dlg, bg="#1b1e26")
-        box.pack(padx=16, anchor="w")
-        for val, lab in (("clock", "到点时刻（今天几点）"), ("duration", "倒计时长（分钟）")):
+        box = tk.Frame(dlg, bg=_CARD_BG)
+        box.pack(padx=18, anchor="w")
+        for val, lab in (("clock", "指定日期+时刻"), ("duration", "倒计时长（分钟）")):
             tk.Radiobutton(
-                box,
-                text=lab,
-                variable=kind_var,
-                value=val,
-                fg="#e8ecf4",
-                bg="#1b1e26",
-                selectcolor="#2a3140",
-                activebackground="#1b1e26",
-                font=("Microsoft YaHei UI", 10),
+                box, text=lab, variable=kind_var, value=val, fg=_CARD_FG, bg=_CARD_BG,
+                selectcolor=_CARD_BTN, activebackground=_CARD_BG, font=("Microsoft YaHei UI", 10),
             ).pack(anchor="w")
-        tk.Label(dlg, text="名称", fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9)).pack(
-            padx=16, anchor="w", pady=(8, 0)
+
+        tk.Label(dlg, text="名称", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            padx=18, anchor="w", pady=(8, 0)
         )
-        ttk.Entry(dlg, textvariable=title_var, font=("Microsoft YaHei UI", 12)).pack(padx=16, fill="x")
-        tk.Label(dlg, textvariable=tip, fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9)).pack(
-            padx=16, anchor="w", pady=(8, 0)
+        tk.Entry(
+            dlg, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat",
+        ).pack(padx=18, fill="x", ipady=5)
+
+        date_row = tk.Frame(dlg, bg=_CARD_BG)
+        date_row.pack(padx=18, pady=(10, 0), anchor="w")
+        tk.Label(date_row, text="日期", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(side="left")
+        for var, lab, w in ((y_var, "年", 5), (m_var, "月", 3), (d_var, "日", 3)):
+            tk.Entry(
+                date_row, textvariable=var, width=w, justify="center", font=("Microsoft YaHei UI", 11),
+                bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+            ).pack(side="left", padx=(6, 2), ipady=3)
+            tk.Label(date_row, text=lab, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 8)).pack(side="left")
+
+        tk.Label(dlg, textvariable=tip, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            padx=18, anchor="w", pady=(10, 0)
         )
-        ttk.Entry(dlg, textvariable=time_var, font=("Microsoft YaHei UI", 14), justify="center").pack(
-            padx=16, pady=8, fill="x"
-        )
+        tk.Entry(
+            dlg, textvariable=time_var, font=("Microsoft YaHei UI", 14), justify="center",
+            bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+        ).pack(padx=18, pady=8, fill="x", ipady=6)
 
         def sync(*_a) -> None:
             if kind_var.get() == "clock":
-                tip.set("例如 15:00 / 15.30")
-                if not time_var.get().strip():
+                tip.set("时刻，例如 15:00")
+                date_row.pack(padx=18, pady=(10, 0), anchor="w")
+                if ":" not in time_var.get() and "." not in time_var.get():
                     time_var.set("15:00")
             else:
-                tip.set("例如 25（表示 25 分钟）")
-                if not time_var.get().strip() or ":" in time_var.get():
+                tip.set("分钟数，例如 25")
+                date_row.pack_forget()
+                if ":" in time_var.get() or "." in time_var.get():
                     time_var.set("25")
 
         kind_var.trace_add("write", sync)
         sync()
 
+        err = tk.StringVar(value="")
+        tk.Label(dlg, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            padx=18, anchor="w"
+        )
+
         def ok() -> None:
+            err.set("")
             name = title_var.get().strip() or ("日程" if kind_var.get() == "clock" else "倒计时")
             if kind_var.get() == "clock":
                 hm = flex_time.parse_clock(time_var.get())
                 if hm is None:
-                    messagebox.showwarning("新增日程", "请输入今天的时刻，例如 15:00", parent=dlg)
+                    err.set("请输入时刻，例如 15:00")
                     return
-                result[0] = schedules.new_clock(name, *hm)
-            else:
-                raw = time_var.get().strip()
                 try:
-                    mins = int(float(raw))
+                    y, m, d = int(y_var.get()), int(m_var.get()), int(d_var.get())
+                    datetime(y, m, d)
                 except ValueError:
-                    messagebox.showwarning("新增日程", "请输入分钟数，例如 25", parent=dlg)
+                    err.set("日期无效")
+                    return
+                result[0] = schedules.new_clock(name, *hm, date=f"{y:04d}-{m:02d}-{d:02d}")
+            else:
+                try:
+                    mins = int(float(time_var.get().strip()))
+                except ValueError:
+                    err.set("请输入分钟数")
                     return
                 if mins < 1 or mins > 24 * 60:
-                    messagebox.showwarning("新增日程", "时长请在 1–1440 分钟", parent=dlg)
+                    err.set("时长 1–1440 分钟")
                     return
                 result[0] = schedules.new_duration(name, mins)
             dlg.destroy()
 
-        def cancel() -> None:
-            dlg.destroy()
-
-        bar = tk.Frame(dlg, bg="#1b1e26")
-        bar.pack(pady=12)
-        tk.Button(bar, text="开始倒计时", command=ok, bg="#3d7eff", fg="white", relief="flat", padx=14, pady=5).pack(
-            side="left", padx=6
-        )
-        tk.Button(bar, text="取消", command=cancel, bg="#3a3f4b", fg="white", relief="flat", padx=14, pady=5).pack(
-            side="left", padx=6
-        )
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", pady=14)
+        tk.Button(
+            bar, text="开始倒计时", command=ok, bg=_CARD_ACCENT, fg="white", relief="flat",
+            font=("Microsoft YaHei UI", 10, "bold"), padx=14, pady=6,
+        ).pack(side="left", padx=6)
+        tk.Button(
+            bar, text="取消", command=dlg.destroy, bg=_CARD_BTN, fg="white", relief="flat",
+            font=("Microsoft YaHei UI", 10), padx=14, pady=6,
+        ).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: ok())
-        dlg.bind("<Escape>", lambda _e: cancel())
-        _place_dialog(dlg, self._dialog_near(), min_w=360, min_h=280)
-        dlg.wait_window()
+        _run_card_modal(dlg, self.win)
         return result[0]
 
     def _open_schedule_list(self) -> None:
-        """日程下拉：先钉底栏按钮，再铺列表，避免被 Canvas 挤没；与 Win32 泵兼容。"""
         schedules.ensure_fields(self.cfg)
-        root = self._tk_root()
-        dlg = tk.Toplevel(root)
-        dlg.title("日程")
-        dlg.resizable(False, False)
-        dlg.attributes("-topmost", True)
-        dlg.configure(bg="#151821")
-        near = self._dialog_near()
-        dlg.geometry(f"400x420+{near[0]}+{near[1]}")
-        try:
-            dlg.lift()
-            dlg.focus_force()
-        except Exception:
-            pass
-
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=390, height=420)
         closed = {"v": False}
 
         def close() -> None:
@@ -695,12 +727,9 @@ class WorkTimer:
             except Exception:
                 pass
 
-        # 先钉顶部 / 底部，中间再 expand —— 否则新增/关闭按钮会被挤没
-        head = tk.Frame(dlg, bg="#151821")
+        head = tk.Frame(dlg, bg=_CARD_BG)
         head.pack(side="top", fill="x", padx=14, pady=(14, 6))
-        tk.Label(
-            head, text="日程", fg="#f4f6fb", bg="#151821", font=("Microsoft YaHei UI", 13, "bold")
-        ).pack(side="left")
+        tk.Label(head, text="日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(side="left")
         rotate_var = tk.BooleanVar(value=bool(self.cfg.get("auto_rotate_pins")))
 
         def on_rotate() -> None:
@@ -709,221 +738,160 @@ class WorkTimer:
             self._last_key = ""
 
         tk.Checkbutton(
-            head,
-            text="多优先时自动轮播",
-            variable=rotate_var,
-            command=on_rotate,
-            fg="#a8b0c0",
-            bg="#151821",
-            selectcolor="#2a3140",
-            activebackground="#151821",
-            activeforeground="#e8ecf4",
-            font=("Microsoft YaHei UI", 9),
+            head, text="自动轮播", variable=rotate_var, command=on_rotate, fg=_CARD_MUTED, bg=_CARD_BG,
+            selectcolor=_CARD_BTN, activebackground=_CARD_BG, font=("Microsoft YaHei UI", 9),
         ).pack(side="right")
 
-        foot = tk.Frame(dlg, bg="#151821")
+        foot = tk.Frame(dlg, bg=_CARD_BG)
         foot.pack(side="bottom", fill="x", padx=14, pady=(8, 14))
-
-        mid = tk.Frame(dlg, bg="#151821")
+        mid = tk.Frame(dlg, bg=_CARD_BG)
         mid.pack(side="top", fill="both", expand=True, padx=14, pady=4)
 
-        canvas = tk.Canvas(mid, bg="#151821", highlightthickness=0, bd=0)
-        scroll = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
-        rows = tk.Frame(canvas, bg="#151821")
+        hint = tk.StringVar(value="")
+        canvas = tk.Canvas(mid, bg=_CARD_BG, highlightthickness=0, bd=0)
+        rows = tk.Frame(canvas, bg=_CARD_BG)
         win_id = canvas.create_window((0, 0), window=rows, anchor="nw")
 
-        def _sync_scroll(_e=None) -> None:
+        def _sync(_e=None) -> None:
             canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas.itemconfigure(win_id, width=canvas.winfo_width())
+            canvas.itemconfigure(win_id, width=max(1, canvas.winfo_width()))
 
-        rows.bind("<Configure>", _sync_scroll)
-        canvas.bind("<Configure>", _sync_scroll)
-        canvas.configure(yscrollcommand=scroll.set)
+        def _wheel(e) -> None:
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        def _bind_wheel(_e=None) -> None:
+            canvas.bind_all("<MouseWheel>", _wheel)
+
+        def _unbind_wheel(_e=None) -> None:
+            canvas.unbind_all("<MouseWheel>")
+
+        rows.bind("<Configure>", _sync)
+        canvas.bind("<Configure>", _sync)
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
         canvas.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
 
         def rebuild() -> None:
             for child in rows.winfo_children():
                 child.destroy()
             now = datetime.now()
-            items: list[tuple[str, str, str, bool]] = []
+            items: list[tuple[str, str, str, str, bool]] = []
             if self._has_target():
                 off = self._off_hm()
                 if off is not None:
                     td = flex_time.remaining_to(now, off[0], off[1])
                     total, done = flex_time.remaining_parts(td)
-                    label = "已到点" if done else flex_time.format_remaining(total, self._display_mode())
-                    items.append((schedules.OFFWORK_ID, "下班", label, False))
+                    rem = "已到点" if done else flex_time.format_remaining(total, self._display_mode())
+                    items.append((schedules.OFFWORK_ID, "距离您下班还有", rem, "今天", False))
                 else:
-                    items.append((schedules.OFFWORK_ID, "下班", "未设置", False))
+                    items.append((schedules.OFFWORK_ID, "距离您下班还有", "未设置", "今天", False))
             else:
-                items.append((schedules.OFFWORK_ID, "下班", "点击设置", False))
+                items.append((schedules.OFFWORK_ID, "距离您下班还有", "点击设置", "今天", False))
             for s in self.cfg.get("schedules") or []:
                 if not isinstance(s, dict) or not s.get("id"):
                     continue
                 sid = str(s["id"])
                 left, done = schedules.schedule_remaining(s, now)
-                label = "已到点" if done else flex_time.format_remaining(left, self._display_mode())
-                items.append((sid, str(s.get("title") or "日程"), label, True))
+                rem = "已到点" if done else flex_time.format_remaining(left, self._display_mode())
+                when = schedules.format_schedule_when(s)
+                items.append((sid, str(s.get("title") or "日程"), rem, when, True))
 
-            if not items:
-                tk.Label(rows, text="暂无日程", fg="#6a7384", bg="#151821", font=("Microsoft YaHei UI", 10)).pack(
-                    pady=24
-                )
-
-            for sid, title, label, can_del in items:
-                card = tk.Frame(rows, bg="#222733", highlightthickness=0)
+            for sid, title, rem, when, can_del in items:
+                card = tk.Frame(rows, bg="#222733")
                 card.pack(fill="x", pady=5)
                 inner = tk.Frame(card, bg="#222733")
-                inner.pack(fill="x", padx=10, pady=8)
-
+                inner.pack(fill="x", padx=10, pady=9)
                 left_col = tk.Frame(inner, bg="#222733")
                 left_col.pack(side="left", fill="x", expand=True)
                 active = schedules.active_id(self.cfg) == sid
-                title_fg = "#7ec8ff" if active else "#f0f3f8"
                 tk.Label(
-                    left_col,
-                    text=title,
-                    fg=title_fg,
-                    bg="#222733",
-                    font=("Microsoft YaHei UI", 11, "bold"),
-                    anchor="w",
+                    left_col, text=title, fg="#7ec8ff" if active else _CARD_FG, bg="#222733",
+                    font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
                 ).pack(fill="x")
                 tk.Label(
-                    left_col,
-                    text=label,
-                    fg="#8b93a5",
-                    bg="#222733",
-                    font=("Microsoft YaHei UI", 9),
-                    anchor="w",
+                    left_col, text=f"{when}  ·  {rem}", fg=_CARD_MUTED, bg="#222733",
+                    font=("Microsoft YaHei UI", 9), anchor="w",
                 ).pack(fill="x")
-
                 btns = tk.Frame(inner, bg="#222733")
                 btns.pack(side="right")
-
                 pinned = schedules.is_pinned(self.cfg, sid)
 
-                def focus(s=sid) -> None:
-                    if s == schedules.OFFWORK_ID and not self._has_target():
+                def toggle_pin(s=sid, was=pinned) -> None:
+                    hint.set("")
+                    if s == schedules.OFFWORK_ID and not self._has_target() and not was:
                         close()
                         self._open_setup_dialog()
                         return
-                    if not schedules.is_pinned(self.cfg, s):
-                        ok, msg = schedules.set_pinned(self.cfg, s, True)
-                        if not ok:
-                            messagebox.showinfo("优先显示", msg, parent=dlg)
-                            return
-                    self.cfg["active_pin_id"] = s
-                    store.save_config(self.cfg)
-                    self._last_key = ""
-                    close()
-
-                def toggle_pin(s=sid, was=pinned) -> None:
                     ok, msg = schedules.set_pinned(self.cfg, s, not was)
                     if not ok:
-                        messagebox.showinfo("优先显示", msg, parent=dlg)
+                        hint.set(msg)
                         return
+                    if not was:
+                        self.cfg["active_pin_id"] = s
                     store.save_config(self.cfg)
                     self._last_key = ""
                     rebuild()
 
                 tk.Button(
-                    btns,
-                    text="显示" if not active else "当前",
-                    command=focus,
-                    bg="#3d7eff" if not active else "#2a3348",
-                    fg="white",
-                    relief="flat",
-                    font=("Microsoft YaHei UI", 9),
-                    padx=8,
-                    pady=2,
-                ).pack(side="left", padx=3)
-                tk.Button(
-                    btns,
-                    text="★优先" if pinned else "☆优先",
-                    command=toggle_pin,
-                    bg="#3a4254",
-                    fg="#ffd28a" if pinned else "#c8d0dc",
-                    relief="flat",
-                    font=("Microsoft YaHei UI", 9),
-                    padx=8,
-                    pady=2,
+                    btns, text="优先" if pinned else "未优先", command=toggle_pin,
+                    bg="#3a4254", fg="#ffd28a" if pinned else _CARD_MUTED, relief="flat",
+                    font=("Microsoft YaHei UI", 9), padx=8, pady=3,
                 ).pack(side="left", padx=3)
 
                 if can_del:
-
                     def drop(s=sid) -> None:
-                        if not messagebox.askyesno("删除日程", f"确定删除「{title}」？", parent=dlg):
-                            return
+                        hint.set("")
                         schedules.remove_schedule(self.cfg, s)
                         store.save_config(self.cfg)
                         self._last_key = ""
                         rebuild()
 
                     tk.Button(
-                        btns,
-                        text="删除",
-                        command=drop,
-                        bg="#4a3038",
-                        fg="#ffb4b4",
-                        relief="flat",
-                        font=("Microsoft YaHei UI", 9),
-                        padx=8,
-                        pady=2,
+                        btns, text="删除", command=drop, bg="#4a3038", fg="#ffb4b4", relief="flat",
+                        font=("Microsoft YaHei UI", 9), padx=8, pady=3,
                     ).pack(side="left", padx=3)
-
-            _sync_scroll()
+            _sync()
 
         def add() -> None:
+            hint.set("")
+            _unbind_wheel()
             item = self._ask_new_schedule()
             if item is None:
                 return
             schedules.add_schedule(self.cfg, item)
             ok, msg = schedules.set_pinned(self.cfg, item["id"], True)
             if not ok:
-                messagebox.showinfo("优先显示", msg + "\n日程已添加，可点「☆优先」手动置顶。", parent=dlg)
+                hint.set(msg + "，日程已添加")
             else:
                 self.cfg["active_pin_id"] = item["id"]
             store.save_config(self.cfg)
             self._last_key = ""
             rebuild()
 
+        tk.Label(foot, textvariable=hint, fg="#ffd28a", bg=_CARD_BG, font=("Microsoft YaHei UI", 8)).pack(
+            side="bottom", fill="x", pady=(0, 6)
+        )
         tk.Button(
-            foot,
-            text="+  新增日程",
-            command=add,
-            bg="#3d7eff",
-            fg="white",
-            activebackground="#5a92ff",
-            relief="flat",
-            font=("Microsoft YaHei UI", 10, "bold"),
-            padx=16,
-            pady=7,
+            foot, text="+  新增日程", command=add, bg=_CARD_ACCENT, fg="white", relief="flat",
+            font=("Microsoft YaHei UI", 10, "bold"), padx=16, pady=7,
         ).pack(side="left")
         tk.Button(
-            foot,
-            text="关闭",
-            command=close,
-            bg="#2e3545",
-            fg="white",
-            relief="flat",
-            font=("Microsoft YaHei UI", 10),
-            padx=14,
-            pady=7,
+            foot, text="关闭", command=close, bg=_CARD_BTN, fg="white", relief="flat",
+            font=("Microsoft YaHei UI", 10), padx=14, pady=7,
         ).pack(side="right")
-
         rebuild()
-        dlg.protocol("WM_DELETE_WINDOW", close)
-        # 不用 wait_window：与分层窗泵混用时容易一闪就没；改轮询 update
-        while not closed["v"]:
-            try:
-                if not dlg.winfo_exists():
+        try:
+            while not closed["v"]:
+                try:
+                    if not dlg.winfo_exists():
+                        break
+                    dlg.update()
+                    self.win.pump()
+                except Exception:
                     break
-                dlg.update()
-                self.win.pump()
-            except Exception:
-                break
-            time.sleep(0.02)
+                time.sleep(0.02)
+        finally:
+            _unbind_wheel()
         self._last_key = ""
 
     def _handle_menu(self, sx: int, sy: int) -> None:

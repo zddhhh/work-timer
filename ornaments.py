@@ -138,6 +138,12 @@ def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: boo
     paste_skin(img, box, "aurora", light=light)
 
 
+def chevron_hit(lx: int, ly: int, w: int, h: int) -> bool:
+    """仅倒三角附近可点，不是整条底边。"""
+    cx = w // 2
+    return abs(lx - cx) <= 12 and h - 18 <= ly <= h - 4
+
+
 def paint_chevron(
     img: Image.Image,
     w: int,
@@ -146,21 +152,17 @@ def paint_chevron(
     color: tuple[int, int, int, int] = (255, 255, 255, 90),
     pin_dots: tuple[int, int] = (0, 0),
 ) -> None:
-    """主卡片底部可点的淡下拉箭头（整条底边热区配套）。"""
+    """主卡片底部只画淡倒三角（无胶囊底板）。"""
     d = ImageDraw.Draw(img)
     cx = w // 2
-    # 底条暗示可点
-    bar = (color[0], color[1], color[2], max(18, min(40, color[3] // 2)))
-    d.rounded_rectangle((cx - 22, h - 16, cx + 22, h - 5), radius=6, fill=bar)
     y0 = h - 13
-    arrow = (color[0], color[1], color[2], min(200, color[3] + 40))
-    d.line((cx - 5, y0, cx, y0 + 4), fill=arrow, width=2)
-    d.line((cx, y0 + 4, cx + 5, y0), fill=arrow, width=2)
+    arrow = (color[0], color[1], color[2], min(130, max(70, color[3])))
+    d.polygon([(cx - 7, y0), (cx + 7, y0), (cx, y0 + 6)], fill=arrow)
     idx, total = pin_dots
     if total >= 2 and idx >= 1:
-        span = (total - 1) * 8
-        x0 = w - 14 - span
+        span = (total - 1) * 7
+        x0 = w - 12 - span
         for i in range(total):
-            x = x0 + i * 8
-            fill = (color[0], color[1], color[2], 170 if i + 1 == idx else 55)
-            d.ellipse((x - 2, h - 12, x + 2, h - 8), fill=fill)
+            x = x0 + i * 7
+            fill = (color[0], color[1], color[2], 150 if i + 1 == idx else 45)
+            d.ellipse((x - 1, h - 10, x + 2, h - 7), fill=fill)

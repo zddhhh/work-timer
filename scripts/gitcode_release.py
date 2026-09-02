@@ -108,7 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修复日程下拉闪退与按钮挤没；底边箭头更好点"
+                    "- 底边只留倒三角可点；下班文案恢复「距离您下班还有」且不可删"
+                    "\n- 优先显示开关；新增/设置/列表改成圆角卡片；日程可跨日"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
