@@ -78,17 +78,20 @@ def _place_dialog(dlg: tk.Toplevel, near: tuple[int, int] | None, *, min_w: int,
         dlg.geometry(f"{w}x{h}")
 
 
-def _round_card(dlg: tk.Toplevel, radius: int = 16) -> None:
-    """无边框卡片裁成圆角，避免系统窗口矩形感。"""
+def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near: tuple[int, int] | None) -> None:
+    """按内容把卡片撑开，避免高 DPI 下底栏按钮被裁掉。"""
     dlg.update_idletasks()
-    try:
-        hwnd = int(dlg.winfo_id())
-        w = max(1, int(dlg.winfo_width()))
-        h = max(1, int(dlg.winfo_height()))
-        hrgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, radius * 2, radius * 2)
-        ctypes.windll.user32.SetWindowRgn(hwnd, hrgn, True)
-    except Exception:
-        pass
+    w = max(min_w, int(dlg.winfo_reqwidth()) + 20)
+    h = max(min_h, int(dlg.winfo_reqheight()) + 24)
+    sw = max(min_w, int(dlg.winfo_screenwidth()) - 24)
+    sh = max(min_h, int(dlg.winfo_screenheight()) - 48)
+    w, h = min(w, sw), min(h, sh)
+    if near:
+        x = min(max(8, int(near[0])), max(8, sw - w))
+        y = min(max(8, int(near[1])), max(8, sh - h))
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+    else:
+        dlg.geometry(f"{w}x{h}")
 
 
 def _card_dialog(
@@ -98,7 +101,7 @@ def _card_dialog(
     width: int,
     height: int,
 ) -> tk.Toplevel:
-    """无边框、置顶、深色圆角卡片（贴近主界面，不像系统窗口）。"""
+    """无边框、置顶深色卡片（贴近主界面）。不裁圆角，避免把按钮切掉。"""
     dlg = tk.Toplevel(parent)
     dlg.overrideredirect(True)
     dlg.resizable(False, False)
@@ -113,8 +116,6 @@ def _card_dialog(
         dlg.focus_force()
     except Exception:
         pass
-    _round_card(dlg)
-    # 拖拽移动
     state = {"x": 0, "y": 0}
 
     def start(e) -> None:
@@ -128,6 +129,30 @@ def _card_dialog(
     dlg.bind("<ButtonPress-1>", start)
     dlg.bind("<B1-Motion>", drag)
     return dlg
+
+
+def _card_btn(parent: tk.Misc, text: str, command, *, accent: bool = False, danger: bool = False) -> tk.Button:
+    if danger:
+        bg, fg = "#4a3038", "#ffb4b4"
+    elif accent:
+        bg, fg = _CARD_ACCENT, "white"
+    else:
+        bg, fg = _CARD_BTN, "white"
+    return tk.Button(
+        parent,
+        text=text,
+        command=command,
+        bg=bg,
+        fg=fg,
+        activebackground=bg,
+        activeforeground=fg,
+        relief="flat",
+        bd=0,
+        highlightthickness=0,
+        font=("Microsoft YaHei UI", 10, "bold" if accent else "normal"),
+        padx=14,
+        pady=6,
+    )
 
 
 def _run_card_modal(dlg: tk.Toplevel, win: layered_win.LayeredPetWindow | None = None) -> None:
@@ -156,7 +181,9 @@ def _ask_offwork_setup(
 ) -> tuple[str, tuple[int, int]] | None:
     """统一设置下班：卡片风无边框。返回 (mode, hm)。"""
     result: list[tuple[str, tuple[int, int]] | None] = [None]
-    dlg = _card_dialog(parent, near=near, width=380, height=320)
+    dlg = _card_dialog(parent, near=near, width=400, height=380)
+    bar = tk.Frame(dlg, bg=_CARD_BG)
+    bar.pack(side="bottom", fill="x", pady=(8, 16))
     init_mode = "flex" if mode == "flex" else "direct"
     mode_var = tk.StringVar(value=init_mode)
     sh, sm = start_preset if start_preset else (9, 0)
@@ -260,17 +287,10 @@ def _ask_offwork_setup(
             result[0] = ("direct", parsed)
         dlg.destroy()
 
-    bar = tk.Frame(dlg, bg=_CARD_BG)
-    bar.pack(side="bottom", pady=16)
-    tk.Button(
-        bar, text="开始计时", command=ok, bg=_CARD_ACCENT, fg="white", relief="flat",
-        font=("Microsoft YaHei UI", 10, "bold"), padx=16, pady=6,
-    ).pack(side="left", padx=6)
-    tk.Button(
-        bar, text="取消", command=dlg.destroy, bg=_CARD_BTN, fg="white", relief="flat",
-        font=("Microsoft YaHei UI", 10), padx=16, pady=6,
-    ).pack(side="left", padx=6)
+    _card_btn(bar, "开始计时", ok, accent=True).pack(side="left", padx=(20, 6))
+    _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
     dlg.bind("<Return>", lambda _e: ok())
+    _fit_card(dlg, min_w=400, min_h=360, near=near)
     _run_card_modal(dlg, win)
     return result[0]
 
@@ -296,6 +316,8 @@ class WorkTimer:
         self._need_schedule_list = False
         self._tk: tk.Tk | None = None
         self._update_available = False
+        self._update_info: updater.ReleaseInfo | None = None
+        self._update_prompted = False
         self._last_pin_rotate = 0.0
 
         w, h = self._load_size()
@@ -477,6 +499,7 @@ class WorkTimer:
             try:
                 kind, info = updater.check_update(self.cfg)
                 if kind == "available" and info is not None:
+                    self._update_info = info
                     self._update_available = True
             except Exception:
                 pass
@@ -608,7 +631,9 @@ class WorkTimer:
     def _ask_new_schedule(self) -> dict | None:
         result: list[dict | None] = [None]
         now = datetime.now()
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=380, height=360)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=400, height=420)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
         kind_var = tk.StringVar(value="clock")
         title_var = tk.StringVar(value="")
         time_var = tk.StringVar(value="15:00")
@@ -701,23 +726,17 @@ class WorkTimer:
                 result[0] = schedules.new_duration(name, mins)
             dlg.destroy()
 
-        bar = tk.Frame(dlg, bg=_CARD_BG)
-        bar.pack(side="bottom", pady=14)
-        tk.Button(
-            bar, text="开始倒计时", command=ok, bg=_CARD_ACCENT, fg="white", relief="flat",
-            font=("Microsoft YaHei UI", 10, "bold"), padx=14, pady=6,
-        ).pack(side="left", padx=6)
-        tk.Button(
-            bar, text="取消", command=dlg.destroy, bg=_CARD_BTN, fg="white", relief="flat",
-            font=("Microsoft YaHei UI", 10), padx=14, pady=6,
-        ).pack(side="left", padx=6)
+        _card_btn(bar, "开始倒计时", ok, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: ok())
+        _fit_card(dlg, min_w=400, min_h=400, near=self._dialog_near())
         _run_card_modal(dlg, self.win)
         return result[0]
 
     def _open_schedule_list(self) -> None:
         schedules.ensure_fields(self.cfg)
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=390, height=420)
+        near = self._dialog_near()
+        dlg = _card_dialog(self._tk_root(), near=near, width=440, height=520)
         closed = {"v": False}
 
         def close() -> None:
@@ -727,8 +746,18 @@ class WorkTimer:
             except Exception:
                 pass
 
+        # 底栏先占位，保证「新增 / 关闭」永远在窗口里
+        foot = tk.Frame(dlg, bg=_CARD_BG)
+        foot.pack(side="bottom", fill="x", padx=16, pady=(8, 16))
+        hint = tk.StringVar(value="")
+        btn_row = tk.Frame(foot, bg=_CARD_BG)
+        btn_row.pack(side="bottom", fill="x")
+        tk.Label(foot, textvariable=hint, fg="#ffd28a", bg=_CARD_BG, font=("Microsoft YaHei UI", 8)).pack(
+            side="bottom", fill="x", pady=(0, 6)
+        )
+
         head = tk.Frame(dlg, bg=_CARD_BG)
-        head.pack(side="top", fill="x", padx=14, pady=(14, 6))
+        head.pack(side="top", fill="x", padx=16, pady=(14, 6))
         tk.Label(head, text="日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(side="left")
         rotate_var = tk.BooleanVar(value=bool(self.cfg.get("auto_rotate_pins")))
 
@@ -742,18 +771,15 @@ class WorkTimer:
             selectcolor=_CARD_BTN, activebackground=_CARD_BG, font=("Microsoft YaHei UI", 9),
         ).pack(side="right")
 
-        foot = tk.Frame(dlg, bg=_CARD_BG)
-        foot.pack(side="bottom", fill="x", padx=14, pady=(8, 14))
         mid = tk.Frame(dlg, bg=_CARD_BG)
-        mid.pack(side="top", fill="both", expand=True, padx=14, pady=4)
+        mid.pack(side="top", fill="both", expand=True, padx=16, pady=4)
 
-        hint = tk.StringVar(value="")
-        canvas = tk.Canvas(mid, bg=_CARD_BG, highlightthickness=0, bd=0)
+        canvas = tk.Canvas(mid, bg=_CARD_BG, highlightthickness=0, bd=0, height=320)
         rows = tk.Frame(canvas, bg=_CARD_BG)
         win_id = canvas.create_window((0, 0), window=rows, anchor="nw")
 
         def _sync(_e=None) -> None:
-            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, 0, 0))
             canvas.itemconfigure(win_id, width=max(1, canvas.winfo_width()))
 
         def _wheel(e) -> None:
@@ -769,7 +795,7 @@ class WorkTimer:
         canvas.bind("<Configure>", _sync)
         canvas.bind("<Enter>", _bind_wheel)
         canvas.bind("<Leave>", _unbind_wheel)
-        canvas.pack(side="left", fill="both", expand=True)
+        canvas.pack(fill="both", expand=True)
 
         def rebuild() -> None:
             for child in rows.winfo_children():
@@ -798,22 +824,20 @@ class WorkTimer:
 
             for sid, title, rem, when, can_del in items:
                 card = tk.Frame(rows, bg="#222733")
-                card.pack(fill="x", pady=5)
+                card.pack(fill="x", pady=6)
                 inner = tk.Frame(card, bg="#222733")
-                inner.pack(fill="x", padx=10, pady=9)
-                left_col = tk.Frame(inner, bg="#222733")
-                left_col.pack(side="left", fill="x", expand=True)
+                inner.pack(fill="x", padx=10, pady=8)
                 active = schedules.active_id(self.cfg) == sid
                 tk.Label(
-                    left_col, text=title, fg="#7ec8ff" if active else _CARD_FG, bg="#222733",
+                    inner, text=title, fg="#7ec8ff" if active else _CARD_FG, bg="#222733",
                     font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
                 ).pack(fill="x")
                 tk.Label(
-                    left_col, text=f"{when}  ·  {rem}", fg=_CARD_MUTED, bg="#222733",
+                    inner, text=f"{when}  ·  {rem}", fg=_CARD_MUTED, bg="#222733",
                     font=("Microsoft YaHei UI", 9), anchor="w",
                 ).pack(fill="x")
                 btns = tk.Frame(inner, bg="#222733")
-                btns.pack(side="right")
+                btns.pack(fill="x", pady=(8, 0), anchor="w")
                 pinned = schedules.is_pinned(self.cfg, sid)
 
                 def toggle_pin(s=sid, was=pinned) -> None:
@@ -832,12 +856,9 @@ class WorkTimer:
                     self._last_key = ""
                     rebuild()
 
-                tk.Button(
-                    btns, text="优先" if pinned else "未优先", command=toggle_pin,
-                    bg="#3a4254", fg="#ffd28a" if pinned else _CARD_MUTED, relief="flat",
-                    font=("Microsoft YaHei UI", 9), padx=8, pady=3,
-                ).pack(side="left", padx=3)
-
+                _card_btn(btns, "优先" if pinned else "未优先", toggle_pin, accent=pinned).pack(
+                    side="left", padx=(0, 8)
+                )
                 if can_del:
                     def drop(s=sid) -> None:
                         hint.set("")
@@ -846,10 +867,7 @@ class WorkTimer:
                         self._last_key = ""
                         rebuild()
 
-                    tk.Button(
-                        btns, text="删除", command=drop, bg="#4a3038", fg="#ffb4b4", relief="flat",
-                        font=("Microsoft YaHei UI", 9), padx=8, pady=3,
-                    ).pack(side="left", padx=3)
+                    _card_btn(btns, "删除", drop, danger=True).pack(side="left")
             _sync()
 
         def add() -> None:
@@ -868,18 +886,10 @@ class WorkTimer:
             self._last_key = ""
             rebuild()
 
-        tk.Label(foot, textvariable=hint, fg="#ffd28a", bg=_CARD_BG, font=("Microsoft YaHei UI", 8)).pack(
-            side="bottom", fill="x", pady=(0, 6)
-        )
-        tk.Button(
-            foot, text="+  新增日程", command=add, bg=_CARD_ACCENT, fg="white", relief="flat",
-            font=("Microsoft YaHei UI", 10, "bold"), padx=16, pady=7,
-        ).pack(side="left")
-        tk.Button(
-            foot, text="关闭", command=close, bg=_CARD_BTN, fg="white", relief="flat",
-            font=("Microsoft YaHei UI", 10), padx=14, pady=7,
-        ).pack(side="right")
+        _card_btn(btn_row, "+  新增日程", add, accent=True).pack(side="left")
+        _card_btn(btn_row, "关闭", close).pack(side="right")
         rebuild()
+        _fit_card(dlg, min_w=440, min_h=520, near=near)
         try:
             while not closed["v"]:
                 try:
@@ -901,7 +911,6 @@ class WorkTimer:
             self._display_mode(),
             self._theme().id,
             esc_disguise=self._esc_disguise_on(),
-            update_available=self._update_available,
         )
         if op == "quit":
             self.running = False
@@ -924,39 +933,33 @@ class WorkTimer:
         elif op.startswith("theme:"):
             self._set_theme(op.split(":", 1)[1])
 
-    def _check_update(self) -> None:
+    def _check_update(self, *, known: updater.ReleaseInfo | None = None) -> None:
         self.cfg = store.load_config()
-        root = self._tk_root()
         near = self._dialog_near()
-        dlg = tk.Toplevel(root)
-        dlg.title("检查更新")
-        dlg.resizable(False, False)
-        dlg.attributes("-topmost", True)
-        dlg.configure(bg="#1b1e26")
-        dlg.geometry(f"380x210+{near[0]}+{near[1]}")
-        try:
-            dlg.lift()
-            dlg.focus_force()
-        except Exception:
-            pass
+        dlg = _card_dialog(self._tk_root(), near=near, width=320, height=200)
+        btn_row = tk.Frame(dlg, bg=_CARD_BG)
+        btn_row.pack(side="bottom", fill="x", padx=16, pady=(8, 16))
 
-        status = tk.StringVar(value="正在连接 GitCode…")
-        detail = tk.StringVar(value=f"当前版本 {APP_VERSION}")
-        tk.Label(dlg, textvariable=status, fg="#f4f6fb", bg="#1b1e26", font=("Microsoft YaHei UI", 11, "bold")).pack(
-            pady=(16, 6), padx=16, anchor="w"
-        )
-        detail_lbl = tk.Label(
-            dlg, textvariable=detail, fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9),
-            justify="left", wraplength=340, anchor="w",
-        )
-        detail_lbl.pack(padx=16, anchor="w")
-        bar = ttk.Progressbar(dlg, mode="indeterminate", length=340)
-        bar.pack(pady=(14, 8), padx=16)
-        bar.start(12)
-        btn_row = tk.Frame(dlg, bg="#1b1e26")
-        btn_row.pack(side="bottom", pady=(4, 16))
+        if known is not None:
+            status = tk.StringVar(value=f"有新版本 {known.version}")
+            detail = tk.StringVar(value=f"当前 {APP_VERSION}，要现在更新吗？")
+        else:
+            status = tk.StringVar(value="正在检查更新…")
+            detail = tk.StringVar(value=f"当前 {APP_VERSION}")
 
-        state: dict = {"closed": False, "phase": "check", "yes": None, "pending_dl": None}
+        tk.Label(
+            dlg, textvariable=status, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 6), padx=18, anchor="w")
+        tk.Label(
+            dlg, textvariable=detail, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=270, justify="left", anchor="w",
+        ).pack(padx=18, anchor="w")
+        bar = ttk.Progressbar(dlg, mode="indeterminate", length=270)
+        if known is None:
+            bar.pack(pady=(12, 4), padx=18)
+            bar.start(12)
+
+        state: dict = {"closed": False, "phase": "ask" if known else "check", "pending_dl": None}
 
         def alive() -> bool:
             return not state["closed"] and bool(dlg.winfo_exists())
@@ -972,37 +975,49 @@ class WorkTimer:
             except Exception:
                 pass
 
-        dlg.protocol("WM_DELETE_WINDOW", on_close)
+        def set_btns(specs: list[tuple[str, object, bool]]) -> None:
+            for w in btn_row.winfo_children():
+                w.destroy()
+            for text, cmd, accent in specs:
+                _card_btn(btn_row, text, cmd, accent=accent).pack(side="left", padx=(0, 8))
+
+        def short(msg: str, n: int = 48) -> str:
+            t = (msg or "").replace("\n", " ").strip()
+            return t[:n] + ("…" if len(t) > n else "")
 
         def finish_idle(msg: str, sub: str = "", *, error: bool = False) -> None:
             if not alive():
                 return
             state["phase"] = "idle"
-            bar.stop()
-            bar.configure(mode="determinate", value=0 if error else 100)
+            try:
+                bar.stop()
+                bar.pack_forget()
+            except Exception:
+                pass
             status.set(msg)
-            detail.set(sub or "可以关闭窗口")
+            detail.set(short(sub) if sub else ("可以关闭" if not error else ""))
+            set_btns([("关闭", on_close, False)])
+            _fit_card(dlg, min_w=300, min_h=160, near=near)
 
         def start_download(info: updater.ReleaseInfo) -> None:
             if not alive():
                 return
             if updater.current_exe_path() is None:
-                finish_idle("当前是源码运行", "请重新打包 exe，或手动下载 Release 附件。", error=True)
+                finish_idle("当前是源码运行", "请重新打包 exe", error=True)
                 return
             state["phase"] = "download"
-            status.set(f"正在下载 {info.version}…")
-            detail.set("准备下载安装包")
-            bar.stop()
+            status.set(f"正在下载 {info.version}")
+            detail.set("下载完成后会自动重启")
+            set_btns([("取消", on_close, False)])
+            try:
+                bar.stop()
+            except Exception:
+                pass
             bar.configure(mode="determinate", maximum=100, value=0)
             try:
-                bar.pack(pady=(14, 8), padx=16, before=btn_row)
+                bar.pack(pady=(12, 4), padx=18)
             except Exception:
-                bar.pack(pady=(14, 8), padx=16)
-            if state["yes"] is not None:
-                try:
-                    state["yes"].pack_forget()
-                except Exception:
-                    pass
+                pass
 
             done_box: list[object] = []
 
@@ -1028,13 +1043,13 @@ class WorkTimer:
                         if total > 0:
                             pct = max(0, min(100, int(done * 100 / total)))
                             bar.configure(value=pct)
-                            detail.set(f"{done / (1024 * 1024):.1f} / {total / (1024 * 1024):.1f} MB（{pct}%）")
+                            detail.set(f"{done / (1024 * 1024):.1f} / {total / (1024 * 1024):.1f} MB")
                         else:
                             detail.set(f"已下载 {done / (1024 * 1024):.1f} MB")
                     elif kind == "ok":
                         path = done_box[0][1]
                         status.set("正在安装并重启…")
-                        detail.set("替换完成后会自动重新打开")
+                        detail.set("请稍候")
                         bar.configure(value=100)
                         dlg.update_idletasks()
                         try:
@@ -1048,6 +1063,7 @@ class WorkTimer:
                         return
                 try:
                     dlg.update()
+                    self.win.pump()
                 except Exception:
                     state["closed"] = True
                     return
@@ -1056,69 +1072,59 @@ class WorkTimer:
         def show_available(info: updater.ReleaseInfo) -> None:
             if not alive():
                 return
+            self._update_info = info
+            self._update_available = True
             state["phase"] = "ask"
-            bar.stop()
             try:
+                bar.stop()
                 bar.pack_forget()
             except Exception:
                 pass
-            body = (info.body or "").strip().replace("\n", " ")
-            tip = body[:90] + ("…" if len(body) > 90 else "")
-            status.set(f"发现新版本 {info.version}")
-            detail.set(tip or f"标签 {info.tag}")
-            dlg.geometry(f"380x200+{dlg.winfo_x()}+{dlg.winfo_y()}")
+            status.set(f"有新版本 {info.version}")
+            detail.set(f"当前 {APP_VERSION}，要现在更新吗？")
 
-            def go() -> None:
-                state["pending_dl"] = info
+            def go(inf=info) -> None:
+                state["pending_dl"] = inf
 
-            yes = tk.Button(
-                btn_row,
-                text="下载并更新",
-                width=16,
-                height=1,
-                bg="#3d7eff",
-                fg="white",
-                activebackground="#5a92ff",
-                activeforeground="white",
-                relief="flat",
-                font=("Microsoft YaHei UI", 10, "bold"),
-                command=go,
-            )
-            state["yes"] = yes
-            yes.pack(ipady=4)
+            set_btns([("现在更新", go, True), ("稍后", on_close, False)])
+            _fit_card(dlg, min_w=300, min_h=170, near=near)
 
-        result_box: list[tuple[str, updater.ReleaseInfo | None]] = []
+        if known is not None:
+            show_available(known)
+        else:
+            set_btns([("取消", on_close, False)])
+            result_box: list[tuple[str, updater.ReleaseInfo | None]] = []
 
-        def worker_check() -> None:
-            try:
-                result_box.append(updater.check_update(self.cfg))
-            except Exception as e:  # noqa: BLE001
-                result_box.append((f"error:{e}", None))
+            def worker_check() -> None:
+                try:
+                    result_box.append(updater.check_update(self.cfg))
+                except Exception as e:  # noqa: BLE001
+                    result_box.append((f"error:{e}", None))
 
-        threading.Thread(target=worker_check, daemon=True, name="update-check").start()
-        # 不用 wait_window：和 Win32 主循环混用时 after 回调可能一直不跑，表现为「一直连接中」
-        while alive() and state["phase"] == "check":
-            if result_box:
-                st, info = result_box[0]
-                if st == "no_repo":
-                    finish_idle("还没配置仓库", f"请写入 {store.config_path()} 的 gitcode_repo", error=True)
-                elif st.startswith("error:"):
-                    finish_idle("检查失败", st[6:], error=True)
-                elif st == "latest":
-                    finish_idle("已是最新版", f"当前 {APP_VERSION} · 远端 {info.version if info else '-'}")
-                elif st == "available" and info is not None:
-                    show_available(info)
-                else:
-                    finish_idle("检查结束", "没有可用更新", error=True)
-                break
-            try:
-                dlg.update()
-            except Exception:
-                state["closed"] = True
-                break
-            time.sleep(0.03)
+            threading.Thread(target=worker_check, daemon=True, name="update-check").start()
+            while alive() and state["phase"] == "check":
+                if result_box:
+                    st, info = result_box[0]
+                    if st == "no_repo":
+                        finish_idle("还没配置仓库", error=True)
+                    elif st.startswith("error:"):
+                        finish_idle("检查失败", st[6:], error=True)
+                    elif st == "latest":
+                        finish_idle("已是最新版", f"当前 {APP_VERSION}")
+                    elif st == "available" and info is not None:
+                        show_available(info)
+                    else:
+                        finish_idle("没有可用更新", error=True)
+                    break
+                try:
+                    dlg.update()
+                    self.win.pump()
+                except Exception:
+                    state["closed"] = True
+                    break
+                time.sleep(0.03)
 
-        # 询问/结果阶段：泵事件直到关闭，或点了下载
+        _fit_card(dlg, min_w=300, min_h=170, near=near)
         while alive() and state["phase"] in ("ask", "idle"):
             pending = state.get("pending_dl")
             if pending is not None:
@@ -1127,6 +1133,7 @@ class WorkTimer:
                 break
             try:
                 dlg.update()
+                self.win.pump()
             except Exception:
                 break
             time.sleep(0.03)
@@ -1219,6 +1226,9 @@ class WorkTimer:
                 if self._need_schedule_list:
                     self._need_schedule_list = False
                     self._open_schedule_list()
+                if self._update_available and not self._update_prompted and not self._disguised:
+                    self._update_prompted = True
+                    self._check_update(known=self._update_info)
                 if themes.consume_updated():
                     self._last_key = ""
                     self._force_surface_sample = True

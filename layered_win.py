@@ -632,7 +632,6 @@ class LayeredPetWindow:
         theme_id: str = "ghost",
         *,
         esc_disguise: bool = False,
-        update_available: bool = False,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -665,8 +664,7 @@ class LayeredPetWindow:
             "Esc 广告伪装",
         )
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-        update_label = "检查更新（有新版本）" if update_available else "检查更新"
-        user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, update_label)
+        user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_QUIT, "退出")
         try:
