@@ -42,6 +42,11 @@ def load_config() -> dict:
         "gitcode_repo": "",
         "gitcode_token": "",
         "asset_name": "WorkTimer.exe",
+        "schedules": [],
+        "pin_order": ["offwork"],
+        "active_pin_id": "offwork",
+        "auto_rotate_pins": False,
+        "rotate_sec": 5,
     }
     bundled = app_dir() / "update_defaults.json"
     if bundled.exists():

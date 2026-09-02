@@ -239,7 +239,7 @@ class LayeredPetWindow:
         self.x = 0
         self.y = 0
         self._on_right_click: Callable[[int, int], None] | None = None
-        self._on_left_click: Callable[[], None] | None = None
+        self._on_left_click: Callable[[int, int], None] | None = None
         self._dragging = False
         self._resizing = False
         self._drag_moved = False
@@ -365,7 +365,8 @@ class LayeredPetWindow:
     def set_right_click_handler(self, fn: Callable[[int, int], None]) -> None:
         self._on_right_click = fn
 
-    def set_left_click_handler(self, fn: Callable[[], None]) -> None:
+    def set_left_click_handler(self, fn: Callable[[int, int], None]) -> None:
+        """左键单击回调，参数为窗口内坐标 (lx, ly)。"""
         self._on_left_click = fn
 
     def _on_win_event(self, _hook, _event, _hwnd, _obj, _child, _thread, _time) -> None:
@@ -588,7 +589,9 @@ class LayeredPetWindow:
                 self._just_moved = True
                 return 0
             if self._on_left_click:
-                self._on_left_click()
+                pt = POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                self._on_left_click(int(pt.x - self.x), int(pt.y - self.y))
             return 0
         if msg == WM_CAPTURECHANGED and (self._dragging or self._resizing):
             moved = self._drag_moved
@@ -628,6 +631,7 @@ class LayeredPetWindow:
         theme_id: str = "ghost",
         *,
         esc_disguise: bool = False,
+        update_available: bool = False,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -659,7 +663,8 @@ class LayeredPetWindow:
             "Esc 广告伪装",
         )
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
-        user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
+        update_label = "检查更新（有新版本）" if update_available else "检查更新"
+        user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, update_label)
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_QUIT, "退出")
         try:

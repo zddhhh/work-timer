@@ -20,6 +20,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "terminal": ("skin_terminal.png", None),
     "aurora": ("aurora_drape.png", "aurora_glow.png"),
     "inkgold": ("skin_inkgold.png", None),
+    "warmglow": ("skin_warmglow.png", None),
 }
 
 
@@ -135,3 +136,27 @@ def paste_skin(
 def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: bool = False) -> None:
     """兼容旧调用。"""
     paste_skin(img, box, "aurora", light=light)
+
+
+def paint_chevron(
+    img: Image.Image,
+    w: int,
+    h: int,
+    *,
+    color: tuple[int, int, int, int] = (255, 255, 255, 70),
+    pin_dots: tuple[int, int] = (0, 0),
+) -> None:
+    """主卡片底部淡淡下拉箭头；可选轮播小点。"""
+    d = ImageDraw.Draw(img)
+    cx = w // 2
+    y0 = h - 14
+    d.line((cx - 6, y0, cx, y0 + 5), fill=color, width=1)
+    d.line((cx, y0 + 5, cx + 6, y0), fill=color, width=1)
+    idx, total = pin_dots
+    if total >= 2 and idx >= 1:
+        span = (total - 1) * 8
+        x0 = cx - span // 2
+        for i in range(total):
+            x = x0 + i * 8
+            fill = (color[0], color[1], color[2], 160 if i + 1 == idx else 50)
+            d.ellipse((x - 2, h - 8, x + 2, h - 4), fill=fill)

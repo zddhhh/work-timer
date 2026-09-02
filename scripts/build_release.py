@@ -50,6 +50,8 @@ def main() -> None:
         "--hidden-import",
         "ornaments",
         "--hidden-import",
+        "schedules",
+        "--hidden-import",
         "ad_disguise",
         "--hidden-import",
         "store",

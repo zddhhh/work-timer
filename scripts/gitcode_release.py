@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 设时间改为统一向导；初始文案去「弹性」；修按钮裁切"
+                    "- 日程列表/优先显示/轮播；检查更新提示；暖光皮肤"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

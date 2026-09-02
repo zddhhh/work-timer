@@ -19,6 +19,7 @@ import backdrop
 import flex_time
 import layered_win
 import ornaments
+import schedules
 import store
 import themes
 import updater
@@ -256,10 +257,14 @@ class WorkTimer:
             updater.force_exit_for_update()
         updater.cleanup_update_artifacts()
         self.cfg = store.load_config()
+        schedules.ensure_fields(self.cfg)
         self.running = True
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
+        self._need_schedule_list = False
         self._tk: tk.Tk | None = None
+        self._update_available = False
+        self._last_pin_rotate = 0.0
 
         w, h = self._load_size()
         self._win_w, self._win_h = w, h
@@ -302,6 +307,7 @@ class WorkTimer:
             pass
         self.cfg["esc_disguise"] = bool(self.cfg.get("esc_disguise"))
         themes.refresh_async(self.cfg)
+        self._silent_check_update()
 
     def _today(self) -> str:
         return datetime.now().strftime("%Y-%m-%d")
@@ -434,13 +440,37 @@ class WorkTimer:
             parent=root,
         )
 
-    def _on_click(self) -> None:
+    def _silent_check_update(self) -> None:
+        def _run() -> None:
+            try:
+                kind, info = updater.check_update(self.cfg)
+                if kind == "available" and info is not None:
+                    self._update_available = True
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True, name="silent-update").start()
+
+    def _on_click(self, lx: int, ly: int) -> None:
         if self._disguised:
             return
-        if self._has_target():
-            self._cycle_display()
+        # 底部中间：打开日程列表；其余左键切换优先项 / 未设下班则打开向导
+        if ly >= self._win_h - 22 and abs(lx - self._win_w // 2) <= 28:
+            self._need_schedule_list = True
             return
-        self._need_dialog = True
+        pins = self.cfg.get("pin_order") or []
+        if isinstance(pins, list) and len(pins) >= 2:
+            if schedules.cycle_active(self.cfg):
+                store.save_config(self.cfg)
+                self._last_key = ""
+                self._last_pin_rotate = time.monotonic()
+            return
+        if not self._has_target() and not pins:
+            self._need_dialog = True
+            return
+        if len(pins) == 1 or self._has_target():
+            # 仅一项时点空白也打开列表，方便管理
+            self._need_schedule_list = True
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("esc_disguise"))
@@ -513,11 +543,324 @@ class WorkTimer:
             self.cfg["start_h"], self.cfg["start_m"] = hm
         else:
             self.cfg["off_h"], self.cfg["off_m"] = hm
+        schedules.ensure_fields(self.cfg)
+        schedules.set_pinned(self.cfg, schedules.OFFWORK_ID, True)
+        self.cfg["active_pin_id"] = schedules.OFFWORK_ID
         store.save_config(self.cfg)
         self._last_key = ""
 
     def _open_idle_dialog(self) -> None:
         self._open_setup_dialog()
+
+    def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
+        """当前主界面项：(标题, 剩余秒, 是否到点, 是否空闲未设)。"""
+        schedules.ensure_fields(self.cfg)
+        aid = schedules.active_id(self.cfg)
+        if aid is None:
+            return "距离下班", 0, False, True
+        if aid == schedules.OFFWORK_ID:
+            off = self._off_hm()
+            if off is None:
+                return "距离下班", 0, False, True
+            td = flex_time.remaining_to(now, off[0], off[1])
+            total, done = flex_time.remaining_parts(td)
+            title = "已经到点" if done else "下班"
+            return title, total, done, False
+        item = schedules.find_schedule(self.cfg, aid)
+        if item is None:
+            return "距离下班", 0, False, True
+        left, done = schedules.schedule_remaining(item, now)
+        title = str(item.get("title") or "日程")
+        if done:
+            title = f"{title} · 到点"
+        return title, left, done, False
+
+    def _ask_new_schedule(self) -> dict | None:
+        result: list[dict | None] = [None]
+        dlg = tk.Toplevel(self._tk_root())
+        dlg.title("新增日程")
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+        dlg.configure(bg="#1b1e26")
+        try:
+            dlg.lift()
+            dlg.focus_force()
+        except Exception:
+            pass
+        dlg.grab_set()
+        kind_var = tk.StringVar(value="clock")
+        title_var = tk.StringVar(value="")
+        time_var = tk.StringVar(value="15:00")
+        tip = tk.StringVar()
+
+        tk.Label(dlg, text="新增日程", fg="#f4f6fb", bg="#1b1e26", font=("Microsoft YaHei UI", 13, "bold")).pack(
+            pady=(14, 6), padx=16, anchor="w"
+        )
+        box = tk.Frame(dlg, bg="#1b1e26")
+        box.pack(padx=16, anchor="w")
+        for val, lab in (("clock", "到点时刻（今天几点）"), ("duration", "倒计时长（分钟）")):
+            tk.Radiobutton(
+                box,
+                text=lab,
+                variable=kind_var,
+                value=val,
+                fg="#e8ecf4",
+                bg="#1b1e26",
+                selectcolor="#2a3140",
+                activebackground="#1b1e26",
+                font=("Microsoft YaHei UI", 10),
+            ).pack(anchor="w")
+        tk.Label(dlg, text="名称", fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9)).pack(
+            padx=16, anchor="w", pady=(8, 0)
+        )
+        ttk.Entry(dlg, textvariable=title_var, font=("Microsoft YaHei UI", 12)).pack(padx=16, fill="x")
+        tk.Label(dlg, textvariable=tip, fg="#9aa3b5", bg="#1b1e26", font=("Microsoft YaHei UI", 9)).pack(
+            padx=16, anchor="w", pady=(8, 0)
+        )
+        ttk.Entry(dlg, textvariable=time_var, font=("Microsoft YaHei UI", 14), justify="center").pack(
+            padx=16, pady=8, fill="x"
+        )
+
+        def sync(*_a) -> None:
+            if kind_var.get() == "clock":
+                tip.set("例如 15:00 / 15.30")
+                if not time_var.get().strip():
+                    time_var.set("15:00")
+            else:
+                tip.set("例如 25（表示 25 分钟）")
+                if not time_var.get().strip() or ":" in time_var.get():
+                    time_var.set("25")
+
+        kind_var.trace_add("write", sync)
+        sync()
+
+        def ok() -> None:
+            name = title_var.get().strip() or ("日程" if kind_var.get() == "clock" else "倒计时")
+            if kind_var.get() == "clock":
+                hm = flex_time.parse_clock(time_var.get())
+                if hm is None:
+                    messagebox.showwarning("新增日程", "请输入今天的时刻，例如 15:00", parent=dlg)
+                    return
+                result[0] = schedules.new_clock(name, *hm)
+            else:
+                raw = time_var.get().strip()
+                try:
+                    mins = int(float(raw))
+                except ValueError:
+                    messagebox.showwarning("新增日程", "请输入分钟数，例如 25", parent=dlg)
+                    return
+                if mins < 1 or mins > 24 * 60:
+                    messagebox.showwarning("新增日程", "时长请在 1–1440 分钟", parent=dlg)
+                    return
+                result[0] = schedules.new_duration(name, mins)
+            dlg.destroy()
+
+        def cancel() -> None:
+            dlg.destroy()
+
+        bar = tk.Frame(dlg, bg="#1b1e26")
+        bar.pack(pady=12)
+        tk.Button(bar, text="开始倒计时", command=ok, bg="#3d7eff", fg="white", relief="flat", padx=14, pady=5).pack(
+            side="left", padx=6
+        )
+        tk.Button(bar, text="取消", command=cancel, bg="#3a3f4b", fg="white", relief="flat", padx=14, pady=5).pack(
+            side="left", padx=6
+        )
+        dlg.bind("<Return>", lambda _e: ok())
+        dlg.bind("<Escape>", lambda _e: cancel())
+        _place_dialog(dlg, self._dialog_near(), min_w=360, min_h=280)
+        dlg.wait_window()
+        return result[0]
+
+    def _open_schedule_list(self) -> None:
+        schedules.ensure_fields(self.cfg)
+        root = self._tk_root()
+        dlg = tk.Toplevel(root)
+        dlg.title("日程")
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+        dlg.configure(bg="#1b1e26")
+        try:
+            dlg.lift()
+            dlg.focus_force()
+        except Exception:
+            pass
+        near = self._dialog_near()
+        dlg.geometry(f"420x360+{near[0]}+{near[1]}")
+
+        head = tk.Frame(dlg, bg="#1b1e26")
+        head.pack(fill="x", padx=12, pady=(12, 4))
+        tk.Label(head, text="日程列表", fg="#f4f6fb", bg="#1b1e26", font=("Microsoft YaHei UI", 12, "bold")).pack(
+            side="left"
+        )
+        rotate_var = tk.BooleanVar(value=bool(self.cfg.get("auto_rotate_pins")))
+
+        def on_rotate() -> None:
+            self.cfg["auto_rotate_pins"] = bool(rotate_var.get())
+            store.save_config(self.cfg)
+
+        tk.Checkbutton(
+            head,
+            text="自动轮播",
+            variable=rotate_var,
+            command=on_rotate,
+            fg="#c8d0dc",
+            bg="#1b1e26",
+            selectcolor="#2a3140",
+            activebackground="#1b1e26",
+            font=("Microsoft YaHei UI", 9),
+        ).pack(side="right")
+
+        canvas = tk.Canvas(dlg, bg="#1b1e26", highlightthickness=0, height=240)
+        scroll = ttk.Scrollbar(dlg, orient="vertical", command=canvas.yview)
+        rows = tk.Frame(canvas, bg="#1b1e26")
+        rows.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=rows, anchor="nw")
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=(12, 0), pady=4)
+        scroll.pack(side="right", fill="y", padx=(0, 8), pady=4)
+
+        def rebuild() -> None:
+            for w in rows.winfo_children():
+                w.destroy()
+            now = datetime.now()
+            items: list[tuple[str, str, str]] = []
+            # offwork
+            if self._has_target():
+                off = self._off_hm()
+                assert off is not None
+                td = flex_time.remaining_to(now, off[0], off[1])
+                total, done = flex_time.remaining_parts(td)
+                label = "已到点" if done else flex_time.format_remaining(total, self._display_mode())
+                items.append((schedules.OFFWORK_ID, "下班", label))
+            else:
+                items.append((schedules.OFFWORK_ID, "下班（未设置）", "—"))
+            for s in self.cfg.get("schedules") or []:
+                if not isinstance(s, dict) or not s.get("id"):
+                    continue
+                sid = str(s["id"])
+                left, done = schedules.schedule_remaining(s, now)
+                label = "已到点" if done else flex_time.format_remaining(left, self._display_mode())
+                items.append((sid, str(s.get("title") or "日程"), label))
+
+            for sid, title, label in items:
+                row = tk.Frame(rows, bg="#242833")
+                row.pack(fill="x", pady=3, padx=4)
+                pinned = schedules.is_pinned(self.cfg, sid)
+
+                def focus(s=sid) -> None:
+                    if s == schedules.OFFWORK_ID and not self._has_target():
+                        dlg.destroy()
+                        self._open_setup_dialog()
+                        return
+                    if not schedules.is_pinned(self.cfg, s):
+                        ok, msg = schedules.set_pinned(self.cfg, s, True)
+                        if not ok:
+                            messagebox.showinfo("优先显示", msg, parent=dlg)
+                            return
+                    self.cfg["active_pin_id"] = s
+                    store.save_config(self.cfg)
+                    self._last_key = ""
+                    dlg.destroy()
+
+                tk.Button(
+                    row,
+                    text=f"{title}  {label}",
+                    command=focus,
+                    anchor="w",
+                    bg="#242833",
+                    fg="#e8ecf4",
+                    relief="flat",
+                    font=("Microsoft YaHei UI", 10),
+                    padx=8,
+                ).pack(side="left", fill="x", expand=True)
+
+                pin_var = tk.BooleanVar(value=pinned)
+
+                def toggle(s=sid, v=pin_var) -> None:
+                    ok, msg = schedules.set_pinned(self.cfg, s, bool(v.get()))
+                    if not ok:
+                        v.set(False)
+                        messagebox.showinfo("优先显示", msg, parent=dlg)
+                        return
+                    if s == schedules.OFFWORK_ID and not self._has_target() and v.get():
+                        # 允许钉未设置的下班，点开主界面会提示设置
+                        pass
+                    store.save_config(self.cfg)
+                    self._last_key = ""
+                    rebuild()
+
+                tk.Checkbutton(
+                    row,
+                    text="优先",
+                    variable=pin_var,
+                    command=toggle,
+                    fg="#9aa3b5",
+                    bg="#242833",
+                    selectcolor="#2a3140",
+                    activebackground="#242833",
+                    font=("Microsoft YaHei UI", 9),
+                ).pack(side="right", padx=4)
+
+                if sid != schedules.OFFWORK_ID:
+
+                    def drop(s=sid) -> None:
+                        if messagebox.askyesno("删除日程", "确定删除这项日程？", parent=dlg):
+                            schedules.remove_schedule(self.cfg, s)
+                            store.save_config(self.cfg)
+                            self._last_key = ""
+                            rebuild()
+
+                    tk.Button(
+                        row,
+                        text="删",
+                        command=drop,
+                        bg="#3a3f4b",
+                        fg="white",
+                        relief="flat",
+                        font=("Microsoft YaHei UI", 9),
+                        padx=6,
+                    ).pack(side="right", padx=4)
+
+        def add() -> None:
+            item = self._ask_new_schedule()
+            if item is None:
+                return
+            schedules.add_schedule(self.cfg, item)
+            ok, msg = schedules.set_pinned(self.cfg, item["id"], True)
+            if not ok:
+                messagebox.showinfo("优先显示", msg + "\n日程已添加，可稍后手动优先。", parent=dlg)
+            else:
+                self.cfg["active_pin_id"] = item["id"]
+            store.save_config(self.cfg)
+            self._last_key = ""
+            rebuild()
+
+        foot = tk.Frame(dlg, bg="#1b1e26")
+        foot.pack(fill="x", padx=12, pady=10)
+        tk.Button(
+            foot,
+            text="新增日程",
+            command=add,
+            bg="#3d7eff",
+            fg="white",
+            relief="flat",
+            font=("Microsoft YaHei UI", 10, "bold"),
+            padx=14,
+            pady=5,
+        ).pack(side="left")
+        tk.Button(
+            foot,
+            text="关闭",
+            command=dlg.destroy,
+            bg="#3a3f4b",
+            fg="white",
+            relief="flat",
+            padx=12,
+            pady=5,
+        ).pack(side="right")
+        rebuild()
+        dlg.wait_window()
 
     def _handle_menu(self, sx: int, sy: int) -> None:
         op = self.win.popup_menu(
@@ -526,6 +869,7 @@ class WorkTimer:
             self._display_mode(),
             self._theme().id,
             esc_disguise=self._esc_disguise_on(),
+            update_available=self._update_available,
         )
         if op == "quit":
             self.running = False
@@ -755,7 +1099,6 @@ class WorkTimer:
 
     def _paint(self) -> None:
         try:
-            target = self._off_hm()
             now = datetime.now()
             mode = self._display_mode()
             base = self._theme()
@@ -763,29 +1106,25 @@ class WorkTimer:
             theme = themes.resolve_for_surface(base, surface)
             w, h = self._win_w, self._win_h
             phase = time.monotonic()
-            if target is None:
-                title = "距离下班"
+            title, total, done, idle = self._active_view(now)
+            sub = ""
+            if idle:
                 big = "点我开始"
-                sub = ""
                 accent = theme.idle
                 key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
+            elif done:
+                big = flex_time.format_remaining(0, mode)
+                accent = theme.done
+                key = f"done-{mode}-{theme.id}-{title}-{theme.fill}-{surface}-{w}x{h}"
             else:
-                oh, om = target
-                td = flex_time.remaining_to(now, oh, om)
-                total, done = flex_time.remaining_parts(td)
                 big = flex_time.format_remaining(total, mode)
-                sub = ""
-                if done:
-                    title = "已经到点"
-                    accent = theme.done
-                    key = f"done-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
-                else:
-                    title = "距离您下班还有"
-                    mins = total // 60
-                    accent = theme.warn if mins < 30 else theme.big
-                    key = f"run-{mode}-{theme.id}-{big}-{theme.fill}-{surface}-{w}x{h}"
+                mins = total // 60
+                accent = theme.warn if mins < 30 else theme.big
+                key = f"run-{mode}-{theme.id}-{title}-{big}-{theme.fill}-{surface}-{w}x{h}"
+            aid = schedules.active_id(self.cfg) or "-"
+            idx, n = schedules.pin_index(self.cfg)
+            key = f"{key}-{aid}-{idx}/{n}"
             if ornaments.has_skin(theme.kind):
-                # ~24fps 刷新贴图裁剪，看起来更丝滑
                 key = f"{key}-a{int(phase * 24)}"
 
             if key == self._last_key:
@@ -797,7 +1136,7 @@ class WorkTimer:
                 w,
                 h,
                 theme,
-                title,
+                title if not idle else "距离下班",
                 big,
                 sub,
                 accent,
@@ -805,6 +1144,11 @@ class WorkTimer:
                 self._font_big,
                 self._font_sub,
             )
+            chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
+            if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
+                chev = (40, 44, 52, 90)
+            dots = (idx, n) if n >= 2 and bool(self.cfg.get("auto_rotate_pins")) else (0, 0)
+            ornaments.paint_chevron(img, w, h, color=chev, pin_dots=dots)
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
             self._last_key = key
@@ -838,6 +1182,9 @@ class WorkTimer:
                 if self._need_dialog:
                     self._need_dialog = False
                     self._open_idle_dialog()
+                if self._need_schedule_list:
+                    self._need_schedule_list = False
+                    self._open_schedule_list()
                 if themes.consume_updated():
                     self._last_key = ""
                     self._force_surface_sample = True
@@ -876,6 +1223,11 @@ class WorkTimer:
                     self._persist_pos()
                     last_save = time.monotonic()
                     was_dragging = False
+                now_m = time.monotonic()
+                if schedules.rotate_tick(self.cfg, self._last_pin_rotate, now_m):
+                    self._last_pin_rotate = now_m
+                    store.save_config(self.cfg)
+                    self._last_key = ""
                 self._refresh_surface()
                 self._paint()
                 now = time.monotonic()
