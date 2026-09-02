@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -17,6 +18,10 @@ from pathlib import Path
 from version import APP_VERSION, ASSET_NAME
 
 API_BASE = "https://api.gitcode.com/api/v5"
+
+
+class DownloadCancelled(Exception):
+    """用户取消下载。"""
 
 
 @dataclass
@@ -73,26 +78,42 @@ def _http_download(
     dest: Path,
     token: str = "",
     on_progress: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> None:
     headers = {"User-Agent": f"WorkTimer/{APP_VERSION}"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
-        total = 0
-        try:
-            total = int(resp.headers.get("Content-Length") or 0)
-        except (TypeError, ValueError):
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
             total = 0
-        done = 0
-        while True:
-            chunk = resp.read(1024 * 256)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
-            if on_progress is not None:
-                on_progress(done, total)
+            try:
+                total = int(resp.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                total = 0
+            done = 0
+            while True:
+                if cancel_check is not None and cancel_check():
+                    raise DownloadCancelled()
+                chunk = resp.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if on_progress is not None:
+                    on_progress(done, total)
+    except DownloadCancelled:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    except Exception:
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _pick_asset(assets: list[dict], want: str) -> dict | None:
@@ -244,14 +265,33 @@ def download_update(
     info: ReleaseInfo,
     cfg: dict,
     on_progress: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> Path:
     cleanup_update_artifacts(keep_pending=False)
     token = (cfg.get("gitcode_token") or "").strip()
-    tmp = Path(tempfile.gettempdir()) / f"WorkTimer_update_{info.version}.exe"
-    if tmp.exists():
-        tmp.unlink()
-    _http_download(info.download_url, tmp, token=token, on_progress=on_progress)
+    # 每次独立文件名，取消后旧线程占着文件也不会挡住下一次下载
+    tmp = (
+        Path(tempfile.gettempdir())
+        / f"WorkTimer_update_{info.version}_{os.getpid()}_{time.time_ns()}.exe"
+    )
+    _http_download(
+        info.download_url,
+        tmp,
+        token=token,
+        on_progress=on_progress,
+        cancel_check=cancel_check,
+    )
+    if cancel_check is not None and cancel_check():
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise DownloadCancelled()
     if tmp.stat().st_size < 1024 * 100:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise RuntimeError("下载文件太小，可能不是有效的 exe（检查 Release 附件名）")
     return tmp
 

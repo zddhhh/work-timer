@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 新增日程不再叠窗乱跳；倒三角可收回列表；外观贴图来回播更丝滑"
+                    "- 取消下载后可再次检查更新，不再提示文件被占用"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

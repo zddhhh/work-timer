@@ -1006,12 +1006,18 @@ class WorkTimer:
             bar.pack(pady=(12, 4), padx=18)
             bar.start(12)
 
-        state: dict = {"closed": False, "phase": "ask" if known else "check", "pending_dl": None}
+        state: dict = {
+            "closed": False,
+            "phase": "ask" if known else "check",
+            "pending_dl": None,
+            "cancel": False,
+        }
 
         def alive() -> bool:
             return not state["closed"] and bool(dlg.winfo_exists())
 
         def on_close() -> None:
+            state["cancel"] = True
             state["closed"] = True
             try:
                 bar.stop()
@@ -1053,6 +1059,7 @@ class WorkTimer:
                 finish_idle("当前是源码运行", "请重新打包 exe", error=True)
                 return
             state["phase"] = "download"
+            state["cancel"] = False
             status.set(f"正在下载 {info.version}")
             detail.set("下载完成后会自动重启")
             set_btns([("取消", on_close, False)])
@@ -1069,14 +1076,28 @@ class WorkTimer:
             done_box: list[object] = []
 
             def on_progress(done: int, total: int) -> None:
+                if state["cancel"]:
+                    return
                 done_box.clear()
                 done_box.append(("progress", done, total))
 
             def worker_dl() -> None:
                 try:
-                    path = updater.download_update(info, self.cfg, on_progress=on_progress)
+                    path = updater.download_update(
+                        info,
+                        self.cfg,
+                        on_progress=on_progress,
+                        cancel_check=lambda: bool(state["cancel"]),
+                    )
+                    if state["cancel"]:
+                        done_box.clear()
+                        done_box.append(("cancel",))
+                        return
                     done_box.clear()
                     done_box.append(("ok", path))
+                except updater.DownloadCancelled:
+                    done_box.clear()
+                    done_box.append(("cancel",))
                 except Exception as e:  # noqa: BLE001
                     done_box.clear()
                     done_box.append(("err", str(e)))
@@ -1105,6 +1126,8 @@ class WorkTimer:
                         except Exception as e:  # noqa: BLE001
                             finish_idle("更新失败", str(e), error=True)
                         return
+                    elif kind == "cancel":
+                        return
                     else:
                         finish_idle("下载失败", str(done_box[0][1]), error=True)
                         return
@@ -1112,9 +1135,16 @@ class WorkTimer:
                     dlg.update()
                     self.win.pump()
                 except Exception:
+                    state["cancel"] = True
                     state["closed"] = True
                     return
                 time.sleep(0.03)
+            # 取消后尽量清掉残留临时包，避免下次提示文件被占用
+            state["cancel"] = True
+            try:
+                updater.cleanup_update_artifacts(keep_pending=True)
+            except Exception:
+                pass
 
         def show_available(info: updater.ReleaseInfo) -> None:
             if not alive():
