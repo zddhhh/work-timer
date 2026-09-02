@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 生图漂移更快更丝滑；淡影去掉底部色条"
+                    "- 设时间改为统一向导；初始文案去「弹性」；修按钮裁切"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

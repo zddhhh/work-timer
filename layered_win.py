@@ -229,7 +229,7 @@ class LayeredPetWindow:
         self,
         width: int,
         height: int,
-        title: str = "弹性下班",
+        title: str = "下班倒计时",
         class_name: str = "WorkTimerLayeredWnd",
         *,
         visible: bool = True,
@@ -649,8 +649,7 @@ class LayeredPetWindow:
             user32.AppendMenuW(htheme, MF_STRING | checked, ID_THEME_BASE + i, th.name)
         user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(htheme, MF_STRING, ID_REFRESH_THEMES, "刷新在线外观")
-        user32.AppendMenuW(hmenu, MF_STRING, ID_SET_TIME, "设置上班时间")
-        user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间")
+        user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间…")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(

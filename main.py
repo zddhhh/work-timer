@@ -1,4 +1,4 @@
-"""透明弹性下班计时器：桌面置顶小窗，点一下录入 8:30–9:30 到岗时间。"""
+"""透明下班倒计时：桌面置顶小窗，点一下设置今天下班时间。"""
 from __future__ import annotations
 
 import ctypes
@@ -59,22 +59,32 @@ def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
     return bytes(bgra), bytes(mask)
 
 
-def _ask_start_time(
+def _place_dialog(dlg: tk.Toplevel, near: tuple[int, int] | None, *, min_w: int, min_h: int) -> None:
+    """按内容自适应尺寸，避免高 DPI 下按钮被裁切。"""
+    dlg.update_idletasks()
+    w = max(min_w, dlg.winfo_reqwidth() + 24)
+    h = max(min_h, dlg.winfo_reqheight() + 24)
+    if near:
+        dlg.geometry(f"{w}x{h}+{int(near[0])}+{int(near[1])}")
+    else:
+        dlg.geometry(f"{w}x{h}")
+
+
+def _ask_offwork_setup(
     parent: tk.Tk | None,
-    preset: tuple[int, int] | None,
     *,
+    mode: str,
+    start_preset: tuple[int, int] | None,
+    off_preset: tuple[int, int] | None,
     near: tuple[int, int] | None = None,
-) -> tuple[int, int] | None:
-    result: list[tuple[int, int] | None] = [None]
+) -> tuple[str, tuple[int, int]] | None:
+    """统一设置下班：直接设点，或按到岗时间推算。返回 (mode, hm)。"""
+    result: list[tuple[str, tuple[int, int]] | None] = [None]
     dlg = tk.Toplevel(parent)
-    dlg.title("上班时间")
+    dlg.title("设置下班时间")
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
     dlg.configure(bg="#1b1e26")
-    if near:
-        dlg.geometry(f"340x220+{int(near[0])}+{int(near[1])}")
-    else:
-        dlg.geometry("340x220")
     try:
         dlg.lift()
         dlg.focus_force()
@@ -82,147 +92,152 @@ def _ask_start_time(
         pass
     dlg.grab_set()
 
-    ph, pm = preset if preset else (9, 0)
-    var = tk.StringVar(value="" if preset is None else f"{ph}:{pm:02d}")
+    init_mode = "flex" if mode == "flex" else "direct"
+    mode_var = tk.StringVar(value=init_mode)
+    sh, sm = start_preset if start_preset else (9, 0)
+    oh, om = off_preset if off_preset else (18, 0)
+    start_var = tk.StringVar(value="" if start_preset is None else f"{sh}:{sm:02d}")
+    off_var = tk.StringVar(value="" if off_preset is None else f"{oh}:{om:02d}")
+    tip = tk.StringVar()
     preview = tk.StringVar()
-
-    def refresh_preview(*_a) -> None:
-        parsed = flex_time.parse_start(var.get())
-        if parsed is None:
-            preview.set("请输入 8:30–9:30 之间的时间")
-            return
-        oh, om = flex_time.offwork_hm(*parsed)
-        preview.set(f"弹性下班：{flex_time.format_hm(oh, om)}")
-
-    var.trace_add("write", refresh_preview)
-    refresh_preview()
 
     tk.Label(
         dlg,
-        text="今天几点到岗？",
+        text="怎么设置今天下班？",
         fg="#f4f6fb",
         bg="#1b1e26",
         font=("Microsoft YaHei UI", 13, "bold"),
-    ).pack(pady=(18, 4))
+    ).pack(pady=(16, 8), padx=18, anchor="w")
+
+    radios = tk.Frame(dlg, bg="#1b1e26")
+    radios.pack(padx=18, anchor="w")
+    for value, label in (
+        ("direct", "我知道下班几点（直接倒计时）"),
+        ("flex", "按到岗时间推算（8:30–9:30 → 18:00–19:00）"),
+    ):
+        tk.Radiobutton(
+            radios,
+            text=label,
+            variable=mode_var,
+            value=value,
+            fg="#e8ecf4",
+            bg="#1b1e26",
+            activebackground="#1b1e26",
+            activeforeground="#e8ecf4",
+            selectcolor="#2a3140",
+            font=("Microsoft YaHei UI", 10),
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w", pady=2)
+
     tk.Label(
         dlg,
-        text="弹性区间 8:30–9:30，对应下班 18:00–19:00",
+        textvariable=tip,
         fg="#9aa3b5",
         bg="#1b1e26",
         font=("Microsoft YaHei UI", 9),
-    ).pack()
+        wraplength=360,
+        justify="left",
+    ).pack(padx=18, pady=(10, 4), anchor="w")
 
-    entry = ttk.Entry(dlg, textvariable=var, font=("Microsoft YaHei UI", 16), justify="center", width=12)
-    entry.pack(pady=14)
-    entry.select_range(0, tk.END)
-    entry.focus_set()
+    entry = ttk.Entry(dlg, font=("Microsoft YaHei UI", 16), justify="center", width=14)
+    entry.pack(pady=10, padx=18)
 
-    tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg="#1b1e26", font=("Microsoft YaHei UI", 10)).pack()
-
-    def ok() -> None:
-        parsed = flex_time.parse_start(var.get())
-        if parsed is None:
-            messagebox.showwarning("上班时间", "请输入 8:30 到 9:30 之间的时间，例如 8.45 或 9:10", parent=dlg)
-            return
-        result[0] = parsed
-        dlg.destroy()
-
-    def cancel() -> None:
-        dlg.destroy()
-
-    bar = tk.Frame(dlg, bg="#1b1e26")
-    bar.pack(pady=16)
-    tk.Button(bar, text="开始计时", command=ok, width=10, bg="#3d7eff", fg="white", relief="flat").pack(
-        side="left", padx=8
+    tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg="#1b1e26", font=("Microsoft YaHei UI", 10)).pack(
+        padx=18, anchor="w"
     )
-    tk.Button(bar, text="取消", command=cancel, width=8, bg="#3a3f4b", fg="white", relief="flat").pack(
-        side="left", padx=8
-    )
-    dlg.bind("<Return>", lambda _e: ok())
-    dlg.bind("<Escape>", lambda _e: cancel())
-    dlg.wait_window()
-    return result[0]
 
+    def current_var() -> tk.StringVar:
+        return start_var if mode_var.get() == "flex" else off_var
 
-def _ask_off_time(
-    parent: tk.Tk | None,
-    preset: tuple[int, int] | None,
-    *,
-    near: tuple[int, int] | None = None,
-) -> tuple[int, int] | None:
-    result: list[tuple[int, int] | None] = [None]
-    dlg = tk.Toplevel(parent)
-    dlg.title("下班时间")
-    dlg.resizable(False, False)
-    dlg.attributes("-topmost", True)
-    dlg.configure(bg="#1b1e26")
-    if near:
-        dlg.geometry(f"340x200+{int(near[0])}+{int(near[1])}")
-    else:
-        dlg.geometry("340x200")
-    try:
-        dlg.lift()
-        dlg.focus_force()
-    except Exception:
-        pass
-    dlg.grab_set()
-
-    ph, pm = preset if preset else (18, 0)
-    var = tk.StringVar(value="" if preset is None else f"{ph}:{pm:02d}")
-    preview = tk.StringVar()
+    def sync_entry_from_mode(*_a) -> None:
+        v = current_var()
+        entry.configure(textvariable=v)
+        if mode_var.get() == "flex":
+            tip.set("填写今天几点到岗，自动按 9.5 小时推算下班点")
+        else:
+            tip.set("填写今天下班几点，例如 18:00（固定下班选这个）")
+        refresh_preview()
 
     def refresh_preview(*_a) -> None:
-        parsed = flex_time.parse_clock(var.get())
+        if mode_var.get() == "flex":
+            parsed = flex_time.parse_start(start_var.get())
+            if parsed is None:
+                preview.set("请输入 8:30–9:30，例如 8.45 或 9:10")
+                return
+            ph, pm = flex_time.offwork_hm(*parsed)
+            preview.set(f"推算下班：{flex_time.format_hm(ph, pm)}")
+            return
+        parsed = flex_time.parse_clock(off_var.get())
         if parsed is None:
-            preview.set("请输入今天的下班时间，例如 18:00")
+            preview.set("请输入 0:00–23:59，例如 18:00")
             return
         preview.set(f"倒计时到 {flex_time.format_hm(*parsed)}")
 
-    var.trace_add("write", refresh_preview)
-    refresh_preview()
-
-    tk.Label(
-        dlg,
-        text="今天下班几点？",
-        fg="#f4f6fb",
-        bg="#1b1e26",
-        font=("Microsoft YaHei UI", 13, "bold"),
-    ).pack(pady=(18, 4))
-    tk.Label(
-        dlg,
-        text="直接按这个点倒计时，不走弹性 9.5 小时",
-        fg="#9aa3b5",
-        bg="#1b1e26",
-        font=("Microsoft YaHei UI", 9),
-    ).pack()
-
-    entry = ttk.Entry(dlg, textvariable=var, font=("Microsoft YaHei UI", 16), justify="center", width=12)
-    entry.pack(pady=14)
+    mode_var.trace_add("write", sync_entry_from_mode)
+    start_var.trace_add("write", refresh_preview)
+    off_var.trace_add("write", refresh_preview)
+    sync_entry_from_mode()
     entry.select_range(0, tk.END)
     entry.focus_set()
-    tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg="#1b1e26", font=("Microsoft YaHei UI", 10)).pack()
 
     def ok() -> None:
-        parsed = flex_time.parse_clock(var.get())
-        if parsed is None:
-            messagebox.showwarning("下班时间", "请输入 0:00 到 23:59，例如 18:00 或 18.30", parent=dlg)
-            return
-        result[0] = parsed
+        if mode_var.get() == "flex":
+            parsed = flex_time.parse_start(start_var.get())
+            if parsed is None:
+                messagebox.showwarning(
+                    "设置下班时间",
+                    "到岗时间请填 8:30 到 9:30，例如 8.45 或 9:10",
+                    parent=dlg,
+                )
+                return
+            result[0] = ("flex", parsed)
+        else:
+            parsed = flex_time.parse_clock(off_var.get())
+            if parsed is None:
+                messagebox.showwarning(
+                    "设置下班时间",
+                    "下班时间请填 0:00 到 23:59，例如 18:00 或 18.30",
+                    parent=dlg,
+                )
+                return
+            result[0] = ("direct", parsed)
         dlg.destroy()
 
     def cancel() -> None:
         dlg.destroy()
 
     bar = tk.Frame(dlg, bg="#1b1e26")
-    bar.pack(pady=16)
-    tk.Button(bar, text="开始计时", command=ok, width=10, bg="#3d7eff", fg="white", relief="flat").pack(
-        side="left", padx=8
-    )
-    tk.Button(bar, text="取消", command=cancel, width=8, bg="#3a3f4b", fg="white", relief="flat").pack(
-        side="left", padx=8
-    )
+    bar.pack(pady=(14, 16))
+    tk.Button(
+        bar,
+        text="开始计时",
+        command=ok,
+        bg="#3d7eff",
+        fg="white",
+        activebackground="#5a92ff",
+        activeforeground="white",
+        relief="flat",
+        font=("Microsoft YaHei UI", 10, "bold"),
+        padx=18,
+        pady=6,
+    ).pack(side="left", padx=8)
+    tk.Button(
+        bar,
+        text="取消",
+        command=cancel,
+        bg="#3a3f4b",
+        fg="white",
+        activebackground="#4a5160",
+        activeforeground="white",
+        relief="flat",
+        font=("Microsoft YaHei UI", 10),
+        padx=18,
+        pady=6,
+    ).pack(side="left", padx=8)
     dlg.bind("<Return>", lambda _e: ok())
     dlg.bind("<Escape>", lambda _e: cancel())
+    _place_dialog(dlg, near, min_w=400, min_h=300)
     dlg.wait_window()
     return result[0]
 
@@ -250,7 +265,7 @@ class WorkTimer:
         self._win_w, self._win_h = w, h
         ft, fb, fs = ornaments.layout_for(w, h)
 
-        self.win = layered_win.LayeredPetWindow(w, h, "弹性下班")
+        self.win = layered_win.LayeredPetWindow(w, h, "下班倒计时")
         self.win.set_left_click_handler(self._on_click)
         self.win.set_right_click_handler(self._request_menu)
         self.ad = ad_disguise.AdDisguise()
@@ -473,37 +488,36 @@ class WorkTimer:
     def _dialog_near(self) -> tuple[int, int]:
         return (self.win.x, self.win.y + self._win_h + 8)
 
-    def _open_time_dialog(self) -> None:
-        preset = self._start_hm()
-        picked = _ask_start_time(self._tk_root(), preset, near=self._dialog_near())
-        if picked is None:
-            return
-        self.cfg["time_mode"] = "flex"
-        self.cfg["start_h"], self.cfg["start_m"] = picked
-        self.cfg["start_date"] = self._today()
-        store.save_config(self.cfg)
-        self._last_key = ""
-
-    def _open_off_dialog(self) -> None:
+    def _open_setup_dialog(self) -> None:
+        start_preset = self._start_hm()
         if self._time_mode() == "direct" and self._has_target():
-            preset = self._off_hm()
+            off_preset = self._off_hm()
         else:
             oh, om = self.cfg.get("off_h"), self.cfg.get("off_m")
-            preset = (int(oh), int(om)) if isinstance(oh, int) and isinstance(om, int) else (18, 0)
-        picked = _ask_off_time(self._tk_root(), preset, near=self._dialog_near())
+            off_preset = (int(oh), int(om)) if isinstance(oh, int) and isinstance(om, int) else (18, 0)
+        # 今天还没设过：默认「直接设下班点」，避免一上来就被弹性流程带偏
+        mode = self._time_mode() if self._has_target() else "direct"
+        picked = _ask_offwork_setup(
+            self._tk_root(),
+            mode=mode,
+            start_preset=start_preset,
+            off_preset=off_preset,
+            near=self._dialog_near(),
+        )
         if picked is None:
             return
-        self.cfg["time_mode"] = "direct"
-        self.cfg["off_h"], self.cfg["off_m"] = picked
+        mode, hm = picked
+        self.cfg["time_mode"] = mode
         self.cfg["start_date"] = self._today()
+        if mode == "flex":
+            self.cfg["start_h"], self.cfg["start_m"] = hm
+        else:
+            self.cfg["off_h"], self.cfg["off_m"] = hm
         store.save_config(self.cfg)
         self._last_key = ""
 
     def _open_idle_dialog(self) -> None:
-        if self._time_mode() == "direct":
-            self._open_off_dialog()
-            return
-        self._open_time_dialog()
+        self._open_setup_dialog()
 
     def _handle_menu(self, sx: int, sy: int) -> None:
         op = self.win.popup_menu(
@@ -517,10 +531,8 @@ class WorkTimer:
             self.running = False
         elif op == "update":
             self._check_update()
-        elif op == "set_time":
-            self._open_time_dialog()
-        elif op == "set_off":
-            self._open_off_dialog()
+        elif op in ("set_time", "set_off"):
+            self._open_setup_dialog()
         elif op == "toggle_esc_disguise":
             self._set_esc_disguise(not self._esc_disguise_on())
         elif op == "fmt_hms":
@@ -752,8 +764,8 @@ class WorkTimer:
             w, h = self._win_w, self._win_h
             phase = time.monotonic()
             if target is None:
-                title = "弹性下班"
-                big = "点击开始"
+                title = "距离下班"
+                big = "点我开始"
                 sub = ""
                 accent = theme.idle
                 key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
@@ -892,7 +904,7 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         store.log_exception("main", e)
         try:
-            messagebox.showerror("弹性下班计时器", str(e))
+            messagebox.showerror("下班倒计时", str(e))
         except Exception:
             pass
 
