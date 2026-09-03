@@ -52,6 +52,8 @@ def main() -> None:
         "--hidden-import",
         "schedules",
         "--hidden-import",
+        "memos",
+        "--hidden-import",
         "ad_disguise",
         "--hidden-import",
         "autostart",

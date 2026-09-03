@@ -44,6 +44,7 @@ def load_config() -> dict:
         "gitcode_token": "",
         "asset_name": "WorkTimer.exe",
         "schedules": [],
+        "memos": [],
         "pin_order": ["offwork"],
         "active_pin_id": "offwork",
         "auto_rotate_pins": False,

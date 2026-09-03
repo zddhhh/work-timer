@@ -19,6 +19,7 @@ import autostart
 import backdrop
 import flex_time
 import layered_win
+import memos
 import ornaments
 import schedules
 import store
@@ -311,6 +312,7 @@ class WorkTimer:
         updater.cleanup_update_artifacts()
         self.cfg = store.load_config()
         schedules.ensure_fields(self.cfg)
+        memos.ensure_fields(self.cfg)
         self.running = True
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
@@ -788,14 +790,97 @@ class WorkTimer:
         _run_card_modal(dlg, self.win)
         return result[0]
 
+    def _ask_memo_edit(
+        self,
+        memo_id: str | None = None,
+        *,
+        cover: tuple[int, int, int, int] | None = None,
+    ) -> dict | None:
+        """新增或编辑备忘。cover 时盖在日程弹层上，避免闪一下。"""
+        result: list[dict | None] = [None]
+        existing = memos.find_memo(self.cfg, memo_id) if memo_id else None
+        if cover is not None:
+            cx, cy, cw, ch = (int(v) for v in cover)
+            near = (cx, cy)
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(340, ch))
+        else:
+            near = self._dialog_near()
+            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=380)
+        try:
+            dlg.withdraw()
+        except Exception:
+            pass
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        title_var = tk.StringVar(value=str(existing.get("title") or "") if existing else "")
+        err = tk.StringVar(value="")
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+
+        tk.Label(
+            body,
+            text="编辑备忘" if existing else "新增备忘",
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 6), anchor="w")
+        tk.Label(body, text="标题（可选）", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w"
+        )
+        tk.Entry(
+            body, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat", width=28,
+        ).pack(anchor="w", ipady=5, fill="x")
+        tk.Label(body, text="正文", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w", pady=(10, 0)
+        )
+        text = tk.Text(
+            body, height=8, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat", bd=0, highlightthickness=0, padx=8, pady=8,
+        )
+        text.pack(anchor="w", fill="both", expand=True, pady=(4, 8))
+        if existing:
+            text.insert("1.0", str(existing.get("body") or ""))
+        tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
+
+        def ok() -> None:
+            err.set("")
+            title = title_var.get().strip()
+            body_txt = text.get("1.0", "end-1c").strip()
+            if not title and not body_txt:
+                err.set("请填写标题或正文")
+                return
+            result[0] = {"title": title, "body": body_txt}
+            dlg.destroy()
+
+        _card_btn(bar, "保存", ok, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
+        if cover is not None:
+            cx, cy, cw, ch = (int(v) for v in cover)
+            dlg.geometry(f"{max(300, cw)}x{max(340, ch)}+{cx}+{cy}")
+        else:
+            _fit_card(dlg, min_w=300, min_h=340, near=near)
+        try:
+            dlg.update_idletasks()
+            dlg.deiconify()
+            dlg.lift()
+            dlg.focus_force()
+            text.focus_set()
+        except Exception:
+            pass
+        _run_card_modal(dlg, self.win)
+        return result[0]
+
     def _open_schedule_list(self) -> None:
         if self._schedule_list_open:
             self._need_close_schedule_list = True
             return
         schedules.ensure_fields(self.cfg)
+        memos.ensure_fields(self.cfg)
         near = self._dialog_near()
         dlg = _card_dialog(self._tk_root(), near=near, width=440, height=520)
         closed = {"v": False}
+        tab = {"name": "schedules"}
         self._schedule_list_open = True
         self._need_close_schedule_list = False
         self._last_key = ""
@@ -819,7 +904,18 @@ class WorkTimer:
 
         head = tk.Frame(dlg, bg=_CARD_BG)
         head.pack(side="top", fill="x", padx=16, pady=(14, 6))
-        tk.Label(head, text="日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(side="left")
+        tabs = tk.Frame(head, bg=_CARD_BG)
+        tabs.pack(side="left")
+        tab_btns: dict[str, tk.Button] = {}
+
+        def _style_tab(name: str, active: bool) -> None:
+            btn = tab_btns.get(name)
+            if btn is None:
+                return
+            bg = _CARD_ACCENT if active else _CARD_BTN
+            font = ("Microsoft YaHei UI", 10, "bold" if active else "normal")
+            btn.configure(bg=bg, fg="white", activebackground=bg, activeforeground="white", font=font)
+
         rotate_var = tk.BooleanVar(value=bool(self.cfg.get("auto_rotate_pins")))
 
         def on_rotate() -> None:
@@ -827,10 +923,11 @@ class WorkTimer:
             store.save_config(self.cfg)
             self._last_key = ""
 
-        tk.Checkbutton(
+        rotate_chk = tk.Checkbutton(
             head, text="自动轮播", variable=rotate_var, command=on_rotate, fg=_CARD_MUTED, bg=_CARD_BG,
             selectcolor=_CARD_BTN, activebackground=_CARD_BG, font=("Microsoft YaHei UI", 9),
-        ).pack(side="right")
+        )
+        rotate_chk.pack(side="right")
 
         mid = tk.Frame(dlg, bg=_CARD_BG)
         mid.pack(side="top", fill="both", expand=True, padx=16, pady=4)
@@ -857,6 +954,17 @@ class WorkTimer:
         canvas.bind("<Enter>", _bind_wheel)
         canvas.bind("<Leave>", _unbind_wheel)
         canvas.pack(fill="both", expand=True)
+
+        def _panel_cover() -> tuple[int, int, int, int] | None:
+            try:
+                return (
+                    int(dlg.winfo_rootx()),
+                    int(dlg.winfo_rooty()),
+                    max(300, int(dlg.winfo_width())),
+                    max(340, int(dlg.winfo_height())),
+                )
+            except Exception:
+                return None
 
         def rebuild() -> None:
             for child in rows.winfo_children():
@@ -931,20 +1039,55 @@ class WorkTimer:
                     _card_btn(btns, "删除", drop, danger=True).pack(side="left")
             _sync()
 
-        def add() -> None:
+        def rebuild_memos() -> None:
+            for child in rows.winfo_children():
+                child.destroy()
+            items = memos.list_sorted(self.cfg)
+            if not items:
+                tk.Label(
+                    rows, text="还没有备忘", fg=_CARD_MUTED, bg=_CARD_BG,
+                    font=("Microsoft YaHei UI", 11),
+                ).pack(pady=28)
+                _sync()
+                return
+            for item in items:
+                mid = str(item.get("id") or "")
+                card = tk.Frame(rows, bg="#222733")
+                card.pack(fill="x", pady=6)
+                inner = tk.Frame(card, bg="#222733")
+                inner.pack(fill="x", padx=10, pady=8)
+                title_lbl = tk.Label(
+                    inner, text=memos.display_title(item), fg=_CARD_FG, bg="#222733",
+                    font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
+                )
+                title_lbl.pack(fill="x")
+                when_lbl = tk.Label(
+                    inner, text=memos.format_updated(item), fg=_CARD_MUTED, bg="#222733",
+                    font=("Microsoft YaHei UI", 9), anchor="w",
+                )
+                when_lbl.pack(fill="x")
+                btns = tk.Frame(inner, bg="#222733")
+                btns.pack(fill="x", pady=(8, 0), anchor="w")
+
+                def open_edit(m=mid) -> None:
+                    edit_memo(m)
+
+                def drop_memo(m=mid) -> None:
+                    hint.set("")
+                    memos.remove_memo(self.cfg, m)
+                    store.save_config(self.cfg)
+                    rebuild_memos()
+
+                _card_btn(btns, "编辑", open_edit).pack(side="left", padx=(0, 8))
+                _card_btn(btns, "删除", drop_memo, danger=True).pack(side="left")
+                for w in (card, inner, title_lbl, when_lbl):
+                    w.bind("<Button-1>", lambda _e, m=mid: edit_memo(m))
+            _sync()
+
+        def add_schedule() -> None:
             hint.set("")
             _unbind_wheel()
-            # 用同位置同尺寸盖住列表，不 withdraw，避免闪一下露桌面
-            try:
-                cover = (
-                    int(dlg.winfo_rootx()),
-                    int(dlg.winfo_rooty()),
-                    max(300, int(dlg.winfo_width())),
-                    max(340, int(dlg.winfo_height())),
-                )
-            except Exception:
-                cover = None
-            item = self._ask_new_schedule(cover=cover)
+            item = self._ask_new_schedule(cover=_panel_cover())
             try:
                 if dlg.winfo_exists():
                     dlg.lift()
@@ -965,9 +1108,59 @@ class WorkTimer:
             self._last_key = ""
             rebuild()
 
-        _card_btn(btn_row, "+  新增日程", add, accent=True).pack(side="left")
+        def edit_memo(mid: str | None = None) -> None:
+            hint.set("")
+            _unbind_wheel()
+            data = self._ask_memo_edit(mid, cover=_panel_cover())
+            try:
+                if dlg.winfo_exists():
+                    dlg.lift()
+            except Exception:
+                pass
+            if self._need_close_schedule_list:
+                close()
+                return
+            if data is None:
+                return
+            if mid:
+                memos.update_memo(self.cfg, mid, title=data["title"], body=data["body"])
+            else:
+                memos.add_memo(self.cfg, memos.new_memo(title=data["title"], body=data["body"]))
+            store.save_config(self.cfg)
+            rebuild_memos()
+
+        def add_memo() -> None:
+            edit_memo(None)
+
+        def on_add() -> None:
+            if tab["name"] == "memos":
+                add_memo()
+            else:
+                add_schedule()
+
+        add_btn = _card_btn(btn_row, "+  新增日程", on_add, accent=True)
+        add_btn.pack(side="left")
         _card_btn(btn_row, "关闭", close).pack(side="right")
-        rebuild()
+
+        def show_tab(name: str) -> None:
+            tab["name"] = name
+            hint.set("")
+            _style_tab("schedules", name == "schedules")
+            _style_tab("memos", name == "memos")
+            if name == "memos":
+                rotate_chk.pack_forget()
+                add_btn.configure(text="+  新增备忘")
+                rebuild_memos()
+            else:
+                rotate_chk.pack(side="right")
+                add_btn.configure(text="+  新增日程")
+                rebuild()
+
+        tab_btns["schedules"] = _card_btn(tabs, "日程", lambda: show_tab("schedules"))
+        tab_btns["memos"] = _card_btn(tabs, "备忘", lambda: show_tab("memos"))
+        tab_btns["schedules"].pack(side="left", padx=(0, 6))
+        tab_btns["memos"].pack(side="left")
+        show_tab("schedules")
         _fit_card(dlg, min_w=440, min_h=520, near=near)
         try:
             while not closed["v"]:

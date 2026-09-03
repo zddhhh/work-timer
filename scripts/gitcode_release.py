@@ -108,7 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 暖光在浅色背景下更实、更清晰，不再发虚"
+                    "- 日程弹层增加「备忘」页签：可新增、编辑、删除多条备忘"
+                    "，主界面倒计时不展示正文"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
