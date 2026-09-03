@@ -312,6 +312,7 @@ class WorkTimer:
         if updater.resume_pending_update():
             updater.force_exit_for_update()
         updater.cleanup_update_artifacts()
+        updater.stamp_stable_install_version()
         self.cfg = store.load_config()
         schedules.ensure_fields(self.cfg)
         memos.ensure_fields(self.cfg)

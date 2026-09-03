@@ -226,18 +226,55 @@ def maybe_relaunch_from_stable_install() -> bool:
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists() and dest.resolve() == cur.resolve():
+            _write_installed_version(APP_VERSION)
             return False
         pending = Path(str(cur) + ".new")
-        if pending.exists() and pending.stat().st_size >= 1024 * 100:
-            shutil.copy2(pending, dest)
-        elif not dest.exists():
-            shutil.copy2(cur, dest)
+        has_pending = pending.exists() and pending.stat().st_size >= 1024 * 100
+        should_copy = (
+            has_pending
+            or not dest.exists()
+            or is_newer(APP_VERSION, _read_installed_version())
+        )
+        if should_copy:
+            shutil.copy2(pending if has_pending else cur, dest)
+            _write_installed_version(APP_VERSION)
         if not dest.exists() or dest.stat().st_size < 1024 * 100:
             return False
         _spawn_stable(dest)
         return True
     except OSError:
         return False
+
+
+def _installed_version_file() -> Path:
+    return store.install_dir() / "installed_version.txt"
+
+
+def _read_installed_version() -> str:
+    try:
+        return _installed_version_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _write_installed_version(ver: str) -> None:
+    try:
+        store.install_dir().mkdir(parents=True, exist_ok=True)
+        _installed_version_file().write_text((ver or "").strip(), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def stamp_stable_install_version() -> None:
+    """已在稳定目录运行时记下版本，避免旧微信包把新安装覆盖掉。"""
+    cur = current_exe_path()
+    if cur is None:
+        return
+    try:
+        if cur.resolve() == store.install_exe_path().resolve():
+            _write_installed_version(APP_VERSION)
+    except OSError:
+        pass
 
 
 def cleanup_update_artifacts(*, exe_dir: Path | None = None, keep_pending: bool = True) -> None:
@@ -434,6 +471,7 @@ def apply_update_and_restart(new_exe: Path) -> None:
         dest = store.install_exe_path()
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(new_exe, dest)
+        _write_installed_version(APP_VERSION)
         _spawn_stable(dest)
         return
     pid = os.getpid()

@@ -108,8 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 从微信/QQ 接收目录打开时，自动复制到本机应用目录再运行"
-                    "，避免目录保护导致无法更新"
+                    "- 从微信目录打开新版本时，会覆盖拷到 %LocalAppData%\\WorkTimer"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
