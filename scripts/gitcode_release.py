@@ -108,7 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 从微信目录打开新版本时，会覆盖拷到 %LocalAppData%\\WorkTimer"
+                    "- 目录写不进文件时（含微信自定义接收路径）拷到 LocalAppData"
+                    "；原地更新失败也会回退到这里"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -32,7 +32,7 @@ def install_exe_path() -> Path:
 
 
 def is_protected_exe_location(path: Path | str) -> bool:
-    """微信/QQ 接收目录会拦别的进程改文件，不能在原地 OTA。"""
+    """微信/QQ 默认接收目录名。用户改过保存路径时可能对不上。"""
     s = "\\" + str(Path(path)).replace("/", "\\").lower().strip("\\") + "\\"
     markers = (
         "\\wechat files\\",
@@ -41,6 +41,34 @@ def is_protected_exe_location(path: Path | str) -> bool:
         "\\weixin files\\",
     )
     return any(m in s for m in markers)
+
+
+def exe_dir_writable(exe: Path | str) -> bool:
+    """在 exe 同目录试写一个小文件。微信自定义接收目录通常会拦。"""
+    d = Path(exe).parent
+    probe = d / "WorkTimer.write_test.tmp"
+    try:
+        probe.write_bytes(b"ok")
+    except OSError:
+        return False
+    try:
+        probe.unlink()
+    except OSError:
+        pass
+    return True
+
+
+def should_relocate_exe(path: Path | str) -> bool:
+    """默认微信路径，或当前目录写不进文件，则搬到 LocalAppData。"""
+    p = Path(path)
+    try:
+        if p.resolve() == install_exe_path().resolve():
+            return False
+    except OSError:
+        pass
+    if is_protected_exe_location(p):
+        return True
+    return not exe_dir_writable(p)
 
 
 def config_path() -> Path:

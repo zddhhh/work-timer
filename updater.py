@@ -218,9 +218,9 @@ def _spawn_stable(exe: Path) -> None:
 
 
 def maybe_relaunch_from_stable_install() -> bool:
-    """在微信/QQ 目录里打开时，拷到 LocalAppData 再启动，避开目录保护。"""
+    """在微信/QQ 目录或写不进的目录里打开时，拷到 LocalAppData 再启动。"""
     cur = current_exe_path()
-    if cur is None or not store.is_protected_exe_location(cur):
+    if cur is None or not store.should_relocate_exe(cur):
         return False
     dest = store.install_exe_path()
     try:
@@ -406,6 +406,7 @@ def _replace_script(*, pid: int, new_exe: Path, cur: Path, already_staged: bool)
     tmp_dir_s = str(Path(tempfile.gettempdir())).replace("'", "''")
     log_s = str(Path(tempfile.gettempdir()) / f"WorkTimer_update_{pid}.log").replace("'", "''")
     stage = "1" if already_staged else "0"
+    ver_s = str(APP_VERSION).replace("'", "''")
     return f"""$ErrorActionPreference = 'Stop'
 function Log($m) {{ Add-Content -LiteralPath '{log_s}' -Value ("[{{0}}] {{1}}" -f (Get-Date -Format 'HH:mm:ss'), $m) -ErrorAction SilentlyContinue }}
 Log 'updater started'
@@ -446,7 +447,26 @@ for ($i = 0; $i -lt 40; $i++) {{
     Start-Sleep -Milliseconds 500
   }}
 }}
-if (-not $ok) {{ throw 'replace failed after retries' }}
+if (-not $ok) {{
+  Log 'replace failed, fallback LocalAppData'
+  $ErrorActionPreference = 'Stop'
+  $fbDir = Join-Path $env:LOCALAPPDATA 'WorkTimer'
+  New-Item -ItemType Directory -Force -Path $fbDir | Out-Null
+  $fb = Join-Path $fbDir 'WorkTimer.exe'
+  $from = $staged
+  if (-not (Test-Path -LiteralPath $from)) {{ $from = $new }}
+  Copy-Item -LiteralPath $from -Destination $fb -Force
+  Set-Content -LiteralPath (Join-Path $fbDir 'installed_version.txt') -Value '{ver_s}' -Encoding UTF8
+  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
+  $p = Start-Process -FilePath $fb -WorkingDirectory $fbDir -PassThru
+  Log ('fallback restarted pid=' + $p.Id)
+  Remove-Item -LiteralPath $new,$old,'{cur_s}.bak' -Force -ErrorAction SilentlyContinue
+  Get-ChildItem -LiteralPath '{tmp_dir_s}' -Filter 'WorkTimer_update_*' -ErrorAction SilentlyContinue | ForEach-Object {{
+    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+  }}
+  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+  exit 0
+}}
 Remove-Item -LiteralPath $new,$old,'{cur_s}.bak' -Force -ErrorAction SilentlyContinue
 Get-ChildItem -LiteralPath '{cur_dir}' -Filter 'WorkTimer-*.exe' -ErrorAction SilentlyContinue | ForEach-Object {{
   if ($_.FullName -ne $cur) {{
@@ -467,7 +487,7 @@ def apply_update_and_restart(new_exe: Path) -> None:
     cur = current_exe_path()
     if cur is None:
         raise RuntimeError("源码运行模式不能热更新，请重新打包 exe")
-    if store.is_protected_exe_location(cur):
+    if store.should_relocate_exe(cur):
         dest = store.install_exe_path()
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(new_exe, dest)
