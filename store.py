@@ -20,6 +20,29 @@ def user_data_dir() -> Path:
     return base
 
 
+def install_dir() -> Path:
+    """稳定安装目录：不放微信/QQ 接收文件夹，OTA 才能换文件。"""
+    base = Path.home() / "AppData" / "Local" / "WorkTimer"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def install_exe_path() -> Path:
+    return install_dir() / "WorkTimer.exe"
+
+
+def is_protected_exe_location(path: Path | str) -> bool:
+    """微信/QQ 接收目录会拦别的进程改文件，不能在原地 OTA。"""
+    s = "\\" + str(Path(path)).replace("/", "\\").lower().strip("\\") + "\\"
+    markers = (
+        "\\wechat files\\",
+        "\\xwechat_files\\",
+        "\\tencent files\\",
+        "\\weixin files\\",
+    )
+    return any(m in s for m in markers)
+
+
 def config_path() -> Path:
     return user_data_dir() / "config.json"
 

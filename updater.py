@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import store
 from version import APP_VERSION, ASSET_NAME
 
 API_BASE = "https://api.gitcode.com/api/v5"
@@ -197,6 +199,45 @@ def current_exe_path() -> Path | None:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
     return None
+
+
+def _spawn_stable(exe: Path) -> None:
+    env = os.environ.copy()
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        [str(exe)],
+        cwd=str(exe.parent),
+        env=env,
+        close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+    )
+
+
+def maybe_relaunch_from_stable_install() -> bool:
+    """在微信/QQ 目录里打开时，拷到 LocalAppData 再启动，避开目录保护。"""
+    cur = current_exe_path()
+    if cur is None or not store.is_protected_exe_location(cur):
+        return False
+    dest = store.install_exe_path()
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists() and dest.resolve() == cur.resolve():
+            return False
+        pending = Path(str(cur) + ".new")
+        if pending.exists() and pending.stat().st_size >= 1024 * 100:
+            shutil.copy2(pending, dest)
+        elif not dest.exists():
+            shutil.copy2(cur, dest)
+        if not dest.exists() or dest.stat().st_size < 1024 * 100:
+            return False
+        _spawn_stable(dest)
+        return True
+    except OSError:
+        return False
 
 
 def cleanup_update_artifacts(*, exe_dir: Path | None = None, keep_pending: bool = True) -> None:
@@ -389,6 +430,12 @@ def apply_update_and_restart(new_exe: Path) -> None:
     cur = current_exe_path()
     if cur is None:
         raise RuntimeError("源码运行模式不能热更新，请重新打包 exe")
+    if store.is_protected_exe_location(cur):
+        dest = store.install_exe_path()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(new_exe, dest)
+        _spawn_stable(dest)
+        return
     pid = os.getpid()
     ps1 = _replace_script(pid=pid, new_exe=new_exe, cur=cur, already_staged=False)
     _spawn_replacer(ps1, pid)

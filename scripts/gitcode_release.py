@@ -108,8 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 日程弹层增加「备忘」页签：可新增、编辑、删除多条备忘"
-                    "，主界面倒计时不展示正文"
+                    "- 从微信/QQ 接收目录打开时，自动复制到本机应用目录再运行"
+                    "，避免目录保护导致无法更新"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

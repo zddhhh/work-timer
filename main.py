@@ -307,6 +307,8 @@ class WorkTimer:
                 ctypes.windll.user32.SetProcessDPIAware()
             except Exception:
                 pass
+        if updater.maybe_relaunch_from_stable_install():
+            updater.force_exit_for_update()
         if updater.resume_pending_update():
             updater.force_exit_for_update()
         updater.cleanup_update_artifacts()
