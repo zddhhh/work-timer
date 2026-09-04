@@ -108,8 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 目录写不进文件时（含微信自定义接收路径）拷到 LocalAppData"
-                    "；原地更新失败也会回退到这里"
+                    "- 到点后重新显示已经过了多久，主界面和日程列表都会走秒"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

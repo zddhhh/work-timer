@@ -979,7 +979,11 @@ class WorkTimer:
                 if off is not None:
                     td = flex_time.remaining_to(now, off[0], off[1])
                     total, done = flex_time.remaining_parts(td)
-                    rem = "已到点" if done else flex_time.format_remaining(total, self._display_mode())
+                    rem = (
+                        f"已过 {flex_time.format_remaining(total, self._display_mode())}"
+                        if done
+                        else flex_time.format_remaining(total, self._display_mode())
+                    )
                     items.append((schedules.OFFWORK_ID, "距离您下班还有", rem, "今天", False))
                 else:
                     items.append((schedules.OFFWORK_ID, "距离您下班还有", "未设置", "今天", False))
@@ -990,7 +994,11 @@ class WorkTimer:
                     continue
                 sid = str(s["id"])
                 left, done = schedules.schedule_remaining(s, now)
-                rem = "已到点" if done else flex_time.format_remaining(left, self._display_mode())
+                rem = (
+                    f"已过 {flex_time.format_remaining(left, self._display_mode())}"
+                    if done
+                    else flex_time.format_remaining(left, self._display_mode())
+                )
                 when = schedules.format_schedule_when(s)
                 items.append((sid, str(s.get("title") or "日程"), rem, when, True))
 
@@ -1478,9 +1486,9 @@ class WorkTimer:
                 accent = theme.idle
                 key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
             elif done:
-                big = flex_time.format_remaining(0, mode)
+                big = flex_time.format_remaining(total, mode)
                 accent = theme.done
-                key = f"done-{mode}-{theme.id}-{title}-{theme.fill}-{surface}-{w}x{h}"
+                key = f"done-{mode}-{theme.id}-{title}-{big}-{theme.fill}-{surface}-{w}x{h}"
             else:
                 big = flex_time.format_remaining(total, mode)
                 mins = total // 60
