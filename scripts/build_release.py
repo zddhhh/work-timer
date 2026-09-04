@@ -70,6 +70,8 @@ def main() -> None:
         "--hidden-import",
         "updater",
         "--hidden-import",
+        "win_drop",
+        "--hidden-import",
         "version",
         "main.py",
     ]

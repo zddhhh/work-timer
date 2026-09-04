@@ -26,6 +26,7 @@ import schedules
 import store
 import themes
 import updater
+import win_drop
 from version import APP_VERSION
 
 FPS = 60
@@ -95,6 +96,47 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near: tuple[int, int]
         dlg.geometry(f"{w}x{h}+{x}+{y}")
     else:
         dlg.geometry(f"{w}x{h}")
+
+
+def _reveal_card(
+    dlg: tk.Toplevel,
+    *,
+    min_w: int,
+    min_h: int,
+    near: tuple[int, int] | None = None,
+    cover: tuple[int, int, int, int] | None = None,
+) -> None:
+    """按内容定尺寸再显示。cover 只用来对齐位置，不锁死高度，避免把附件/报错裁掉。"""
+    if cover is not None:
+        cx, cy, cw, _ch = (int(v) for v in cover)
+        near = (cx, cy)
+        min_w = max(min_w, min(int(cw), 560))
+    _fit_card(dlg, min_w=min_w, min_h=min_h, near=near)
+    try:
+        dlg.update_idletasks()
+        dlg.deiconify()
+        dlg.lift()
+        dlg.focus_force()
+    except Exception:
+        pass
+
+
+def _pack_err_line(parent: tk.Misc, err: tk.StringVar, *, wrap: int = 400) -> tk.Frame:
+    """预留报错行，空文案时也占位，避免一报错才把下面顶没。"""
+    row = tk.Frame(parent, bg=_CARD_BG, height=36)
+    row.pack(side="bottom", fill="x", pady=(4, 0))
+    row.pack_propagate(False)
+    tk.Label(
+        row,
+        textvariable=err,
+        fg="#ff8b8b",
+        bg=_CARD_BG,
+        font=("Microsoft YaHei UI", 9),
+        wraplength=wrap,
+        justify="left",
+        anchor="w",
+    ).pack(fill="both", expand=True, padx=0, pady=2)
+    return row
 
 
 def _card_dialog(
@@ -213,9 +255,10 @@ def _pack_attach_editor(
     kind: str,
     owner_id: str | None,
     err: tk.StringVar,
-) -> None:
+    pack_side: str = "top",
+) -> tk.Frame:
     box = tk.Frame(parent, bg=_CARD_BG)
-    box.pack(fill="x", pady=(8, 0), anchor="w")
+    box.pack(side=pack_side, fill="x", pady=(8, 0), anchor="w")
     head = tk.Frame(box, bg=_CARD_BG)
     head.pack(fill="x")
     tk.Label(head, text="图片附件", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
@@ -225,8 +268,14 @@ def _pack_attach_editor(
     tk.Label(head, textvariable=count, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
         side="left", padx=(8, 0)
     )
-    thumbs = tk.Frame(box, bg=_CARD_BG)
-    thumbs.pack(fill="x", pady=(4, 0))
+    tk.Label(
+        head, text="可拖入图片", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 8),
+    ).pack(side="right")
+    thumbs = tk.Frame(box, bg="#222733", height=96)
+    thumbs.pack(fill="x", pady=(6, 0))
+    thumbs.pack_propagate(False)
+    btn_row = tk.Frame(box, bg=_CARD_BG)
+    btn_row.pack(fill="x", pady=(8, 0))
 
     def total() -> int:
         return len(state["keep"]) + len(state["pending"])
@@ -235,29 +284,74 @@ def _pack_attach_editor(
         if path.is_file():
             attachments.open_file(path)
 
+    def ingest(paths: list[str] | tuple[str, ...]) -> None:
+        room = attachments.MAX_IMAGES - total()
+        if room <= 0:
+            err.set(f"最多 {attachments.MAX_IMAGES} 张图片")
+            return
+        expanded: list[Path] = []
+        for raw in paths:
+            p = Path(str(raw))
+            if p.is_dir():
+                for ext in attachments.ALLOWED_EXT:
+                    expanded.extend(sorted(p.glob(f"*{ext}")))
+                    expanded.extend(sorted(p.glob(f"*{ext.upper()}")))
+            elif p.is_file():
+                expanded.append(p)
+        added = 0
+        last_err = ""
+        for p in expanded:
+            if added >= room:
+                last_err = f"最多 {attachments.MAX_IMAGES} 张，已截断"
+                break
+            if p.suffix.lower() not in attachments.ALLOWED_EXT:
+                last_err = "只支持 png / jpg / webp / bmp / gif"
+                continue
+            try:
+                if p.stat().st_size > attachments.MAX_SRC_BYTES:
+                    last_err = "单张不超过 12MB"
+                    continue
+            except OSError:
+                continue
+            key = str(p.resolve()) if p.exists() else str(p)
+            if key in state["pending"]:
+                continue
+            state["pending"].append(str(p))
+            added += 1
+        if added:
+            err.set("" if not last_err else last_err)
+        elif last_err:
+            err.set(last_err)
+        elif expanded:
+            err.set("没有可添加的图片")
+        refresh()
+
     def refresh() -> None:
         for child in thumbs.winfo_children():
             child.destroy()
         state["photos"].clear()
         count.set(f"{total()}/{attachments.MAX_IMAGES}")
+        inner = tk.Frame(thumbs, bg="#222733")
+        inner.pack(side="left", padx=8, pady=8)
 
         def add_cell(photo: ImageTk.PhotoImage | None, on_open, on_drop, label: str) -> None:
-            cell = tk.Frame(thumbs, bg="#222733")
-            cell.pack(side="left", padx=(0, 8), pady=2)
+            cell = tk.Frame(inner, bg="#2a3140", width=64, height=70)
+            cell.pack_propagate(False)
+            cell.pack(side="left", padx=(0, 8))
+            tk.Button(
+                cell, text="去掉", command=on_drop, fg="#ffb4b4", bg="#2a3140",
+                activebackground="#2a3140", activeforeground="#ffb4b4",
+                relief="flat", bd=0, highlightthickness=0, font=("Microsoft YaHei UI", 8),
+            ).pack(side="bottom")
             if photo is not None:
                 state["photos"].append(photo)
                 img_btn = tk.Button(
-                    cell, image=photo, command=on_open, bg="#222733", activebackground="#222733",
+                    cell, image=photo, command=on_open, bg="#2a3140", activebackground="#2a3140",
                     relief="flat", bd=0, highlightthickness=0, cursor="hand2",
                 )
-                img_btn.pack()
+                img_btn.pack(fill="both", expand=True)
             else:
-                tk.Label(cell, text=label[:4] or "图", fg=_CARD_MUTED, bg="#222733", width=6, height=2).pack()
-            tk.Button(
-                cell, text="去掉", command=on_drop, fg="#ffb4b4", bg="#222733",
-                activebackground="#222733", activeforeground="#ffb4b4",
-                relief="flat", bd=0, highlightthickness=0, font=("Microsoft YaHei UI", 8),
-            ).pack()
+                tk.Label(cell, text=label[:4] or "图", fg=_CARD_MUTED, bg="#2a3140").pack(expand=True)
 
         for i, rec in enumerate(list(state["keep"])):
             path = attachments.file_path(kind, owner_id, rec) if owner_id else Path()
@@ -282,54 +376,45 @@ def _pack_attach_editor(
 
             add_cell(photo, lambda p=path: open_path(p), drop_pending, path.stem)
 
-        if total() < attachments.MAX_IMAGES:
-            add = tk.Frame(thumbs, bg="#222733")
-            add.pack(side="left", padx=(0, 8), pady=2)
-            tk.Button(
-                add,
-                text="+ 图片",
-                command=add_files,
-                bg=_CARD_BTN,
-                fg="white",
-                activebackground=_CARD_BTN,
-                activeforeground="white",
-                relief="flat",
-                bd=0,
-                highlightthickness=0,
+        if not state["keep"] and not state["pending"]:
+            tk.Label(
+                inner, text="还没有图片，点下面按钮或直接拖进来", fg=_CARD_MUTED, bg="#222733",
                 font=("Microsoft YaHei UI", 9),
-                padx=10,
-                pady=16,
-            ).pack()
+            ).pack(side="left", padx=8)
+
+        for child in btn_row.winfo_children():
+            child.destroy()
+        if total() < attachments.MAX_IMAGES:
+            _card_btn(btn_row, "+  添加图片", add_files, accent=True).pack(side="left")
+        else:
+            tk.Label(
+                btn_row, text=f"已满 {attachments.MAX_IMAGES} 张", fg=_CARD_MUTED, bg=_CARD_BG,
+                font=("Microsoft YaHei UI", 9),
+            ).pack(side="left")
 
     def add_files() -> None:
         err.set("")
-        room = attachments.MAX_IMAGES - total()
-        if room <= 0:
+        if attachments.MAX_IMAGES - total() <= 0:
             err.set(f"最多 {attachments.MAX_IMAGES} 张图片")
             return
         paths = _pick_image_files(dlg)
-        if not paths:
-            return
-        added = 0
-        for src in paths:
-            if added >= room:
-                err.set(f"最多 {attachments.MAX_IMAGES} 张，已截断")
-                break
-            p = Path(src)
-            if p.suffix.lower() not in attachments.ALLOWED_EXT:
-                err.set("只支持 png / jpg / webp / bmp / gif")
-                continue
-            try:
-                if p.stat().st_size > attachments.MAX_SRC_BYTES:
-                    err.set("单张不超过 12MB")
-                    continue
-            except OSError:
-                continue
-            state["pending"].append(str(p))
-            added += 1
-        refresh()
+        if paths:
+            ingest(paths)
 
+    def on_drop(files: list[str]) -> None:
+        ingest(files)
+
+    def enable_drop(_e=None) -> None:
+        win_drop.hook_files(dlg, on_drop)
+
+    dlg.bind("<Map>", enable_drop, add="+")
+    try:
+        if int(dlg.winfo_ismapped()):
+            enable_drop()
+    except tk.TclError:
+        pass
     refresh()
+    return box
 
 
 def _run_card_modal(dlg: tk.Toplevel, win: layered_win.LayeredPetWindow | None = None) -> None:
@@ -855,10 +940,10 @@ class WorkTimer:
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
             near = (cx, cy)
-            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(420, ch))
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(480, cw), height=max(560, ch))
         else:
             near = near or self._dialog_near()
-            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=460)
+            dlg = _card_dialog(self._tk_root(), near=near, width=480, height=560)
         # 先藏着排版，排完再显示，避免空壳闪一下
         try:
             dlg.withdraw()
@@ -875,6 +960,10 @@ class WorkTimer:
         tip = tk.StringVar()
         body = tk.Frame(dlg, bg=_CARD_BG)
         body.pack(side="top", fill="both", expand=True, padx=18)
+        err = tk.StringVar(value="")
+        _pack_err_line(body, err, wrap=420)
+        attach = _new_attach_state()
+        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=None, err=err, pack_side="bottom")
 
         tk.Label(body, text="新增日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(
             pady=(16, 6), anchor="w"
@@ -928,11 +1017,6 @@ class WorkTimer:
         kind_var.trace_add("write", sync)
         sync()
 
-        err = tk.StringVar(value="")
-        attach = _new_attach_state()
-        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=None, err=err)
-        tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
-
         def ok() -> None:
             err.set("")
             name = title_var.get().strip() or ("日程" if kind_var.get() == "clock" else "倒计时")
@@ -972,18 +1056,7 @@ class WorkTimer:
         _card_btn(bar, "开始倒计时", ok, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: ok())
-        if cover is not None:
-            cx, cy, cw, ch = (int(v) for v in cover)
-            dlg.geometry(f"{max(300, cw)}x{max(420, ch)}+{cx}+{cy}")
-        else:
-            _fit_card(dlg, min_w=300, min_h=420, near=near)
-        try:
-            dlg.update_idletasks()
-            dlg.deiconify()
-            dlg.lift()
-            dlg.focus_force()
-        except Exception:
-            pass
+        _reveal_card(dlg, min_w=480, min_h=560, near=near, cover=cover)
         _run_card_modal(dlg, self.win)
         return result[0]
 
@@ -999,10 +1072,10 @@ class WorkTimer:
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
             near = (cx, cy)
-            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(420, ch))
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(480, cw), height=max(560, ch))
         else:
             near = self._dialog_near()
-            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=460)
+            dlg = _card_dialog(self._tk_root(), near=near, width=480, height=560)
         try:
             dlg.withdraw()
         except Exception:
@@ -1013,6 +1086,10 @@ class WorkTimer:
         err = tk.StringVar(value="")
         body = tk.Frame(dlg, bg=_CARD_BG)
         body.pack(side="top", fill="both", expand=True, padx=18)
+        _pack_err_line(body, err, wrap=420)
+        attach = _new_attach_state(existing.get("images") if existing else None)
+        mid = str(existing.get("id") or "") if existing else None
+        _pack_attach_editor(body, dlg=dlg, state=attach, kind="memo", owner_id=mid, err=err, pack_side="bottom")
 
         tk.Label(
             body,
@@ -1032,16 +1109,12 @@ class WorkTimer:
             anchor="w", pady=(10, 0)
         )
         text = tk.Text(
-            body, height=8, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
+            body, height=5, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
             insertbackground=_CARD_FG, relief="flat", bd=0, highlightthickness=0, padx=8, pady=8,
         )
         text.pack(anchor="w", fill="both", expand=True, pady=(4, 8))
         if existing:
             text.insert("1.0", str(existing.get("body") or ""))
-        attach = _new_attach_state(existing.get("images") if existing else None)
-        mid = str(existing.get("id") or "") if existing else None
-        _pack_attach_editor(body, dlg=dlg, state=attach, kind="memo", owner_id=mid, err=err)
-        tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
 
         def ok() -> None:
             err.set("")
@@ -1055,16 +1128,8 @@ class WorkTimer:
 
         _card_btn(bar, "保存", ok, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
-        if cover is not None:
-            cx, cy, cw, ch = (int(v) for v in cover)
-            dlg.geometry(f"{max(300, cw)}x{max(420, ch)}+{cx}+{cy}")
-        else:
-            _fit_card(dlg, min_w=300, min_h=420, near=near)
+        _reveal_card(dlg, min_w=480, min_h=560, near=near, cover=cover)
         try:
-            dlg.update_idletasks()
-            dlg.deiconify()
-            dlg.lift()
-            dlg.focus_force()
             text.focus_set()
         except Exception:
             pass
@@ -1084,10 +1149,10 @@ class WorkTimer:
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
             near = (cx, cy)
-            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(280, min(ch, 360)))
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(480, cw), height=max(380, ch))
         else:
             near = self._dialog_near()
-            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=280)
+            dlg = _card_dialog(self._tk_root(), near=near, width=480, height=380)
         try:
             dlg.withdraw()
         except Exception:
@@ -1097,6 +1162,9 @@ class WorkTimer:
         err = tk.StringVar(value="")
         body = tk.Frame(dlg, bg=_CARD_BG)
         body.pack(side="top", fill="both", expand=True, padx=18)
+        _pack_err_line(body, err, wrap=420)
+        attach = _new_attach_state(item.get("images"))
+        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=sid, err=err, pack_side="bottom")
         tk.Label(
             body,
             text=f"图片 · {item.get('title') or '日程'}",
@@ -1104,9 +1172,13 @@ class WorkTimer:
             bg=_CARD_BG,
             font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(pady=(16, 6), anchor="w")
-        attach = _new_attach_state(item.get("images"))
-        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=sid, err=err)
-        tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
+        tk.Label(
+            body,
+            text="添加、去掉或把图片拖进窗口",
+            fg=_CARD_MUTED,
+            bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 9),
+        ).pack(anchor="w")
 
         def ok() -> None:
             result[0] = attachments.commit(
@@ -1120,18 +1192,7 @@ class WorkTimer:
 
         _card_btn(bar, "保存", ok, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
-        if cover is not None:
-            cx, cy, cw, ch = (int(v) for v in cover)
-            dlg.geometry(f"{max(300, cw)}x{max(280, min(ch, 360))}+{cx}+{cy}")
-        else:
-            _fit_card(dlg, min_w=300, min_h=260, near=near)
-        try:
-            dlg.update_idletasks()
-            dlg.deiconify()
-            dlg.lift()
-            dlg.focus_force()
-        except Exception:
-            pass
+        _reveal_card(dlg, min_w=480, min_h=380, near=near, cover=cover)
         _run_card_modal(dlg, self.win)
         return result[0]
 
@@ -1142,7 +1203,7 @@ class WorkTimer:
         schedules.ensure_fields(self.cfg)
         memos.ensure_fields(self.cfg)
         near = self._dialog_near()
-        dlg = _card_dialog(self._tk_root(), near=near, width=440, height=520)
+        dlg = _card_dialog(self._tk_root(), near=near, width=480, height=560)
         closed = {"v": False}
         tab = {"name": "schedules"}
         self._schedule_list_open = True
@@ -1162,9 +1223,10 @@ class WorkTimer:
         hint = tk.StringVar(value="")
         btn_row = tk.Frame(foot, bg=_CARD_BG)
         btn_row.pack(side="bottom", fill="x")
-        tk.Label(foot, textvariable=hint, fg="#ffd28a", bg=_CARD_BG, font=("Microsoft YaHei UI", 8)).pack(
-            side="bottom", fill="x", pady=(0, 6)
-        )
+        tk.Label(
+            foot, textvariable=hint, fg="#ffd28a", bg=_CARD_BG, font=("Microsoft YaHei UI", 8),
+            wraplength=420, justify="left", anchor="w",
+        ).pack(side="bottom", fill="x", pady=(0, 6))
 
         head = tk.Frame(dlg, bg=_CARD_BG)
         head.pack(side="top", fill="x", padx=16, pady=(14, 6))
@@ -1236,8 +1298,8 @@ class WorkTimer:
                 return (
                     int(dlg.winfo_rootx()),
                     int(dlg.winfo_rooty()),
-                    max(300, int(dlg.winfo_width())),
-                    max(340, int(dlg.winfo_height())),
+                    max(480, int(dlg.winfo_width())),
+                    max(420, int(dlg.winfo_height())),
                 )
             except Exception:
                 return None
@@ -1515,7 +1577,7 @@ class WorkTimer:
 
         dlg.bind("<Control-f>", focus_search)
         show_tab("schedules")
-        _fit_card(dlg, min_w=440, min_h=560, near=near)
+        _fit_card(dlg, min_w=480, min_h=560, near=near)
         try:
             while not closed["v"]:
                 try:

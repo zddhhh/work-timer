@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 皮肤改为中心小幅亚像素漂移，刷新更高，减轻卡顿"
+                    "- 修弹层裁切；日程/备忘支持拖入图片"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
