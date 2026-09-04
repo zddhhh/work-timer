@@ -12,6 +12,10 @@ import store
 _ASSET_CACHE: dict[str, Image.Image] = {}
 # (asset_name, tw, th) -> resized RGBA
 _RESIZE_CACHE: dict[tuple[str, int, int], Image.Image] = {}
+_MASK_CACHE: dict[tuple[int, int], Image.Image] = {}
+_ALPHA_LUT: dict[int, list[int]] = {}
+# 贴图只在画面中心附近漂移，避免整张 640×360 慢扫导致「停一下跳一格」
+_DRIFT_PX = 16
 
 # kind -> (主贴图, 可选第二层)；淡影(ghost)不用生图
 _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
@@ -67,9 +71,16 @@ def layout_for(w: int, h: int) -> tuple[int, int, int]:
 
 
 def _scale_alpha(im: Image.Image, factor: float) -> Image.Image:
+    f = max(0.0, min(1.0, float(factor)))
+    if f >= 0.998:
+        return im
+    key = int(round(f * 256))
+    lut = _ALPHA_LUT.get(key)
+    if lut is None:
+        lut = [min(255, (i * key) >> 8) for i in range(256)]
+        _ALPHA_LUT[key] = lut
     out = im.copy()
-    a = out.getchannel("A").point(lambda v: max(0, min(255, int(v * factor))))
-    out.putalpha(a)
+    out.putalpha(out.getchannel("A").point(lut))
     return out
 
 
@@ -79,18 +90,18 @@ def has_skin(kind: str) -> bool:
 
 def _orbit_xy(
     phase: float,
-    span_x: int,
-    span_y: int,
+    span_x: float,
+    span_y: float,
     *,
     speed: float,
     twist: float = 0.0,
-) -> tuple[int, int]:
-    """在大图上缓缓绕圈，避免 ping-pong 走到头急刹。"""
-    sx, sy = max(0, int(span_x)), max(0, int(span_y))
+) -> tuple[float, float]:
+    """中心附近缓绕；返回浮点偏移，交给亚像素采样。"""
+    sx, sy = max(0.0, float(span_x)), max(0.0, float(span_y))
     t = float(phase) * speed + twist
-    ox = int((math.sin(t) * 0.5 + 0.5) * sx)
-    oy = int((math.cos(t * 0.91 + 0.8) * 0.5 + 0.5) * sy)
-    return max(0, min(sx, ox)), max(0, min(sy, oy))
+    ox = (math.sin(t) * 0.5 + 0.5) * sx
+    oy = (math.cos(t * 0.91 + 0.8) * 0.5 + 0.5) * sy
+    return ox, oy
 
 
 def _breathe(phase: float, alpha: float, *, amp: float = 0.06, speed: float = 0.55) -> float:
@@ -126,26 +137,32 @@ def _mix_env(
 
 def _paint_sweep(layer: Image.Image, phase: float, *, light: bool, stage: str) -> None:
     period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
-    dur = 1.65
+    dur = 1.9
     t = float(phase) % period
     if t > dur:
         return
     u = t / dur
-    fade = min(u, 1.0 - u) * 2.4
+    u = u * u * (3.0 - 2.0 * u)
+    fade = math.sin(u * math.pi)
     fade = max(0.0, min(1.0, fade))
     bw, bh = layer.size
-    sw = max(10, bw // 7)
+    sw = max(12, bw // 6)
     travel = bw + sw * 2 + bh // 3
-    x = int(-sw + u * travel)
+    x = -sw + u * travel
     stripe = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     d = ImageDraw.Draw(stripe)
-    alpha = int((36 if light else 30) * fade)
-    col = (255, 252, 244, alpha)
     shear = max(10, bh // 3)
-    d.polygon(
-        [(x, 0), (x + sw, 0), (x + sw - shear, bh), (x - shear, bh)],
-        fill=col,
-    )
+    peak = 34 if light else 28
+    for k, mul in ((0, 1.0), (sw * 0.28, 0.45), (sw * 0.55, 0.18)):
+        a = int(peak * fade * mul)
+        if a < 2:
+            continue
+        x0 = x - k
+        ww = sw + k * 2
+        d.polygon(
+            [(x0, 0), (x0 + ww, 0), (x0 + ww - shear, bh), (x0 - shear, bh)],
+            fill=(255, 252, 244, a),
+        )
     layer.alpha_composite(stripe)
 
 
@@ -173,7 +190,7 @@ def paste_skin(
     phase = time.monotonic()
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     freeze = stage in ("idle", "done")
-    extra = 0 if freeze else 22
+    drift = 0 if freeze else _DRIFT_PX
 
     glow_kinds = {"neon", "terminal", "aurora"}
     if kind in glow_kinds:
@@ -185,33 +202,54 @@ def paste_skin(
     else:
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38
-    bamp = 0.0 if freeze else (0.04 if stage == "warn" else 0.03)
+    bamp = 0.0 if freeze else (0.035 if stage == "warn" else 0.025)
+    base_speed = 0.26 if stage == "warn" else 0.20
 
     def _place(src_im: Image.Image, name: str, alpha: float, *, speed: float, twist: float) -> None:
         nonlocal layer
-        tw = max(bw + extra, src_im.width)
-        th = max(bh + extra, src_im.height)
+        tw = max(bw + _DRIFT_PX * 2, src_im.width)
+        th = max(bh + _DRIFT_PX * 2, src_im.height)
         src = _resized(name, src_im, tw, th)
-        sx, sy = max(0, src.width - bw), max(0, src.height - bh)
-        if freeze or extra <= 0:
-            ox, oy = sx // 2, sy // 2
+        max_x = max(0.0, float(src.width - bw))
+        max_y = max(0.0, float(src.height - bh))
+        span_x = min(max_x, float(drift * 2)) if drift else 0.0
+        span_y = min(max_y, float(drift * 2)) if drift else 0.0
+        cx = max_x * 0.5
+        cy = max_y * 0.5
+        if span_x <= 0.0 and span_y <= 0.0:
+            ox, oy = cx, cy
         else:
-            ox, oy = _orbit_xy(phase, sx, sy, speed=speed, twist=twist)
-        crop = src.crop((ox, oy, ox + bw, oy + bh))
+            fx, fy = _orbit_xy(phase, span_x, span_y, speed=speed, twist=twist)
+            ox = cx - span_x * 0.5 + fx
+            oy = cy - span_y * 0.5 + fy
+        ox = max(0.0, min(max_x, ox))
+        oy = max(0.0, min(max_y, oy))
+        crop = src.transform(
+            (bw, bh),
+            Image.Transform.AFFINE,
+            (1.0, 0.0, ox, 0.0, 1.0, oy),
+            resample=Image.Resampling.BILINEAR,
+        )
         layer = Image.alpha_composite(layer, _scale_alpha(crop, _breathe(phase, alpha, amp=bamp)))
 
     if drape is not None:
-        _place(drape, name_a, a0, speed=0.05, twist=0.0)
+        _place(drape, name_a, a0, speed=base_speed, twist=0.0)
     if glow is not None:
-        _place(glow, name_b or "glow", a1, speed=0.04, twist=1.7)
+        _place(glow, name_b or "glow", a1, speed=base_speed * 0.78, twist=1.7)
 
     tint = Image.new("RGBA", (bw, bh), _mix_env(_mood_rgba(stage, light), env_rgb))
     layer = Image.alpha_composite(layer, tint)
     _paint_sweep(layer, phase, light=light, stage=stage)
 
-    mask = Image.new("L", (bw, bh), 0)
-    md = ImageDraw.Draw(mask)
-    md.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=max(8, min(bw, bh) // 6), fill=255)
+    mk = (bw, bh)
+    mask = _MASK_CACHE.get(mk)
+    if mask is None:
+        mask = Image.new("L", (bw, bh), 0)
+        md = ImageDraw.Draw(mask)
+        md.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=max(8, min(bw, bh) // 6), fill=255)
+        if len(_MASK_CACHE) > 16:
+            _MASK_CACHE.clear()
+        _MASK_CACHE[mk] = mask
     r, g, b, a = layer.split()
     layer = Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
     img.alpha_composite(layer, (x0, y0))

@@ -1848,8 +1848,8 @@ class WorkTimer:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
             if ornaments.has_skin(theme.kind):
                 period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
-                sweeping = (phase % period) < 1.7
-                fps = 20 if sweeping else (4 if stage in ("idle", "done") else 8)
+                sweeping = (phase % period) < 1.95
+                fps = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
                 key = f"{key}-a{int(phase * fps)}"
             elif theme.kind != "ghost":
                 key = f"{key}-p{int(phase * 6)}"

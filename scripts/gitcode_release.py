@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 日程/备忘可搜索，并支持添加图片附件"
+                    "- 皮肤改为中心小幅亚像素漂移，刷新更高，减轻卡顿"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
