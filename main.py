@@ -1499,6 +1499,8 @@ class WorkTimer:
             key = f"{key}-{aid}-{idx}/{n}-o{int(self._schedule_list_open)}"
             if ornaments.has_skin(theme.kind):
                 key = f"{key}-a{int(phase * 24)}"
+            if theme.kind == "blink":
+                key = f"{key}-k{int(ornaments.blink_amount(phase) * 24)}"
 
             if key == self._last_key:
                 return

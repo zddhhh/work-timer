@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 到点后重新显示已经过了多久，主界面和日程列表都会走秒"
+                    "- 新增外观「眨眼」；生图皮肤改为缓绕+呼吸，不再来回扫"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

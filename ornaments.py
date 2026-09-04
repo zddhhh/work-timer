@@ -1,6 +1,7 @@
 """皮肤生图贴图等装饰。"""
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 
@@ -21,6 +22,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "aurora": ("aurora_drape.png", "aurora_glow.png"),
     "inkgold": ("skin_inkgold.png", None),
     "warmglow": ("skin_warmglow.png", None),
+    "blink": ("skin_frost.png", None),
 }
 
 
@@ -76,17 +78,83 @@ def has_skin(kind: str) -> bool:
     return kind in _SKIN_LAYERS
 
 
-def _pingpong_offset(distance: float, span: int, *, reverse: bool = False) -> int:
-    """走到头再原路返回，避免循环跳动。"""
-    span = max(1, int(span))
-    cycle = span * 2
-    p = abs(float(distance)) % cycle
-    if p > span:
-        p = cycle - p
-    off = int(p)
-    if reverse:
-        off = span - off
-    return max(0, min(span, off))
+def _orbit_xy(
+    phase: float,
+    span_x: int,
+    span_y: int,
+    *,
+    speed: float,
+    twist: float = 0.0,
+) -> tuple[int, int]:
+    """在大图上缓缓绕圈，避免 ping-pong 走到头急刹。"""
+    sx, sy = max(0, int(span_x)), max(0, int(span_y))
+    t = float(phase) * speed + twist
+    ox = int((math.sin(t) * 0.5 + 0.5) * sx)
+    oy = int((math.cos(t * 0.91 + 0.8) * 0.5 + 0.5) * sy)
+    return max(0, min(sx, ox)), max(0, min(sy, oy))
+
+
+def _breathe(phase: float, alpha: float, *, amp: float = 0.06, speed: float = 0.55) -> float:
+    k = 1.0 + amp * math.sin(float(phase) * speed)
+    return max(0.0, min(1.0, float(alpha) * k))
+
+
+def blink_amount(now: float | None = None) -> float:
+    """0=睁眼，1=闭上。约每 5 秒眨一次，偶尔连眨。"""
+    t = time.monotonic() if now is None else float(now)
+
+    def pulse(x: float, dur: float = 0.16) -> float:
+        if x < 0 or x > dur:
+            return 0.0
+        u = x / dur
+        if u < 0.42:
+            p = u / 0.42
+            return p * p
+        if u < 0.58:
+            return 1.0
+        p = (1.0 - u) / 0.42
+        return max(0.0, p * p)
+
+    cycle = 5.2
+    n = int(t // cycle)
+    local = t - n * cycle
+    amt = pulse(local)
+    if n % 5 == 2:
+        amt = max(amt, pulse(local - 0.22))
+    return max(0.0, min(1.0, amt))
+
+
+def paint_blink(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    *,
+    light: bool = False,
+    amount: float | None = None,
+) -> None:
+    """眼皮从上方盖下来；amount 缺省则按时间取。"""
+    amt = blink_amount() if amount is None else max(0.0, min(1.0, float(amount)))
+    if amt <= 0.03:
+        return
+    x0, y0, x1, y1 = (int(v) for v in box)
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    lid = max(3, int(bh * (0.1 + 0.9 * amt)))
+    overlay = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    if light:
+        fill = (48, 42, 58, int(185 * amt))
+        lash = (28, 24, 36, int(220 * amt))
+    else:
+        fill = (10, 8, 16, int(205 * amt))
+        lash = (0, 0, 0, int(235 * amt))
+    d.ellipse((-bw // 3, -bh, bw + bw // 3, lid), fill=fill)
+    y = min(bh - 1, lid - 1)
+    d.line([(6, y), (bw - 7, y)], fill=lash, width=max(1, lid // 14))
+    mask = Image.new("L", (bw, bh), 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=max(8, min(bw, bh) // 6), fill=255)
+    r, g, b, a = overlay.split()
+    overlay = Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
+    img.alpha_composite(overlay, (x0, y0))
 
 
 def paste_skin(
@@ -124,22 +192,21 @@ def paste_skin(
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38
 
+    extra = 140
     if drape is not None:
-        tw = max(bw + 80, drape.width)
-        th = max(bh, drape.height)
+        tw = max(bw + extra, drape.width)
+        th = max(bh + extra, drape.height)
         src = _resized(name_a, drape, tw, th)
-        ox = _pingpong_offset(phase * 28, src.width - bw)
-        oy = max(0, (src.height - bh) // 2)
+        ox, oy = _orbit_xy(phase, src.width - bw, src.height - bh, speed=0.17, twist=0.0)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, a0))
+        layer = Image.alpha_composite(layer, _scale_alpha(crop, _breathe(phase, a0)))
     if glow is not None:
-        tw = max(bw + 60, glow.width)
-        th = max(bh, glow.height)
+        tw = max(bw + extra, glow.width)
+        th = max(bh + extra, glow.height)
         src = _resized(name_b or "glow", glow, tw, th)
-        ox = _pingpong_offset(phase * 22, src.width - bw, reverse=True)
-        oy = max(0, (src.height - bh) // 2)
+        ox, oy = _orbit_xy(phase, src.width - bw, src.height - bh, speed=0.13, twist=1.7)
         crop = src.crop((ox, oy, ox + bw, oy + bh))
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, a1))
+        layer = Image.alpha_composite(layer, _scale_alpha(crop, _breathe(phase, a1, speed=0.42)))
 
     mask = Image.new("L", (bw, bh), 0)
     md = ImageDraw.Draw(mask)
