@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修资源管理器拖图片进日程/备忘"
+                    "- 修从资源管理器拖图片导致崩溃"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
