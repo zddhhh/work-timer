@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修弹层裁切；日程/备忘支持拖入图片"
+                    "- 修资源管理器拖图片进日程/备忘"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

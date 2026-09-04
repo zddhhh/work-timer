@@ -119,6 +119,9 @@ def _reveal_card(
         dlg.focus_force()
     except Exception:
         pass
+    cb = getattr(dlg, "_on_drop_files", None)
+    if callable(cb):
+        win_drop.hook_files(dlg, cb)
 
 
 def _pack_err_line(parent: tk.Misc, err: tk.StringVar, *, wrap: int = 400) -> tk.Frame:
@@ -403,6 +406,8 @@ def _pack_attach_editor(
 
     def on_drop(files: list[str]) -> None:
         ingest(files)
+
+    dlg._on_drop_files = on_drop
 
     def enable_drop(_e=None) -> None:
         win_drop.hook_files(dlg, on_drop)
