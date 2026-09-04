@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
+
+import attachments
 
 OFFWORK_ID = "offwork"
 MAX_PINS = 3
@@ -18,6 +20,7 @@ def ensure_fields(cfg: dict) -> None:
             continue
         if s.get("kind") == "clock" and not s.get("date"):
             s["date"] = datetime.now().strftime("%Y-%m-%d")
+        s["images"] = attachments.normalize(s.get("images"))
     pins = cfg.get("pin_order")
     if not isinstance(pins, list):
         cfg["pin_order"] = [OFFWORK_ID]
@@ -125,6 +128,7 @@ def new_clock(title: str, h: int, m: int, *, date: str | None = None) -> dict[st
         "hm": [int(h), int(m)],
         "duration_sec": None,
         "started_at": None,
+        "images": [],
     }
 
 
@@ -139,6 +143,7 @@ def new_duration(title: str, minutes: int, *, now: datetime | None = None) -> di
         "hm": None,
         "duration_sec": sec,
         "started_at": now.isoformat(timespec="seconds"),
+        "images": [],
     }
 
 
@@ -154,10 +159,27 @@ def add_schedule(cfg: dict, item: dict) -> None:
     cfg["schedules"].append(item)
 
 
+def matches(item: dict, query: str) -> bool:
+    return attachments.matches(
+        [str(item.get("title") or ""), format_schedule_when(item)],
+        item.get("images"),
+        query,
+    )
+
+
+def set_images(cfg: dict, sid: str, images: list[dict]) -> bool:
+    item = find_schedule(cfg, sid)
+    if item is None:
+        return False
+    item["images"] = attachments.normalize(images)
+    return True
+
+
 def remove_schedule(cfg: dict, sid: str) -> None:
     ensure_fields(cfg)
     if sid == OFFWORK_ID:
         return
+    attachments.remove_owner("schedule", sid)
     cfg["schedules"] = [s for s in cfg["schedules"] if not (isinstance(s, dict) and str(s.get("id")) == sid)]
     cfg["pin_order"] = [p for p in cfg["pin_order"] if p != sid]
     if cfg.get("active_pin_id") == sid:

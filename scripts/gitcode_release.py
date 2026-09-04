@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 皮肤随剩时冷暖变化，偶尔扫光、描边呼吸，并沾一点墙纸色"
+                    "- 日程/备忘可搜索，并支持添加图片附件"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

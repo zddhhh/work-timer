@@ -10,11 +10,12 @@ import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
-from PIL import Image, ImageFont
+from PIL import Image, ImageFont, ImageTk
 
 import ad_disguise
+import attachments
 import autostart
 import backdrop
 import flex_time
@@ -155,6 +156,180 @@ def _card_btn(parent: tk.Misc, text: str, command, *, accent: bool = False, dang
         padx=14,
         pady=6,
     )
+
+
+def _new_attach_state(existing: object = None) -> dict:
+    return {
+        "keep": attachments.normalize(existing),
+        "pending": [],
+        "removed": [],
+        "photos": [],
+    }
+
+
+def _pick_image_files(dlg: tk.Toplevel) -> tuple[str, ...]:
+    try:
+        dlg.attributes("-topmost", False)
+    except Exception:
+        pass
+    try:
+        paths = filedialog.askopenfilenames(
+            parent=dlg,
+            title="选择图片",
+            filetypes=[
+                ("图片", "*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif"),
+                ("全部文件", "*.*"),
+            ],
+        )
+        return tuple(str(p) for p in (paths or ()) if p)
+    finally:
+        try:
+            dlg.attributes("-topmost", True)
+            dlg.lift()
+            dlg.focus_force()
+        except Exception:
+            pass
+
+
+def _load_thumb(path: Path, size: int = 56) -> ImageTk.PhotoImage | None:
+    try:
+        with Image.open(path) as im:
+            im = im.convert("RGBA")
+            im.thumbnail((size, size))
+            canvas = Image.new("RGBA", (size, size), (34, 39, 51, 255))
+            x = (size - im.size[0]) // 2
+            y = (size - im.size[1]) // 2
+            canvas.alpha_composite(im, (x, y))
+            return ImageTk.PhotoImage(canvas)
+    except OSError:
+        return None
+
+
+def _pack_attach_editor(
+    parent: tk.Misc,
+    *,
+    dlg: tk.Toplevel,
+    state: dict,
+    kind: str,
+    owner_id: str | None,
+    err: tk.StringVar,
+) -> None:
+    box = tk.Frame(parent, bg=_CARD_BG)
+    box.pack(fill="x", pady=(8, 0), anchor="w")
+    head = tk.Frame(box, bg=_CARD_BG)
+    head.pack(fill="x")
+    tk.Label(head, text="图片附件", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+        side="left"
+    )
+    count = tk.StringVar(value="")
+    tk.Label(head, textvariable=count, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+        side="left", padx=(8, 0)
+    )
+    thumbs = tk.Frame(box, bg=_CARD_BG)
+    thumbs.pack(fill="x", pady=(4, 0))
+
+    def total() -> int:
+        return len(state["keep"]) + len(state["pending"])
+
+    def open_path(path: Path) -> None:
+        if path.is_file():
+            attachments.open_file(path)
+
+    def refresh() -> None:
+        for child in thumbs.winfo_children():
+            child.destroy()
+        state["photos"].clear()
+        count.set(f"{total()}/{attachments.MAX_IMAGES}")
+
+        def add_cell(photo: ImageTk.PhotoImage | None, on_open, on_drop, label: str) -> None:
+            cell = tk.Frame(thumbs, bg="#222733")
+            cell.pack(side="left", padx=(0, 8), pady=2)
+            if photo is not None:
+                state["photos"].append(photo)
+                img_btn = tk.Button(
+                    cell, image=photo, command=on_open, bg="#222733", activebackground="#222733",
+                    relief="flat", bd=0, highlightthickness=0, cursor="hand2",
+                )
+                img_btn.pack()
+            else:
+                tk.Label(cell, text=label[:4] or "图", fg=_CARD_MUTED, bg="#222733", width=6, height=2).pack()
+            tk.Button(
+                cell, text="去掉", command=on_drop, fg="#ffb4b4", bg="#222733",
+                activebackground="#222733", activeforeground="#ffb4b4",
+                relief="flat", bd=0, highlightthickness=0, font=("Microsoft YaHei UI", 8),
+            ).pack()
+
+        for i, rec in enumerate(list(state["keep"])):
+            path = attachments.file_path(kind, owner_id, rec) if owner_id else Path()
+            photo = _load_thumb(path) if owner_id else None
+
+            def drop_keep(idx=i) -> None:
+                rec_drop = state["keep"].pop(idx)
+                state["removed"].append(rec_drop)
+                err.set("")
+                refresh()
+
+            add_cell(photo, lambda p=path: open_path(p), drop_keep, str(rec.get("name") or "图"))
+
+        for i, src in enumerate(list(state["pending"])):
+            path = Path(src)
+            photo = _load_thumb(path)
+
+            def drop_pending(idx=i) -> None:
+                state["pending"].pop(idx)
+                err.set("")
+                refresh()
+
+            add_cell(photo, lambda p=path: open_path(p), drop_pending, path.stem)
+
+        if total() < attachments.MAX_IMAGES:
+            add = tk.Frame(thumbs, bg="#222733")
+            add.pack(side="left", padx=(0, 8), pady=2)
+            tk.Button(
+                add,
+                text="+ 图片",
+                command=add_files,
+                bg=_CARD_BTN,
+                fg="white",
+                activebackground=_CARD_BTN,
+                activeforeground="white",
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                font=("Microsoft YaHei UI", 9),
+                padx=10,
+                pady=16,
+            ).pack()
+
+    def add_files() -> None:
+        err.set("")
+        room = attachments.MAX_IMAGES - total()
+        if room <= 0:
+            err.set(f"最多 {attachments.MAX_IMAGES} 张图片")
+            return
+        paths = _pick_image_files(dlg)
+        if not paths:
+            return
+        added = 0
+        for src in paths:
+            if added >= room:
+                err.set(f"最多 {attachments.MAX_IMAGES} 张，已截断")
+                break
+            p = Path(src)
+            if p.suffix.lower() not in attachments.ALLOWED_EXT:
+                err.set("只支持 png / jpg / webp / bmp / gif")
+                continue
+            try:
+                if p.stat().st_size > attachments.MAX_SRC_BYTES:
+                    err.set("单张不超过 12MB")
+                    continue
+            except OSError:
+                continue
+            state["pending"].append(str(p))
+            added += 1
+        refresh()
+
+    refresh()
 
 
 def _run_card_modal(dlg: tk.Toplevel, win: layered_win.LayeredPetWindow | None = None) -> None:
@@ -680,10 +855,10 @@ class WorkTimer:
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
             near = (cx, cy)
-            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(340, ch))
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(420, ch))
         else:
             near = near or self._dialog_near()
-            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=380)
+            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=460)
         # 先藏着排版，排完再显示，避免空壳闪一下
         try:
             dlg.withdraw()
@@ -754,6 +929,8 @@ class WorkTimer:
         sync()
 
         err = tk.StringVar(value="")
+        attach = _new_attach_state()
+        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=None, err=err)
         tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
 
         def ok() -> None:
@@ -781,6 +958,15 @@ class WorkTimer:
                     err.set("时长 1–1440 分钟")
                     return
                 result[0] = schedules.new_duration(name, mins)
+            item = result[0]
+            if item is not None:
+                item["images"] = attachments.commit(
+                    "schedule",
+                    str(item["id"]),
+                    keep=attach["keep"],
+                    pending=attach["pending"],
+                    removed=attach["removed"],
+                )
             dlg.destroy()
 
         _card_btn(bar, "开始倒计时", ok, accent=True).pack(side="left", padx=(18, 6))
@@ -788,9 +974,9 @@ class WorkTimer:
         dlg.bind("<Return>", lambda _e: ok())
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
-            dlg.geometry(f"{max(300, cw)}x{max(340, ch)}+{cx}+{cy}")
+            dlg.geometry(f"{max(300, cw)}x{max(420, ch)}+{cx}+{cy}")
         else:
-            _fit_card(dlg, min_w=300, min_h=340, near=near)
+            _fit_card(dlg, min_w=300, min_h=420, near=near)
         try:
             dlg.update_idletasks()
             dlg.deiconify()
@@ -813,10 +999,10 @@ class WorkTimer:
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
             near = (cx, cy)
-            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(340, ch))
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(420, ch))
         else:
             near = self._dialog_near()
-            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=380)
+            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=460)
         try:
             dlg.withdraw()
         except Exception:
@@ -852,31 +1038,98 @@ class WorkTimer:
         text.pack(anchor="w", fill="both", expand=True, pady=(4, 8))
         if existing:
             text.insert("1.0", str(existing.get("body") or ""))
+        attach = _new_attach_state(existing.get("images") if existing else None)
+        mid = str(existing.get("id") or "") if existing else None
+        _pack_attach_editor(body, dlg=dlg, state=attach, kind="memo", owner_id=mid, err=err)
         tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
 
         def ok() -> None:
             err.set("")
             title = title_var.get().strip()
             body_txt = text.get("1.0", "end-1c").strip()
-            if not title and not body_txt:
-                err.set("请填写标题或正文")
+            if not title and not body_txt and not (attach["keep"] or attach["pending"]):
+                err.set("请填写标题、正文或添加图片")
                 return
-            result[0] = {"title": title, "body": body_txt}
+            result[0] = {"title": title, "body": body_txt, "attach": attach}
             dlg.destroy()
 
         _card_btn(bar, "保存", ok, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
-            dlg.geometry(f"{max(300, cw)}x{max(340, ch)}+{cx}+{cy}")
+            dlg.geometry(f"{max(300, cw)}x{max(420, ch)}+{cx}+{cy}")
         else:
-            _fit_card(dlg, min_w=300, min_h=340, near=near)
+            _fit_card(dlg, min_w=300, min_h=420, near=near)
         try:
             dlg.update_idletasks()
             dlg.deiconify()
             dlg.lift()
             dlg.focus_force()
             text.focus_set()
+        except Exception:
+            pass
+        _run_card_modal(dlg, self.win)
+        return result[0]
+
+    def _ask_schedule_images(
+        self,
+        sid: str,
+        *,
+        cover: tuple[int, int, int, int] | None = None,
+    ) -> list[dict] | None:
+        item = schedules.find_schedule(self.cfg, sid)
+        if item is None:
+            return None
+        result: list[list[dict] | None] = [None]
+        if cover is not None:
+            cx, cy, cw, ch = (int(v) for v in cover)
+            near = (cx, cy)
+            dlg = _card_dialog(self._tk_root(), near=near, width=max(300, cw), height=max(280, min(ch, 360)))
+        else:
+            near = self._dialog_near()
+            dlg = _card_dialog(self._tk_root(), near=near, width=320, height=280)
+        try:
+            dlg.withdraw()
+        except Exception:
+            pass
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        err = tk.StringVar(value="")
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        tk.Label(
+            body,
+            text=f"图片 · {item.get('title') or '日程'}",
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 6), anchor="w")
+        attach = _new_attach_state(item.get("images"))
+        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=sid, err=err)
+        tk.Label(body, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
+
+        def ok() -> None:
+            result[0] = attachments.commit(
+                "schedule",
+                sid,
+                keep=attach["keep"],
+                pending=attach["pending"],
+                removed=attach["removed"],
+            )
+            dlg.destroy()
+
+        _card_btn(bar, "保存", ok, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
+        if cover is not None:
+            cx, cy, cw, ch = (int(v) for v in cover)
+            dlg.geometry(f"{max(300, cw)}x{max(280, min(ch, 360))}+{cx}+{cy}")
+        else:
+            _fit_card(dlg, min_w=300, min_h=260, near=near)
+        try:
+            dlg.update_idletasks()
+            dlg.deiconify()
+            dlg.lift()
+            dlg.focus_force()
         except Exception:
             pass
         _run_card_modal(dlg, self.win)
@@ -940,6 +1193,18 @@ class WorkTimer:
         )
         rotate_chk.pack(side="right")
 
+        search_var = tk.StringVar(value="")
+        search_row = tk.Frame(dlg, bg=_CARD_BG)
+        search_row.pack(side="top", fill="x", padx=16, pady=(0, 2))
+        tk.Label(
+            search_row, text="搜索", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+        ).pack(side="left")
+        search_ent = tk.Entry(
+            search_row, textvariable=search_var, font=("Microsoft YaHei UI", 11),
+            bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+        )
+        search_ent.pack(side="left", fill="x", expand=True, padx=(8, 0), ipady=5)
+
         mid = tk.Frame(dlg, bg=_CARD_BG)
         mid.pack(side="top", fill="both", expand=True, padx=16, pady=4)
 
@@ -981,7 +1246,8 @@ class WorkTimer:
             for child in rows.winfo_children():
                 child.destroy()
             now = datetime.now()
-            items: list[tuple[str, str, str, str, bool]] = []
+            q = search_var.get()
+            items: list[tuple[str, str, str, str, bool, int]] = []
             if self._has_target():
                 off = self._off_hm()
                 if off is not None:
@@ -992,13 +1258,17 @@ class WorkTimer:
                         if done
                         else flex_time.format_remaining(total, self._display_mode())
                     )
-                    items.append((schedules.OFFWORK_ID, "距离您下班还有", rem, "今天", False))
+                    off_row = (schedules.OFFWORK_ID, "距离您下班还有", rem, "今天", False, 0)
                 else:
-                    items.append((schedules.OFFWORK_ID, "距离您下班还有", "未设置", "今天", False))
+                    off_row = (schedules.OFFWORK_ID, "距离您下班还有", "未设置", "今天", False, 0)
             else:
-                items.append((schedules.OFFWORK_ID, "距离您下班还有", "点击设置", "今天", False))
+                off_row = (schedules.OFFWORK_ID, "距离您下班还有", "点击设置", "今天", False, 0)
+            if attachments.matches([off_row[1], off_row[2], off_row[3], "下班"], [], q):
+                items.append(off_row)
             for s in self.cfg.get("schedules") or []:
                 if not isinstance(s, dict) or not s.get("id"):
+                    continue
+                if not schedules.matches(s, q):
                     continue
                 sid = str(s["id"])
                 left, done = schedules.schedule_remaining(s, now)
@@ -1008,9 +1278,18 @@ class WorkTimer:
                     else flex_time.format_remaining(left, self._display_mode())
                 )
                 when = schedules.format_schedule_when(s)
-                items.append((sid, str(s.get("title") or "日程"), rem, when, True))
+                items.append((sid, str(s.get("title") or "日程"), rem, when, True, attachments.count(s)))
 
-            for sid, title, rem, when, can_del in items:
+            if not items:
+                tk.Label(
+                    rows,
+                    text="没有匹配的日程" if q.strip() else "还没有日程",
+                    fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 11),
+                ).pack(pady=28)
+                _sync()
+                return
+
+            for sid, title, rem, when, can_del, nimg in items:
                 card = tk.Frame(rows, bg="#222733")
                 card.pack(fill="x", pady=6)
                 inner = tk.Frame(card, bg="#222733")
@@ -1020,8 +1299,9 @@ class WorkTimer:
                     inner, text=title, fg="#7ec8ff" if active else _CARD_FG, bg="#222733",
                     font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
                 ).pack(fill="x")
+                extra = f"  ·  {nimg}图" if nimg else ""
                 tk.Label(
-                    inner, text=f"{when}  ·  {rem}", fg=_CARD_MUTED, bg="#222733",
+                    inner, text=f"{when}  ·  {rem}{extra}", fg=_CARD_MUTED, bg="#222733",
                     font=("Microsoft YaHei UI", 9), anchor="w",
                 ).pack(fill="x")
                 btns = tk.Frame(inner, bg="#222733")
@@ -1048,6 +1328,24 @@ class WorkTimer:
                     side="left", padx=(0, 8)
                 )
                 if can_del:
+                    def edit_imgs(s=sid) -> None:
+                        hint.set("")
+                        _unbind_wheel()
+                        imgs = self._ask_schedule_images(s, cover=_panel_cover())
+                        try:
+                            if dlg.winfo_exists():
+                                dlg.lift()
+                        except Exception:
+                            pass
+                        if self._need_close_schedule_list:
+                            close()
+                            return
+                        if imgs is None:
+                            return
+                        schedules.set_images(self.cfg, s, imgs)
+                        store.save_config(self.cfg)
+                        rebuild()
+
                     def drop(s=sid) -> None:
                         hint.set("")
                         schedules.remove_schedule(self.cfg, s)
@@ -1055,22 +1353,28 @@ class WorkTimer:
                         self._last_key = ""
                         rebuild()
 
+                    _card_btn(btns, f"图片{nimg}" if nimg else "图片", edit_imgs).pack(
+                        side="left", padx=(0, 8)
+                    )
                     _card_btn(btns, "删除", drop, danger=True).pack(side="left")
             _sync()
 
         def rebuild_memos() -> None:
             for child in rows.winfo_children():
                 child.destroy()
-            items = memos.list_sorted(self.cfg)
+            q = search_var.get()
+            items = [m for m in memos.list_sorted(self.cfg) if memos.matches(m, q)]
             if not items:
+                empty = "没有匹配的备忘" if q.strip() else "还没有备忘"
                 tk.Label(
-                    rows, text="还没有备忘", fg=_CARD_MUTED, bg=_CARD_BG,
+                    rows, text=empty, fg=_CARD_MUTED, bg=_CARD_BG,
                     font=("Microsoft YaHei UI", 11),
                 ).pack(pady=28)
                 _sync()
                 return
             for item in items:
                 mid = str(item.get("id") or "")
+                nimg = attachments.count(item)
                 card = tk.Frame(rows, bg="#222733")
                 card.pack(fill="x", pady=6)
                 inner = tk.Frame(card, bg="#222733")
@@ -1080,8 +1384,9 @@ class WorkTimer:
                     font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
                 )
                 title_lbl.pack(fill="x")
+                extra = f"  ·  {nimg}图" if nimg else ""
                 when_lbl = tk.Label(
-                    inner, text=memos.format_updated(item), fg=_CARD_MUTED, bg="#222733",
+                    inner, text=f"{memos.format_updated(item)}{extra}", fg=_CARD_MUTED, bg="#222733",
                     font=("Microsoft YaHei UI", 9), anchor="w",
                 )
                 when_lbl.pack(fill="x")
@@ -1141,10 +1446,26 @@ class WorkTimer:
                 return
             if data is None:
                 return
+            attach = data.get("attach") or _new_attach_state()
             if mid:
-                memos.update_memo(self.cfg, mid, title=data["title"], body=data["body"])
+                images = attachments.commit(
+                    "memo",
+                    mid,
+                    keep=attach["keep"],
+                    pending=attach["pending"],
+                    removed=attach["removed"],
+                )
+                memos.update_memo(self.cfg, mid, title=data["title"], body=data["body"], images=images)
             else:
-                memos.add_memo(self.cfg, memos.new_memo(title=data["title"], body=data["body"]))
+                item = memos.new_memo(title=data["title"], body=data["body"])
+                item["images"] = attachments.commit(
+                    "memo",
+                    str(item["id"]),
+                    keep=attach["keep"],
+                    pending=attach["pending"],
+                    removed=attach["removed"],
+                )
+                memos.add_memo(self.cfg, item)
             store.save_config(self.cfg)
             rebuild_memos()
 
@@ -1179,8 +1500,22 @@ class WorkTimer:
         tab_btns["memos"] = _card_btn(tabs, "备忘", lambda: show_tab("memos"))
         tab_btns["schedules"].pack(side="left", padx=(0, 6))
         tab_btns["memos"].pack(side="left")
+
+        def on_search(*_a) -> None:
+            if tab["name"] == "memos":
+                rebuild_memos()
+            else:
+                rebuild()
+
+        search_var.trace_add("write", on_search)
+
+        def focus_search(_e=None):
+            search_ent.focus_set()
+            return "break"
+
+        dlg.bind("<Control-f>", focus_search)
         show_tab("schedules")
-        _fit_card(dlg, min_w=440, min_h=520, near=near)
+        _fit_card(dlg, min_w=440, min_h=560, near=near)
         try:
             while not closed["v"]:
                 try:

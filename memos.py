@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+import attachments
+
 
 def ensure_fields(cfg: dict) -> None:
     raw = cfg.get("memos")
@@ -26,6 +28,7 @@ def ensure_fields(cfg: dict) -> None:
                 "title": title,
                 "body": body,
                 "updated_at": updated,
+                "images": attachments.normalize(item.get("images")),
             }
         )
     cfg["memos"] = cleaned
@@ -38,6 +41,7 @@ def new_memo(*, title: str = "", body: str = "", now: datetime | None = None) ->
         "title": (title or "").strip(),
         "body": (body or "").strip(),
         "updated_at": now.isoformat(timespec="seconds"),
+        "images": [],
     }
 
 
@@ -54,7 +58,15 @@ def find_memo(cfg: dict, mid: str) -> dict | None:
     return None
 
 
-def update_memo(cfg: dict, mid: str, *, title: str, body: str, now: datetime | None = None) -> bool:
+def update_memo(
+    cfg: dict,
+    mid: str,
+    *,
+    title: str,
+    body: str,
+    images: list[dict] | None = None,
+    now: datetime | None = None,
+) -> bool:
     item = find_memo(cfg, mid)
     if item is None:
         return False
@@ -62,11 +74,14 @@ def update_memo(cfg: dict, mid: str, *, title: str, body: str, now: datetime | N
     item["title"] = (title or "").strip()
     item["body"] = (body or "").strip()
     item["updated_at"] = now.isoformat(timespec="seconds")
+    if images is not None:
+        item["images"] = attachments.normalize(images)
     return True
 
 
 def remove_memo(cfg: dict, mid: str) -> None:
     ensure_fields(cfg)
+    attachments.remove_owner("memo", mid)
     cfg["memos"] = [m for m in cfg["memos"] if str(m.get("id")) != mid]
 
 
@@ -84,9 +99,19 @@ def display_title(item: dict) -> str:
     if title:
         return title
     body = str(item.get("body") or "").strip().replace("\n", " ")
-    if not body:
-        return "空白备忘"
-    return body[:24] + ("…" if len(body) > 24 else "")
+    if body:
+        return body[:24] + ("…" if len(body) > 24 else "")
+    if attachments.count(item):
+        return "图片备忘"
+    return "空白备忘"
+
+
+def matches(item: dict, query: str) -> bool:
+    return attachments.matches(
+        [str(item.get("title") or ""), str(item.get("body") or "")],
+        item.get("images"),
+        query,
+    )
 
 
 def format_updated(item: dict) -> str:
