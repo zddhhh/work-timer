@@ -1336,6 +1336,18 @@ class WorkTimer:
             except Exception:
                 return None
 
+        def _after_card(refresh=None) -> None:
+            """先落盘再处理列表：倒三角关列表不能把刚确定的内容丢掉。"""
+            try:
+                if dlg.winfo_exists():
+                    dlg.lift()
+                    if refresh is not None and not self._need_close_schedule_list:
+                        refresh()
+            except Exception:
+                pass
+            if self._need_close_schedule_list:
+                close()
+
         def rebuild() -> None:
             for child in rows.winfo_children():
                 child.destroy()
@@ -1426,19 +1438,10 @@ class WorkTimer:
                         hint.set("")
                         _unbind_wheel()
                         imgs = self._ask_schedule_images(s, cover=_panel_cover())
-                        try:
-                            if dlg.winfo_exists():
-                                dlg.lift()
-                        except Exception:
-                            pass
-                        if self._need_close_schedule_list:
-                            close()
-                            return
-                        if imgs is None:
-                            return
-                        schedules.set_images(self.cfg, s, imgs)
-                        store.save_config(self.cfg)
-                        rebuild()
+                        if imgs is not None:
+                            schedules.set_images(self.cfg, s, imgs)
+                            store.save_config(self.cfg)
+                        _after_card(rebuild if imgs is not None else None)
 
                     def drop(s=sid) -> None:
                         hint.set("")
@@ -1506,62 +1509,48 @@ class WorkTimer:
             hint.set("")
             _unbind_wheel()
             item = self._ask_new_schedule(cover=_panel_cover())
-            try:
-                if dlg.winfo_exists():
-                    dlg.lift()
-            except Exception:
-                pass
-            if self._need_close_schedule_list:
-                close()
-                return
-            if item is None:
-                return
-            schedules.add_schedule(self.cfg, item)
-            ok, msg = schedules.set_pinned(self.cfg, item["id"], True)
-            if not ok:
-                hint.set(msg + "，日程已添加")
-            else:
-                self.cfg["active_pin_id"] = item["id"]
-            store.save_config(self.cfg)
-            self._last_key = ""
-            rebuild()
+            if item is not None:
+                schedules.add_schedule(self.cfg, item)
+                ok, msg = schedules.set_pinned(self.cfg, item["id"], True)
+                if not ok:
+                    try:
+                        if dlg.winfo_exists():
+                            hint.set(msg + "，日程已添加")
+                    except Exception:
+                        pass
+                else:
+                    self.cfg["active_pin_id"] = item["id"]
+                store.save_config(self.cfg)
+                self._last_key = ""
+            _after_card(rebuild if item is not None else None)
 
         def edit_memo(mid: str | None = None) -> None:
             hint.set("")
             _unbind_wheel()
             data = self._ask_memo_edit(mid, cover=_panel_cover())
-            try:
-                if dlg.winfo_exists():
-                    dlg.lift()
-            except Exception:
-                pass
-            if self._need_close_schedule_list:
-                close()
-                return
-            if data is None:
-                return
-            attach = data.get("attach") or _new_attach_state()
-            if mid:
-                images = attachments.commit(
-                    "memo",
-                    mid,
-                    keep=attach["keep"],
-                    pending=attach["pending"],
-                    removed=attach["removed"],
-                )
-                memos.update_memo(self.cfg, mid, title=data["title"], body=data["body"], images=images)
-            else:
-                item = memos.new_memo(title=data["title"], body=data["body"])
-                item["images"] = attachments.commit(
-                    "memo",
-                    str(item["id"]),
-                    keep=attach["keep"],
-                    pending=attach["pending"],
-                    removed=attach["removed"],
-                )
-                memos.add_memo(self.cfg, item)
-            store.save_config(self.cfg)
-            rebuild_memos()
+            if data is not None:
+                attach = data.get("attach") or _new_attach_state()
+                if mid:
+                    images = attachments.commit(
+                        "memo",
+                        mid,
+                        keep=attach["keep"],
+                        pending=attach["pending"],
+                        removed=attach["removed"],
+                    )
+                    memos.update_memo(self.cfg, mid, title=data["title"], body=data["body"], images=images)
+                else:
+                    item = memos.new_memo(title=data["title"], body=data["body"])
+                    item["images"] = attachments.commit(
+                        "memo",
+                        str(item["id"]),
+                        keep=attach["keep"],
+                        pending=attach["pending"],
+                        removed=attach["removed"],
+                    )
+                    memos.add_memo(self.cfg, item)
+                store.save_config(self.cfg)
+            _after_card(rebuild_memos if data is not None else None)
 
         def add_memo() -> None:
             edit_memo(None)

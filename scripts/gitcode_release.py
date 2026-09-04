@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修选图片时新建日程窗口被底下列表盖住"
+                    "- 修先收列表再确定会丢掉刚填的日程/备忘"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
