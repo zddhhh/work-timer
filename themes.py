@@ -15,7 +15,7 @@ import ornaments
 import store
 
 DEFAULT_THEME_ID = "ghost"
-_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "blink"})
+_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow"})
 _updated = False
 _lock = threading.Lock()
 
@@ -265,11 +265,13 @@ def load_local_catalog() -> None:
     cached = _load_json_file(_cache_path())
     bmap = {t.id: t for t in bundled}
     # 这些皮会随版本改配色/自适应，优先用内置覆盖旧缓存
-    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "blink"}
+    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow"}
     if cached:
         items: list[Theme] = []
         seen: set[str] = set()
         for t in cached:
+            if t.id == "blink":
+                continue
             if t.id in prefer_bundled and t.id in bmap:
                 items.append(bmap[t.id])
             else:
@@ -405,8 +407,6 @@ def paint_card(
             elif kind == "warmglow":
                 # 浅底托底加厚，避免暖色纹理被墙纸洗掉
                 base = (255, 236, 214, 96) if light_card else (28, 18, 12, 36)
-            elif kind == "blink":
-                base = (246, 242, 255, 44) if light_card else (16, 12, 24, 32)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)
@@ -430,8 +430,6 @@ def paint_card(
     _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost)
     if sub:
         _halo_text(d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub, ghost=ghost)
-    if kind == "blink":
-        ornaments.paint_blink(img, box, light=_luma(theme.fill) >= 160)
 
 
 load_local_catalog()

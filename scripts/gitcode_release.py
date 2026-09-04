@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 新增外观「眨眼」；生图皮肤改为缓绕+呼吸，不再来回扫"
+                    "- 去掉外观「眨眼」；生图皮肤仍为缓绕+呼吸"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
