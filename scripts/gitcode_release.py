@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修拖入图片崩溃：改用 tkdnd，不再手写 OLE"
+                    "- 修选图片时新建日程窗口被底下列表盖住"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

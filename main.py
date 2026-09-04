@@ -213,10 +213,25 @@ def _new_attach_state(existing: object = None) -> dict:
 
 
 def _pick_image_files(dlg: tk.Toplevel) -> tuple[str, ...]:
+    """系统选文件框不能被无边框置顶卡片挡住；但只关当前卡片的置顶时，底下列表仍置顶会把卡片盖没。"""
+    lowered: list[tk.Misc] = []
+
+    def _lower(w: tk.Misc) -> None:
+        try:
+            if w.winfo_exists() and bool(w.attributes("-topmost")):
+                w.attributes("-topmost", False)
+                lowered.append(w)
+        except Exception:
+            pass
+
     try:
-        dlg.attributes("-topmost", False)
+        root = dlg.nametowidget(".")
+        for w in (root, *root.winfo_children()):
+            _lower(w)
+        if dlg not in lowered:
+            _lower(dlg)
     except Exception:
-        pass
+        _lower(dlg)
     try:
         paths = filedialog.askopenfilenames(
             parent=dlg,
@@ -228,6 +243,12 @@ def _pick_image_files(dlg: tk.Toplevel) -> tuple[str, ...]:
         )
         return tuple(str(p) for p in (paths or ()) if p)
     finally:
+        for w in lowered:
+            try:
+                if w.winfo_exists():
+                    w.attributes("-topmost", True)
+            except Exception:
+                pass
         try:
             dlg.attributes("-topmost", True)
             dlg.lift()
