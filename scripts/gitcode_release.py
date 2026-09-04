@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修从资源管理器拖图片导致崩溃"
+                    "- 修拖入图片崩溃：改用 tkdnd，不再手写 OLE"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -72,6 +72,10 @@ def main() -> None:
         "--hidden-import",
         "win_drop",
         "--hidden-import",
+        "tkinterdnd2",
+        "--collect-all",
+        "tkinterdnd2",
+        "--hidden-import",
         "version",
         "main.py",
     ]

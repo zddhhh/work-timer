@@ -394,6 +394,7 @@ def _pack_attach_editor(
                 btn_row, text=f"已满 {attachments.MAX_IMAGES} 张", fg=_CARD_MUTED, bg=_CARD_BG,
                 font=("Microsoft YaHei UI", 9),
             ).pack(side="left")
+        win_drop.hook_files(dlg, on_drop)
 
     def add_files() -> None:
         err.set("")
@@ -867,7 +868,12 @@ class WorkTimer:
 
     def _tk_root(self) -> tk.Tk:
         if self._tk is None:
-            root = tk.Tk()
+            try:
+                from tkinterdnd2 import TkinterDnD
+
+                root = TkinterDnD.Tk()
+            except Exception:
+                root = tk.Tk()
             root.withdraw()
             self._tk = root
         return self._tk
