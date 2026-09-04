@@ -359,6 +359,8 @@ class WorkTimer:
         self._surface_hot_until = 0.0
         self._last_surface_sample = 0.0
         self._last_luma = None
+        self._env_rgb: tuple[int, int, int] | None = None
+        self._env_q: tuple[int, int, int] | None = None
         mode = str(self.cfg.get("display_mode") or "hms")
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
@@ -465,9 +467,6 @@ class WorkTimer:
 
     def _refresh_surface(self, *, force: bool = False) -> None:
         """窗周+窗下采样；最小化/切前台会强制连采。"""
-        theme = self._theme()
-        if not theme.adaptive:
-            return
         now = time.monotonic()
         token = backdrop.wallpaper_token()
         if token != self._wallpaper_token:
@@ -480,8 +479,17 @@ class WorkTimer:
         if not force and not hot and now - self._last_surface_sample < 0.08:
             return
         self._last_surface_sample = now
-        luma = backdrop.sample_luma_around(self.win.x, self.win.y, self._win_w, self._win_h)
-        if luma is None:
+        got = backdrop.sample_around(self.win.x, self.win.y, self._win_w, self._win_h)
+        if got is None:
+            return
+        luma, rgb = got
+        q = (rgb[0] // 20, rgb[1] // 20, rgb[2] // 20)
+        if q != self._env_q:
+            self._env_q = q
+            self._env_rgb = rgb
+            self._last_key = ""
+        theme = self._theme()
+        if not theme.adaptive:
             return
         prev = self._last_luma
         self._last_luma = luma
@@ -1484,21 +1492,32 @@ class WorkTimer:
             if idle:
                 big = "点我开始"
                 accent = theme.idle
+                stage = "idle"
                 key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
             elif done:
                 big = flex_time.format_remaining(total, mode)
                 accent = theme.done
+                stage = "done"
                 key = f"done-{mode}-{theme.id}-{title}-{big}-{theme.fill}-{surface}-{w}x{h}"
             else:
                 big = flex_time.format_remaining(total, mode)
                 mins = total // 60
                 accent = theme.warn if mins < 30 else theme.big
+                stage = "warn" if mins < 30 else "run"
                 key = f"run-{mode}-{theme.id}-{title}-{big}-{theme.fill}-{surface}-{w}x{h}"
             aid = schedules.active_id(self.cfg) or "-"
             idx, n = schedules.pin_index(self.cfg)
-            key = f"{key}-{aid}-{idx}/{n}-o{int(self._schedule_list_open)}"
+            key = f"{key}-{aid}-{idx}/{n}-o{int(self._schedule_list_open)}-{stage}"
+            env = self._env_rgb
+            if env is not None:
+                key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
             if ornaments.has_skin(theme.kind):
-                key = f"{key}-a{int(phase * 24)}"
+                period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
+                sweeping = (phase % period) < 1.7
+                fps = 20 if sweeping else (4 if stage in ("idle", "done") else 8)
+                key = f"{key}-a{int(phase * fps)}"
+            elif theme.kind != "ghost":
+                key = f"{key}-p{int(phase * 6)}"
 
             if key == self._last_key:
                 return
@@ -1516,6 +1535,8 @@ class WorkTimer:
                 self._font_title,
                 self._font_big,
                 self._font_sub,
+                stage=stage,
+                env_rgb=self._env_rgb,
             )
             chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
             if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:

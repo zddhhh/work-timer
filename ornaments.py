@@ -98,12 +98,65 @@ def _breathe(phase: float, alpha: float, *, amp: float = 0.06, speed: float = 0.
     return max(0.0, min(1.0, float(alpha) * k))
 
 
+def _mood_rgba(stage: str, light: bool) -> tuple[int, int, int, int]:
+    a = 24 if light else 32
+    if stage == "warn":
+        return (255, 168, 72, a + 8)
+    if stage == "done":
+        return (255, 214, 140, a + 12)
+    if stage == "idle":
+        return (168, 176, 186, max(14, a - 8))
+    return (148, 186, 224, a)
+
+
+def _mix_env(
+    mood: tuple[int, int, int, int],
+    env: tuple[int, int, int] | None,
+    *,
+    weight: float = 0.32,
+) -> tuple[int, int, int, int]:
+    if env is None:
+        return mood
+    w = max(0.0, min(0.5, float(weight)))
+    r = int(mood[0] * (1 - w) + env[0] * w)
+    g = int(mood[1] * (1 - w) + env[1] * w)
+    b = int(mood[2] * (1 - w) + env[2] * w)
+    return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)), mood[3])
+
+
+def _paint_sweep(layer: Image.Image, phase: float, *, light: bool, stage: str) -> None:
+    period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
+    dur = 1.65
+    t = float(phase) % period
+    if t > dur:
+        return
+    u = t / dur
+    fade = min(u, 1.0 - u) * 2.4
+    fade = max(0.0, min(1.0, fade))
+    bw, bh = layer.size
+    sw = max(10, bw // 7)
+    travel = bw + sw * 2 + bh // 3
+    x = int(-sw + u * travel)
+    stripe = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(stripe)
+    alpha = int((36 if light else 30) * fade)
+    col = (255, 252, 244, alpha)
+    shear = max(10, bh // 3)
+    d.polygon(
+        [(x, 0), (x + sw, 0), (x + sw - shear, bh), (x - shear, bh)],
+        fill=col,
+    )
+    layer.alpha_composite(stripe)
+
+
 def paste_skin(
     img: Image.Image,
     box: tuple[int, int, int, int],
     kind: str,
     *,
     light: bool = False,
+    stage: str = "run",
+    env_rgb: tuple[int, int, int] | None = None,
 ) -> bool:
     """把对应皮肤的生图贴进圆角区域；成功返回 True。"""
     layers = _SKIN_LAYERS.get(kind)
@@ -119,9 +172,9 @@ def paste_skin(
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     phase = time.monotonic()
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    freeze = stage in ("idle", "done")
+    extra = 0 if freeze else 22
 
-    # 整块纹理皮略淡一点，避免压字；霓虹/终端/极光提亮一点
-    # 暖光浅底单独加浓，否则自适应到浅色墙纸会发虚
     glow_kinds = {"neon", "terminal", "aurora"}
     if kind in glow_kinds:
         a0 = 0.90 if not light else 0.55
@@ -132,22 +185,29 @@ def paste_skin(
     else:
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38
+    bamp = 0.0 if freeze else (0.04 if stage == "warn" else 0.03)
 
-    extra = 140
+    def _place(src_im: Image.Image, name: str, alpha: float, *, speed: float, twist: float) -> None:
+        nonlocal layer
+        tw = max(bw + extra, src_im.width)
+        th = max(bh + extra, src_im.height)
+        src = _resized(name, src_im, tw, th)
+        sx, sy = max(0, src.width - bw), max(0, src.height - bh)
+        if freeze or extra <= 0:
+            ox, oy = sx // 2, sy // 2
+        else:
+            ox, oy = _orbit_xy(phase, sx, sy, speed=speed, twist=twist)
+        crop = src.crop((ox, oy, ox + bw, oy + bh))
+        layer = Image.alpha_composite(layer, _scale_alpha(crop, _breathe(phase, alpha, amp=bamp)))
+
     if drape is not None:
-        tw = max(bw + extra, drape.width)
-        th = max(bh + extra, drape.height)
-        src = _resized(name_a, drape, tw, th)
-        ox, oy = _orbit_xy(phase, src.width - bw, src.height - bh, speed=0.17, twist=0.0)
-        crop = src.crop((ox, oy, ox + bw, oy + bh))
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, _breathe(phase, a0)))
+        _place(drape, name_a, a0, speed=0.05, twist=0.0)
     if glow is not None:
-        tw = max(bw + extra, glow.width)
-        th = max(bh + extra, glow.height)
-        src = _resized(name_b or "glow", glow, tw, th)
-        ox, oy = _orbit_xy(phase, src.width - bw, src.height - bh, speed=0.13, twist=1.7)
-        crop = src.crop((ox, oy, ox + bw, oy + bh))
-        layer = Image.alpha_composite(layer, _scale_alpha(crop, _breathe(phase, a1, speed=0.42)))
+        _place(glow, name_b or "glow", a1, speed=0.04, twist=1.7)
+
+    tint = Image.new("RGBA", (bw, bh), _mix_env(_mood_rgba(stage, light), env_rgb))
+    layer = Image.alpha_composite(layer, tint)
+    _paint_sweep(layer, phase, light=light, stage=stage)
 
     mask = Image.new("L", (bw, bh), 0)
     md = ImageDraw.Draw(mask)

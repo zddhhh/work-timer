@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -356,13 +358,25 @@ def refresh_async(cfg: dict) -> None:
     threading.Thread(target=_run, daemon=True, name="theme-refresh").start()
 
 
-def _halo_text(d: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, font, fill, *, ghost: bool) -> None:
+def _halo_text(
+    d: ImageDraw.ImageDraw,
+    xy: tuple[int, int],
+    text: str,
+    font,
+    fill,
+    *,
+    ghost: bool,
+    glow: bool = False,
+) -> None:
     x, y = xy
+    if glow:
+        aura = (fill[0], fill[1], fill[2], max(40, min(120, fill[3] // 2)))
+        for dx, dy in ((0, -1), (0, 2), (-1, 0), (1, 0)):
+            d.text((x + dx, y + dy), text, font=font, fill=aura)
     if ghost:
         d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 70))
         d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 40))
     elif _luma(fill) < 140:
-        # 深色字：浅晕，避免浅底上看不清
         d.text((x + 1, y + 1), text, font=font, fill=(255, 255, 255, 90))
         d.text((x, y + 1), text, font=font, fill=(255, 255, 255, 50))
     else:
@@ -385,6 +399,8 @@ def paint_card(
     font_sub: ImageFont.ImageFont,
     *,
     text_right: int | None = None,
+    stage: str = "run",
+    env_rgb: tuple[int, int, int] | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (6, 6, w - 7, h - 7)
@@ -393,6 +409,8 @@ def paint_card(
     pad_x = max(10, min(22, w // 12))
     title_y = max(6, h // 10)
     big_y = int(h * (0.42 if sub else 0.38))
+    now = time.monotonic()
+    pulse = 0.84 + 0.16 * math.sin(now * (1.15 if stage == "done" else (0.85 if stage == "warn" else 0.5)))
 
     if kind != "ghost":
         light_card = _luma(theme.fill) >= 160
@@ -410,9 +428,21 @@ def paint_card(
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)
-            ornaments.paste_skin(img, box, kind, light=light_card)
+            ornaments.paste_skin(img, box, kind, light=light_card, stage=stage, env_rgb=env_rgb)
             if theme.outline[3] > 8:
-                d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
+                oa = max(8, min(255, int(theme.outline[3] * pulse)))
+                d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
+            inset = 2
+            ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
+            rim_a = int((18 if light_card else 22) * pulse)
+            if stage == "done":
+                rim_a = int(rim_a * 1.35)
+            d.rounded_rectangle(
+                ibox,
+                radius=max(4, r - 2),
+                outline=(255, 255, 255, rim_a) if light_card else (255, 248, 236, rim_a),
+                width=1,
+            )
         else:
             d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 40))
             # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
@@ -423,11 +453,12 @@ def paint_card(
                     d.rounded_rectangle(box, radius=r, fill=(10, 12, 18, 235))
             d.rounded_rectangle(box, radius=r, fill=theme.fill)
             if theme.outline[3] > 8:
-                d.rounded_rectangle(box, radius=r, outline=theme.outline, width=1)
+                oa = max(8, min(255, int(theme.outline[3] * pulse)))
+                d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
 
     ghost = kind == "ghost"
     _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
-    _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost)
+    _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost, glow=stage == "done")
     if sub:
         _halo_text(d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub, ghost=ghost)
 
