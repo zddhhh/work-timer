@@ -606,7 +606,6 @@ class WorkTimer:
         self.running = True
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
-        self._need_schedule_list = False
         self._schedule_list_open = False
         self._need_close_schedule_list = False
         self._tk: tk.Tk | None = None
@@ -816,13 +815,6 @@ class WorkTimer:
 
     def _on_click(self, lx: int, ly: int) -> None:
         if self._disguised:
-            return
-        # 倒三角：打开 / 再点收回
-        if ornaments.chevron_hit(lx, ly, self._win_w, self._win_h):
-            if self._schedule_list_open:
-                self._need_close_schedule_list = True
-            else:
-                self._need_schedule_list = True
             return
         pins = self.cfg.get("pin_order") or []
         if isinstance(pins, list) and len(pins) >= 2:
@@ -1925,7 +1917,7 @@ class WorkTimer:
                 key = f"run-{mode}-{theme.id}-{title}-{big}-{theme.fill}-{surface}-{w}x{h}"
             aid = schedules.active_id(self.cfg) or "-"
             idx, n = schedules.pin_index(self.cfg)
-            key = f"{key}-{aid}-{idx}/{n}-o{int(self._schedule_list_open)}-{stage}"
+            key = f"{key}-{aid}-{idx}/{n}-{stage}"
             env = self._env_rgb
             if env is not None:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
@@ -1960,9 +1952,7 @@ class WorkTimer:
             if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
                 chev = (40, 44, 52, 90)
             dots = (idx, n) if n >= 2 and bool(self.cfg.get("auto_rotate_pins")) else (0, 0)
-            ornaments.paint_chevron(
-                img, w, h, color=chev, pin_dots=dots, opened=self._schedule_list_open
-            )
+            ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
             self._last_key = key
@@ -1996,9 +1986,6 @@ class WorkTimer:
                 if self._need_dialog:
                     self._need_dialog = False
                     self._open_idle_dialog()
-                if self._need_schedule_list:
-                    self._need_schedule_list = False
-                    self._open_schedule_list()
                 if self._update_available and not self._update_prompted and not self._disguised:
                     self._update_prompted = True
                     self._check_update(known=self._update_info)

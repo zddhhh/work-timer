@@ -261,35 +261,22 @@ def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: boo
     paste_skin(img, box, "aurora", light=light)
 
 
-def chevron_hit(lx: int, ly: int, w: int, h: int) -> bool:
-    """仅倒三角附近可点，不是整条底边。"""
-    cx = w // 2
-    return abs(lx - cx) <= 12 and h - 18 <= ly <= h - 4
-
-
-def paint_chevron(
+def paint_pin_dots(
     img: Image.Image,
     w: int,
     h: int,
     *,
     color: tuple[int, int, int, int] = (255, 255, 255, 90),
     pin_dots: tuple[int, int] = (0, 0),
-    opened: bool = False,
 ) -> None:
-    """主卡片底部只画淡倒三角；列表打开时朝上表示可收回。"""
-    d = ImageDraw.Draw(img)
-    cx = w // 2
-    y0 = h - 13
-    arrow = (color[0], color[1], color[2], min(130, max(70, color[3])))
-    if opened:
-        d.polygon([(cx - 7, y0 + 6), (cx + 7, y0 + 6), (cx, y0)], fill=arrow)
-    else:
-        d.polygon([(cx - 7, y0), (cx + 7, y0), (cx, y0 + 6)], fill=arrow)
+    """多条优先日程时，右下角画当前是第几条。"""
     idx, total = pin_dots
-    if total >= 2 and idx >= 1:
-        span = (total - 1) * 7
-        x0 = w - 12 - span
-        for i in range(total):
-            x = x0 + i * 7
-            fill = (color[0], color[1], color[2], 150 if i + 1 == idx else 45)
-            d.ellipse((x - 1, h - 10, x + 2, h - 7), fill=fill)
+    if total < 2 or idx < 1:
+        return
+    d = ImageDraw.Draw(img)
+    span = (total - 1) * 7
+    x0 = w - 12 - span
+    for i in range(total):
+        x = x0 + i * 7
+        fill = (color[0], color[1], color[2], 150 if i + 1 == idx else 45)
+        d.ellipse((x - 1, h - 10, x + 2, h - 7), fill=fill)

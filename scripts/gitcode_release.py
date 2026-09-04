@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 修先收列表再确定会丢掉刚填的日程/备忘"
+                    "- 去掉主界面倒三角，日程列表从右键菜单进入"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
