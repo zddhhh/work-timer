@@ -612,6 +612,7 @@ class WorkTimer:
         self._update_available = False
         self._update_info: updater.ReleaseInfo | None = None
         self._update_prompted = False
+        self._update_dialog_open = False
         self._last_pin_rotate = 0.0
 
         w, h = self._load_size()
@@ -1654,6 +1655,16 @@ class WorkTimer:
             self._set_theme(op.split(":", 1)[1])
 
     def _check_update(self, *, known: updater.ReleaseInfo | None = None) -> None:
+        if self._update_dialog_open:
+            return
+        self._update_dialog_open = True
+        self._update_prompted = True
+        try:
+            self._check_update_ui(known=known)
+        finally:
+            self._update_dialog_open = False
+
+    def _check_update_ui(self, *, known: updater.ReleaseInfo | None = None) -> None:
         self.cfg = store.load_config()
         near = self._dialog_near()
         dlg = _card_dialog(self._tk_root(), near=near, width=320, height=200)
@@ -1986,7 +1997,12 @@ class WorkTimer:
                 if self._need_dialog:
                     self._need_dialog = False
                     self._open_idle_dialog()
-                if self._update_available and not self._update_prompted and not self._disguised:
+                if (
+                    self._update_available
+                    and not self._update_prompted
+                    and not self._update_dialog_open
+                    and not self._disguised
+                ):
                     self._update_prompted = True
                     self._check_update(known=self._update_info)
                 if themes.consume_updated():

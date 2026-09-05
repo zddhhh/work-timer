@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 主卡片直角铺满，四个角也显示皮肤贴图"
+                    "- 圆角贴图覆盖四个圆角弧；有新版本时更新弹窗只出一次"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
