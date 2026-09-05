@@ -5,14 +5,13 @@ import math
 import time
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageDraw
 
 import store
 
 _ASSET_CACHE: dict[str, Image.Image] = {}
 # (asset_name, tw, th) -> resized RGBA
 _RESIZE_CACHE: dict[tuple[str, int, int], Image.Image] = {}
-_MASK_CACHE: dict[tuple[int, int], Image.Image] = {}
 _ALPHA_LUT: dict[int, list[int]] = {}
 # 贴图只在画面中心附近漂移，避免整张 640×360 慢扫导致「停一下跳一格」
 _DRIFT_PX = 16
@@ -175,7 +174,7 @@ def paste_skin(
     stage: str = "run",
     env_rgb: tuple[int, int, int] | None = None,
 ) -> bool:
-    """把对应皮肤的生图贴进圆角区域；成功返回 True。"""
+    """把对应皮肤的生图贴进卡片；成功返回 True。"""
     layers = _SKIN_LAYERS.get(kind)
     if layers is None:
         return False
@@ -240,18 +239,6 @@ def paste_skin(
     tint = Image.new("RGBA", (bw, bh), _mix_env(_mood_rgba(stage, light), env_rgb))
     layer = Image.alpha_composite(layer, tint)
     _paint_sweep(layer, phase, light=light, stage=stage)
-
-    mk = (bw, bh)
-    mask = _MASK_CACHE.get(mk)
-    if mask is None:
-        mask = Image.new("L", (bw, bh), 0)
-        md = ImageDraw.Draw(mask)
-        md.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=max(8, min(bw, bh) // 6), fill=255)
-        if len(_MASK_CACHE) > 16:
-            _MASK_CACHE.clear()
-        _MASK_CACHE[mk] = mask
-    r, g, b, a = layer.split()
-    layer = Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
     img.alpha_composite(layer, (x0, y0))
     return True
 

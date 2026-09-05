@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 去掉主界面倒三角，日程列表从右键菜单进入"
+                    "- 主卡片直角铺满，四个角也显示皮肤贴图"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

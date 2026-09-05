@@ -403,9 +403,8 @@ def paint_card(
     env_rgb: tuple[int, int, int] | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
-    box = (6, 6, w - 7, h - 7)
+    box = (0, 0, w - 1, h - 1)
     kind = theme.kind
-    r = min(theme.radius, max(6, h // 4))
     pad_x = max(10, min(22, w // 12))
     title_y = max(6, h // 10)
     big_y = int(h * (0.42 if sub else 0.38))
@@ -415,7 +414,7 @@ def paint_card(
     if kind != "ghost":
         light_card = _luma(theme.fill) >= 160
         if ornaments.has_skin(kind):
-            # 生图整块贴图：淡托底 + 纹理 + 描边，不加色条/竖杠
+            # 生图铺满整张卡，四个角也走贴图，不再镂空圆角
             if kind in ("aurora", "neon", "terminal"):
                 base = (248, 246, 255, 22) if light_card else (12, 14, 24, 16)
             elif kind == "frost":
@@ -427,34 +426,33 @@ def paint_card(
                 base = (255, 236, 214, 96) if light_card else (28, 18, 12, 36)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
-            d.rounded_rectangle(box, radius=r, fill=base)
+            d.rectangle(box, fill=base)
             ornaments.paste_skin(img, box, kind, light=light_card, stage=stage, env_rgb=env_rgb)
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
-                d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
+                d.rectangle(box, outline=(*theme.outline[:3], oa), width=1)
             inset = 2
             ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
             rim_a = int((18 if light_card else 22) * pulse)
             if stage == "done":
                 rim_a = int(rim_a * 1.35)
-            d.rounded_rectangle(
+            d.rectangle(
                 ibox,
-                radius=max(4, r - 2),
                 outline=(255, 255, 255, rim_a) if light_card else (255, 248, 236, rim_a),
                 width=1,
             )
         else:
-            d.rounded_rectangle((10, 12, w - 4, h - 3), radius=r + 1, fill=(0, 0, 0, 40))
+            d.rectangle((1, 2, w - 1, h - 1), fill=(0, 0, 0, 40))
             # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
             if theme.fill[3] < 230:
                 if light_card:
-                    d.rounded_rectangle(box, radius=r, fill=(252, 253, 255, 235))
+                    d.rectangle(box, fill=(252, 253, 255, 235))
                 else:
-                    d.rounded_rectangle(box, radius=r, fill=(10, 12, 18, 235))
-            d.rounded_rectangle(box, radius=r, fill=theme.fill)
+                    d.rectangle(box, fill=(10, 12, 18, 235))
+            d.rectangle(box, fill=theme.fill)
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
-                d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
+                d.rectangle(box, outline=(*theme.outline[:3], oa), width=1)
 
     ghost = kind == "ghost"
     _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
