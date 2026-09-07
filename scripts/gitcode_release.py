@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 首次运行在桌面创建「下班倒计时」快捷方式"
+                    "- 新桌面图标；重复打开只唤起已有窗口"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

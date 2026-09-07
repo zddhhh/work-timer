@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 from ctypes import wintypes
 from typing import Callable
 
@@ -280,6 +281,14 @@ class LayeredPetWindow:
         wc.cbWndExtra = 0
         wc.hInstance = self._hinst
         wc.hIcon = None
+        if getattr(sys, "frozen", False):
+            image_icon = 1
+            lr_defaultsize = 0x0040
+            for rid in (1, 0):
+                hicon = user32.LoadImageW(self._hinst, rid, image_icon, 0, 0, lr_defaultsize)
+                if hicon:
+                    wc.hIcon = hicon
+                    break
         wc.hCursor = user32.LoadCursorW(None, IDC_ARROW)
         wc.hbrBackground = None
         wc.lpszMenuName = None

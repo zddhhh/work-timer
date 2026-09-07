@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 _LNK_NAME = "下班倒计时.lnk"
+_ICON_STAMP = "hourglass-1"
 _CSIDL_DESKTOPDIRECTORY = 0x0010
 _CREATE_NO_WINDOW = 0x08000000
 
@@ -88,8 +89,15 @@ def _write_shortcut(lnk: Path, exe: Path) -> bool:
     return lnk.exists()
 
 
+def _notify_shell() -> None:
+    try:
+        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+    except OSError:
+        pass
+
+
 def ensure(cfg: dict) -> bool:
-    """首次运行建桌面快捷方式；用户删掉后不再建。目标路径变了则改现有 lnk。"""
+    """首次运行建桌面快捷方式；用户删掉后不再建。目标路径或图标变了则改现有 lnk。"""
     exe = _current_exe()
     if exe is None:
         return False
@@ -100,18 +108,22 @@ def ensure(cfg: dict) -> bool:
     already = bool(cfg.get("desktop_shortcut_done"))
     if already and not lnk.exists():
         return False
+    icon_stale = str(cfg.get("desktop_shortcut_icon") or "") != _ICON_STAMP
     if lnk.exists():
         got = _read_target(lnk)
         try:
             same = Path(got).resolve() == exe if got else False
         except OSError:
             same = False
-        if same:
+        if same and not icon_stale:
             if not already:
                 cfg["desktop_shortcut_done"] = True
+                cfg["desktop_shortcut_icon"] = _ICON_STAMP
                 return True
             return False
     if not _write_shortcut(lnk, exe):
         return False
     cfg["desktop_shortcut_done"] = True
+    cfg["desktop_shortcut_icon"] = _ICON_STAMP
+    _notify_shell()
     return True
