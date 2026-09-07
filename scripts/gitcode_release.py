@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 中秋限定皮肤与日程；列表图片改进行程编辑"
+                    "- 中秋限定皮改为银月红灯笼，不再像墨金"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

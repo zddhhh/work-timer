@@ -437,7 +437,7 @@ def paint_card(
                 # 浅底托底加厚，避免暖色纹理被墙纸洗掉
                 base = (255, 236, 214, 96) if light_card else (28, 18, 12, 36)
             elif kind == "midautumn":
-                base = (255, 244, 220, 48) if light_card else (12, 10, 22, 32)
+                base = (236, 232, 255, 42) if light_card else (8, 10, 32, 30)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)
