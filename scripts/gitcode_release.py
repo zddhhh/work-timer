@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 圆角贴图覆盖四个圆角弧；有新版本时更新弹窗只出一次"
+                    "- 日程超过一天时按天显示剩时，不再堆成几十小时"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -103,7 +103,18 @@ def remaining_parts(td: timedelta) -> tuple[int, bool]:
 
 
 def format_remaining(total_seconds: int, mode: str) -> str:
+    """剩时文案。满 24 小时起用「天」，避免 72 时这种不直观的小时堆叠。"""
     total = max(0, int(total_seconds))
+    day, rest = divmod(total, 86400)
+    if day:
+        h, rem = divmod(rest, 3600)
+        m = rem // 60
+        parts = [f"{day}天"]
+        if h:
+            parts.append(f"{h}时")
+        if m:
+            parts.append(f"{m}分")
+        return "".join(parts)
     if mode == "sec":
         return f"{total}秒"
     if mode == "min":
