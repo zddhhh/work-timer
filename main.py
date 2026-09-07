@@ -958,10 +958,13 @@ class WorkTimer:
         *,
         near: tuple[int, int] | None = None,
         cover: tuple[int, int, int, int] | None = None,
+        schedule_id: str | None = None,
     ) -> dict | None:
         """cover=(x,y,w,h) 时盖在日程列表上，避免先藏列表再弹窗造成闪烁。"""
         result: list[dict | None] = [None]
         now = datetime.now()
+        existing = schedules.find_schedule(self.cfg, schedule_id) if schedule_id else None
+        editing = existing is not None
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
             near = (cx, cy)
@@ -976,23 +979,59 @@ class WorkTimer:
             pass
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
-        kind_var = tk.StringVar(value="clock")
-        title_var = tk.StringVar(value="")
-        time_var = tk.StringVar(value="15:00")
-        y_var = tk.StringVar(value=str(now.year))
-        m_var = tk.StringVar(value=str(now.month))
-        d_var = tk.StringVar(value=str(now.day))
+        init_kind = "duration" if editing and str(existing.get("kind") or "") == "duration" else "clock"
+        init_title = str(existing.get("title") or "") if editing else ""
+        init_time = "15:00"
+        init_y, init_mo, init_d = now.year, now.month, now.day
+        if editing:
+            if init_kind == "clock":
+                hm = existing.get("hm")
+                if isinstance(hm, (list, tuple)) and len(hm) == 2:
+                    try:
+                        init_time = f"{int(hm[0])}:{int(hm[1]):02d}"
+                    except (TypeError, ValueError):
+                        pass
+                raw = str(existing.get("date") or "")[:10]
+                parts = raw.split("-")
+                if len(parts) == 3:
+                    try:
+                        init_y, init_mo, init_d = int(parts[0]), int(parts[1]), int(parts[2])
+                    except ValueError:
+                        pass
+            else:
+                try:
+                    init_time = str(max(1, int(existing.get("duration_sec") or 60) // 60))
+                except (TypeError, ValueError):
+                    init_time = "25"
+        kind_var = tk.StringVar(value=init_kind)
+        title_var = tk.StringVar(value=init_title)
+        time_var = tk.StringVar(value=init_time)
+        y_var = tk.StringVar(value=str(init_y))
+        m_var = tk.StringVar(value=str(init_mo))
+        d_var = tk.StringVar(value=str(init_d))
         tip = tk.StringVar()
         body = tk.Frame(dlg, bg=_CARD_BG)
         body.pack(side="top", fill="both", expand=True, padx=18)
         err = tk.StringVar(value="")
         _pack_err_line(body, err, wrap=420)
-        attach = _new_attach_state()
-        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=None, err=err, pack_side="bottom")
-
-        tk.Label(body, text="新增日程", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold")).pack(
-            pady=(16, 6), anchor="w"
+        attach = _new_attach_state(existing.get("images") if editing else None)
+        _pack_attach_editor(
+            body,
+            dlg=dlg,
+            state=attach,
+            kind="schedule",
+            owner_id=str(existing.get("id") or "") if editing else None,
+            err=err,
+            pack_side="bottom",
         )
+
+        tk.Label(
+            body,
+            text="编辑日程" if editing else "新增日程",
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 6), anchor="w")
         box = tk.Frame(body, bg=_CARD_BG)
         box.pack(anchor="w")
         for val, lab in (("clock", "指定日期+时刻"), ("duration", "倒计时长（分钟）")):
@@ -1069,6 +1108,10 @@ class WorkTimer:
                 result[0] = schedules.new_duration(name, mins)
             item = result[0]
             if item is not None:
+                if editing:
+                    item["id"] = str(existing.get("id"))
+                    if kind_var.get() == "duration" and str(existing.get("kind") or "") == "duration":
+                        item["started_at"] = existing.get("started_at") or item.get("started_at")
                 item["images"] = attachments.commit(
                     "schedule",
                     str(item["id"]),
@@ -1078,7 +1121,7 @@ class WorkTimer:
                 )
             dlg.destroy()
 
-        _card_btn(bar, "开始倒计时", ok, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "保存" if editing else "开始倒计时", ok, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: ok())
         _reveal_card(dlg, min_w=480, min_h=560, near=near, cover=cover)
@@ -1394,15 +1437,17 @@ class WorkTimer:
                 inner = tk.Frame(card, bg="#222733")
                 inner.pack(fill="x", padx=10, pady=8)
                 active = schedules.active_id(self.cfg) == sid
-                tk.Label(
+                title_lbl = tk.Label(
                     inner, text=title, fg="#7ec8ff" if active else _CARD_FG, bg="#222733",
                     font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
-                ).pack(fill="x")
+                )
+                title_lbl.pack(fill="x")
                 extra = f"  ·  {nimg}图" if nimg else ""
-                tk.Label(
+                when_lbl = tk.Label(
                     inner, text=f"{when}  ·  {rem}{extra}", fg=_CARD_MUTED, bg="#222733",
                     font=("Microsoft YaHei UI", 9), anchor="w",
-                ).pack(fill="x")
+                )
+                when_lbl.pack(fill="x")
                 btns = tk.Frame(inner, bg="#222733")
                 btns.pack(fill="x", pady=(8, 0), anchor="w")
                 pinned = schedules.is_pinned(self.cfg, sid)
@@ -1443,10 +1488,13 @@ class WorkTimer:
                         self._last_key = ""
                         rebuild()
 
+                    _card_btn(btns, "编辑", lambda s=sid: edit_schedule(s)).pack(side="left", padx=(0, 8))
                     _card_btn(btns, f"图片{nimg}" if nimg else "图片", edit_imgs).pack(
                         side="left", padx=(0, 8)
                     )
                     _card_btn(btns, "删除", drop, danger=True).pack(side="left")
+                    for w in (card, inner, title_lbl, when_lbl):
+                        w.bind("<Button-1>", lambda _e, s=sid: edit_schedule(s))
             _sync()
 
         def rebuild_memos() -> None:
@@ -1513,6 +1561,16 @@ class WorkTimer:
                         pass
                 else:
                     self.cfg["active_pin_id"] = item["id"]
+                store.save_config(self.cfg)
+                self._last_key = ""
+            _after_card(rebuild if item is not None else None)
+
+        def edit_schedule(sid: str) -> None:
+            hint.set("")
+            _unbind_wheel()
+            item = self._ask_new_schedule(schedule_id=sid, cover=_panel_cover())
+            if item is not None:
+                schedules.replace_schedule(self.cfg, item)
                 store.save_config(self.cfg)
                 self._last_key = ""
             _after_card(rebuild if item is not None else None)

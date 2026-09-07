@@ -159,6 +159,18 @@ def add_schedule(cfg: dict, item: dict) -> None:
     cfg["schedules"].append(item)
 
 
+def replace_schedule(cfg: dict, item: dict) -> bool:
+    sid = str(item.get("id") or "")
+    if not sid:
+        return False
+    ensure_fields(cfg)
+    for i, s in enumerate(cfg["schedules"]):
+        if isinstance(s, dict) and str(s.get("id")) == sid:
+            cfg["schedules"][i] = item
+            return True
+    return False
+
+
 def matches(item: dict, query: str) -> bool:
     return attachments.matches(
         [str(item.get("title") or ""), format_schedule_when(item)],
