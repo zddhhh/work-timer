@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 日程超过一天时按天显示剩时，不再堆成几十小时"
+                    "- 开机自启注册表只在路径或开关变化时才写"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

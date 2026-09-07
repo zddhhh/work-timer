@@ -19,13 +19,18 @@ def launch_command() -> str:
     return f'"{exe}" "{main}"'
 
 
-def is_enabled() -> bool:
+def current_command() -> str | None:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_READ) as key:
             val, _ = winreg.QueryValueEx(key, _VALUE_NAME)
-            return bool(str(val or "").strip())
+            got = str(val or "").strip()
+            return got or None
     except OSError:
-        return False
+        return None
+
+
+def is_enabled() -> bool:
+    return current_command() is not None
 
 
 def set_enabled(on: bool) -> None:
@@ -47,5 +52,8 @@ def set_enabled(on: bool) -> None:
 
 
 def sync(on: bool) -> None:
-    """按配置对齐注册表（OTA 后也会刷新路径）。"""
+    """只在开关或 exe 路径真的变了时写注册表。"""
+    want = launch_command() if on else None
+    if current_command() == want:
+        return
     set_enabled(bool(on))
