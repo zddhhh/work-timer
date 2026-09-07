@@ -167,64 +167,6 @@ def _paint_sweep(layer: Image.Image, phase: float, *, light: bool, stage: str) -
     layer.alpha_composite(stripe)
 
 
-def _paint_midautumn_marks(
-    layer: Image.Image,
-    bw: int,
-    bh: int,
-    phase: float,
-    *,
-    light: bool,
-    stage: str,
-) -> None:
-    """小卡片上画银月和灯笼，避免缩成一团墨金纹。"""
-    ov = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    d = ImageDraw.Draw(ov)
-    freeze = stage in ("idle", "done")
-    pulse = 1.0 if freeze else (1.0 + 0.045 * math.sin(float(phase) * 0.8))
-
-    wash_w = max(24, int(bw * 0.36))
-    for i in range(wash_w):
-        a = int((14 if light else 20) * (1.0 - i / wash_w))
-        if a < 2:
-            continue
-        d.line([(bw - 1 - i, 0), (bw - 1 - i, bh - 1)], fill=(255, 226, 180, a))
-
-    rr = max(8, int(bh * 0.28 * pulse))
-    cx = int(bw * 0.87)
-    cy = int(bh * 0.32)
-    halo_r = int(rr * 1.62)
-    d.ellipse(
-        (cx - halo_r, cy - halo_r, cx + halo_r, cy + halo_r),
-        fill=(255, 236, 190, 26 if light else 36),
-    )
-    d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), fill=(255, 248, 224, 160 if light else 215))
-    inner = max(4, int(rr * 0.52))
-    d.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=(255, 255, 246, 70))
-
-    def lantern(x: int, y: int, rw: int, rh: int, inner: int) -> None:
-        hang = max(6, bh // 10)
-        d.line(
-            [(x, max(0, y - rh - hang)), (x, y - rh)],
-            fill=(255, 196, 110, 150),
-            width=max(1, max(1, bw // 200)),
-        )
-        d.ellipse((x - rw - 5, y - rh - 4, x + rw + 5, y + rh + 4), fill=(255, 72, 36, 30))
-        d.ellipse((x - rw, y - rh, x + rw, y + rh), fill=(186, 36, 32, 170 if light else 205))
-        ix, iy = max(2, int(rw * 0.5)), max(2, int(rh * 0.35))
-        d.ellipse((x - ix, y - iy - 1, x + ix, y + max(1, iy - 2)), fill=(255, 186, 78, inner))
-        cap = max(2, rh // 5)
-        d.rectangle((x - rw + 1, y - rh - cap, x + rw - 1, y - rh + 1), fill=(72, 22, 18, 230))
-        d.line(
-            [(x, y + rh - 1), (x, y + rh + max(4, rh // 2))],
-            fill=(255, 150, 70, 170),
-            width=1,
-        )
-
-    lantern(int(bw * 0.69), int(bh * 0.62), max(4, bw // 40), max(6, bh // 9), 175)
-    lantern(int(bw * 0.78), int(bh * 0.74), max(3, bw // 48), max(5, bh // 11), 145)
-    layer.alpha_composite(ov)
-
-
 def paste_skin(
     img: Image.Image,
     box: tuple[int, int, int, int],
@@ -305,8 +247,6 @@ def paste_skin(
     tint = Image.new("RGBA", (bw, bh), _mix_env(_mood_rgba(stage, light), env_rgb))
     layer = Image.alpha_composite(layer, tint)
     _paint_sweep(layer, phase, light=light, stage=stage)
-    if kind == "midautumn":
-        _paint_midautumn_marks(layer, bw, bh, phase, light=light, stage=stage)
     rad = max(0, int(radius))
     if rad > 0:
         mk = (bw, bh, rad)
