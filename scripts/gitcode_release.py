@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 中秋皮去掉叠图，只留夜空底图"
+                    "- 首次运行在桌面创建「下班倒计时」快捷方式"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -62,6 +62,8 @@ def main() -> None:
         "--hidden-import",
         "autostart",
         "--hidden-import",
+        "desktop_shortcut",
+        "--hidden-import",
         "store",
         "--hidden-import",
         "layered_win",

@@ -18,6 +18,7 @@ import ad_disguise
 import attachments
 import autostart
 import backdrop
+import desktop_shortcut
 import flex_time
 import layered_win
 import memos
@@ -601,6 +602,11 @@ class WorkTimer:
         updater.cleanup_update_artifacts()
         updater.stamp_stable_install_version()
         self.cfg = store.load_config()
+        try:
+            if desktop_shortcut.ensure(self.cfg):
+                store.save_config(self.cfg)
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("desktop-shortcut", e)
         schedules.ensure_fields(self.cfg)
         memos.ensure_fields(self.cfg)
         if schedules.sync_festival(self.cfg):
