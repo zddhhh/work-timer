@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 启动时动能字幕，点卡片可跳过"
+                    "- 动能字幕只在中秋皮：切换后清屏播放，偶尔再来"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

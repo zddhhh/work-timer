@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import math
+import random
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
 
-STAGGER = 0.09
-CHAR_DUR = 0.52
-HOLD = 0.7
-FADE = 0.4
+STAGGER = 0.16
+CHAR_DUR = 0.85
+HOLD = 2.2
+FADE = 0.7
+TEXT = "中秋快乐"
+_SWITCH_DELAY = (1.4, 2.6)
+_OCCASIONAL = (8 * 60, 16 * 60)
 
 _GLYPH_CACHE: dict[tuple, Image.Image] = {}
 
@@ -24,8 +28,13 @@ class Show:
         self.skipped = True
 
 
-def intro_text(*, festival: bool) -> str:
-    return "中秋快乐" if festival else "该下班了"
+def intro_text() -> str:
+    return TEXT
+
+
+def next_delay(*, soon: bool) -> float:
+    lo, hi = _SWITCH_DELAY if soon else _OCCASIONAL
+    return random.uniform(lo, hi)
 
 
 def duration(text: str) -> float:

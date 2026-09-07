@@ -658,9 +658,9 @@ class WorkTimer:
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
-        txt = kinetic.intro_text(festival=festival.in_season())
-        self._kinetic: kinetic.Show | None = kinetic.Show(txt, time.monotonic())
-        self._font_kinetic = _kinetic_font(w, len(txt))
+        self._kinetic: kinetic.Show | None = None
+        self._font_kinetic = self._font_big
+        self._kinetic_due: float | None = None
         self._last_key = ""
         self._surface = "dark"
         self._force_surface_sample = True
@@ -674,6 +674,8 @@ class WorkTimer:
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
         self.cfg["theme"] = tid
+        if tid == festival.MIDAUTUMN_THEME_ID:
+            self._schedule_kinetic(soon=False)
         try:
             ssl.create_default_context()
         except Exception:
@@ -742,11 +744,47 @@ class WorkTimer:
     def _set_theme(self, theme_id: str) -> None:
         if theme_id not in themes.theme_map():
             return
+        prev = str(self.cfg.get("theme") or "")
         self.cfg["theme"] = theme_id
         self.cfg["midautumn_theme_auto"] = False
         store.save_config(self.cfg)
         self._last_key = ""
         self._force_surface_sample = True
+        if theme_id == festival.MIDAUTUMN_THEME_ID and prev != theme_id:
+            self._schedule_kinetic(soon=True)
+        elif theme_id != festival.MIDAUTUMN_THEME_ID:
+            self._stop_kinetic()
+
+    def _schedule_kinetic(self, *, soon: bool) -> None:
+        self._kinetic_due = time.monotonic() + kinetic.next_delay(soon=soon)
+
+    def _stop_kinetic(self) -> None:
+        if self._kinetic is not None:
+            self._kinetic.skip()
+            self._kinetic = None
+        self._kinetic_due = None
+        self._last_key = ""
+
+    def _start_kinetic(self) -> None:
+        txt = kinetic.TEXT
+        self._kinetic = kinetic.Show(txt, time.monotonic())
+        self._font_kinetic = _kinetic_font(self._win_w, len(txt))
+        self._last_key = ""
+        self._schedule_kinetic(soon=False)
+
+    def _tick_kinetic(self, now: float) -> None:
+        if str(self.cfg.get("theme") or "") != festival.MIDAUTUMN_THEME_ID:
+            return
+        if self._disguised or self._update_dialog_open or self._need_dialog:
+            return
+        if self.win.dragging or self.win.resizing:
+            return
+        if kinetic.playing(self._kinetic, now):
+            return
+        due = self._kinetic_due
+        if due is None or now < due:
+            return
+        self._start_kinetic()
 
     def _load_size(self) -> tuple[int, int]:
         w, h = self.cfg.get("win_w"), self.cfg.get("win_h")
@@ -2089,6 +2127,7 @@ class WorkTimer:
                     last_save = time.monotonic()
                     was_dragging = False
                 now_m = time.monotonic()
+                self._tick_kinetic(now_m)
                 today = self._today()
                 if today != self._fest_day:
                     self._fest_day = today
