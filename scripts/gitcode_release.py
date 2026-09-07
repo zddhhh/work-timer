@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 日程支持编辑名称、时间和图片"
+                    "- 中秋限定皮肤与日程；列表图片改进行程编辑"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

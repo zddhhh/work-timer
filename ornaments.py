@@ -26,6 +26,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "aurora": ("aurora_drape.png", "aurora_glow.png"),
     "inkgold": ("skin_inkgold.png", None),
     "warmglow": ("skin_warmglow.png", None),
+    "midautumn": ("skin_midautumn.png", None),
 }
 
 
@@ -200,6 +201,9 @@ def paste_skin(
     elif kind == "warmglow":
         a0 = 0.88 if not light else 0.92
         a1 = 0.60 if not light else 0.70
+    elif kind == "midautumn":
+        a0 = 0.90 if not light else 0.82
+        a1 = 0.62 if not light else 0.50
     else:
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38

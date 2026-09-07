@@ -66,6 +66,8 @@ def main() -> None:
         "--hidden-import",
         "layered_win",
         "--hidden-import",
+        "festival",
+        "--hidden-import",
         "flex_time",
         "--hidden-import",
         "updater",

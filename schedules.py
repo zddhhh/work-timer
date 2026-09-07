@@ -6,9 +6,32 @@ from datetime import datetime
 from typing import Any
 
 import attachments
+import festival
 
 OFFWORK_ID = "offwork"
 MAX_PINS = 3
+
+
+def _trim_pins(pins: list[str], valid: set[str]) -> list[str]:
+    """节日优先项不占 MAX_PINS；其余最多保留 MAX_PINS 条。"""
+    out: list[str] = []
+    counted = 0
+    for sid in pins:
+        if sid not in valid or sid in out:
+            continue
+        if sid in festival.BONUS_PIN_IDS:
+            out.append(sid)
+            continue
+        if counted >= MAX_PINS:
+            continue
+        out.append(sid)
+        counted += 1
+    return out
+
+
+def counted_pin_count(cfg: dict) -> int:
+    ensure_fields(cfg)
+    return sum(1 for sid in cfg["pin_order"] if sid not in festival.BONUS_PIN_IDS)
 
 
 def ensure_fields(cfg: dict) -> None:
@@ -25,7 +48,7 @@ def ensure_fields(cfg: dict) -> None:
     if not isinstance(pins, list):
         cfg["pin_order"] = [OFFWORK_ID]
     else:
-        cfg["pin_order"] = [str(x) for x in pins if isinstance(x, str)][:MAX_PINS]
+        cfg["pin_order"] = [str(x) for x in pins if isinstance(x, str)]
     if not isinstance(cfg.get("active_pin_id"), str):
         cfg["active_pin_id"] = None
     cfg["auto_rotate_pins"] = bool(cfg.get("auto_rotate_pins"))
@@ -34,7 +57,7 @@ def ensure_fields(cfg: dict) -> None:
     except (TypeError, ValueError):
         cfg["rotate_sec"] = 5
     valid = {OFFWORK_ID} | {str(s.get("id")) for s in cfg["schedules"] if isinstance(s, dict) and s.get("id")}
-    cfg["pin_order"] = [p for p in cfg["pin_order"] if p in valid][:MAX_PINS]
+    cfg["pin_order"] = _trim_pins(cfg["pin_order"], valid)
     if cfg["active_pin_id"] not in cfg["pin_order"]:
         cfg["active_pin_id"] = cfg["pin_order"][0] if cfg["pin_order"] else None
 
@@ -191,6 +214,8 @@ def remove_schedule(cfg: dict, sid: str) -> None:
     ensure_fields(cfg)
     if sid == OFFWORK_ID:
         return
+    if sid == festival.MIDAUTUMN_ID:
+        cfg["midautumn_dismissed"] = True
     attachments.remove_owner("schedule", sid)
     cfg["schedules"] = [s for s in cfg["schedules"] if not (isinstance(s, dict) and str(s.get("id")) == sid)]
     cfg["pin_order"] = [p for p in cfg["pin_order"] if p != sid]
@@ -208,13 +233,17 @@ def set_pinned(cfg: dict, sid: str, pinned: bool) -> tuple[bool, str]:
     if pinned:
         if sid in cfg["pin_order"]:
             return True, ""
-        if len(cfg["pin_order"]) >= MAX_PINS:
+        if sid not in festival.BONUS_PIN_IDS and counted_pin_count(cfg) >= MAX_PINS:
             return False, f"最多优先显示 {MAX_PINS} 项"
         cfg["pin_order"].append(sid)
+        if sid == festival.MIDAUTUMN_ID:
+            cfg["midautumn_unpinned"] = False
         if not cfg.get("active_pin_id"):
             cfg["active_pin_id"] = sid
         return True, ""
     cfg["pin_order"] = [p for p in cfg["pin_order"] if p != sid]
+    if sid == festival.MIDAUTUMN_ID:
+        cfg["midautumn_unpinned"] = True
     if cfg.get("active_pin_id") == sid:
         cfg["active_pin_id"] = cfg["pin_order"][0] if cfg["pin_order"] else None
     return True, ""
@@ -265,3 +294,55 @@ def pin_index(cfg: dict) -> tuple[int, int]:
         return pins.index(aid) + 1, len(pins)
     except ValueError:
         return 1, len(pins)
+
+
+def sync_festival(cfg: dict, *, now: datetime | None = None) -> bool:
+    """节期内补一条不占名额的中秋日程；默认皮换一次中秋限定；过季还原。"""
+    ensure_fields(cfg)
+    now = now or datetime.now()
+    changed = False
+    sid = festival.MIDAUTUMN_ID
+
+    if festival.in_season(now) and not cfg.get("midautumn_dismissed"):
+        if find_schedule(cfg, sid) is None:
+            item = new_clock(
+                festival.MIDAUTUMN_TITLE,
+                festival.MIDAUTUMN_HOUR,
+                festival.MIDAUTUMN_MINUTE,
+                date=festival.MIDAUTUMN_DATE,
+            )
+            item["id"] = sid
+            cfg["schedules"].append(item)
+            changed = True
+        if not cfg.get("midautumn_unpinned") and sid not in cfg["pin_order"]:
+            pins = cfg["pin_order"]
+            if OFFWORK_ID in pins:
+                i = pins.index(OFFWORK_ID) + 1
+                cfg["pin_order"] = pins[:i] + [sid] + pins[i:]
+            else:
+                cfg["pin_order"] = [sid] + pins
+            changed = True
+        if not cfg.get("midautumn_theme_offered"):
+            cfg["midautumn_theme_offered"] = True
+            cur = str(cfg.get("theme") or "ghost")
+            if cur in festival.DEFAULT_THEME_IDS:
+                cfg["theme_before_midautumn"] = cur
+                cfg["theme"] = festival.MIDAUTUMN_THEME_ID
+                cfg["midautumn_theme_auto"] = True
+            changed = True
+        return changed
+
+    if not festival.past_season(now):
+        return changed
+
+    if cfg.get("midautumn_theme_auto") and str(cfg.get("theme") or "") == festival.MIDAUTUMN_THEME_ID:
+        prev = str(cfg.get("theme_before_midautumn") or "ghost") or "ghost"
+        cfg["theme"] = prev
+        cfg["midautumn_theme_auto"] = False
+        changed = True
+    if sid in cfg["pin_order"]:
+        cfg["pin_order"] = [p for p in cfg["pin_order"] if p != sid]
+        if cfg.get("active_pin_id") == sid:
+            cfg["active_pin_id"] = cfg["pin_order"][0] if cfg["pin_order"] else None
+        changed = True
+    return changed

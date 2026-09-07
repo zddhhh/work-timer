@@ -13,11 +13,12 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+import festival
 import ornaments
 import store
 
 DEFAULT_THEME_ID = "ghost"
-_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow"})
+_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn"})
 _updated = False
 _lock = threading.Lock()
 
@@ -242,7 +243,17 @@ def _set_catalog(items: list[Theme], *, notify: bool = True) -> None:
 
 def list_themes() -> list[Theme]:
     with _lock:
-        return list(_catalog)
+        items = list(_catalog)
+    if not festival.in_season():
+        return items
+    out: list[Theme] = []
+    for t in items:
+        if t.id == festival.MIDAUTUMN_THEME_ID:
+            out.append(replace(t, name="中秋 · 限定"))
+        else:
+            out.append(t)
+    out.sort(key=lambda t: 0 if t.id == festival.MIDAUTUMN_THEME_ID else 1)
+    return out
 
 
 def theme_map() -> dict[str, Theme]:
@@ -267,7 +278,7 @@ def load_local_catalog() -> None:
     cached = _load_json_file(_cache_path())
     bmap = {t.id: t for t in bundled}
     # 这些皮会随版本改配色/自适应，优先用内置覆盖旧缓存
-    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow"}
+    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn"}
     if cached:
         items: list[Theme] = []
         seen: set[str] = set()
@@ -425,6 +436,8 @@ def paint_card(
             elif kind == "warmglow":
                 # 浅底托底加厚，避免暖色纹理被墙纸洗掉
                 base = (255, 236, 214, 96) if light_card else (28, 18, 12, 36)
+            elif kind == "midautumn":
+                base = (255, 244, 220, 48) if light_card else (12, 10, 22, 32)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)

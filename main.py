@@ -603,6 +603,8 @@ class WorkTimer:
         self.cfg = store.load_config()
         schedules.ensure_fields(self.cfg)
         memos.ensure_fields(self.cfg)
+        if schedules.sync_festival(self.cfg):
+            store.save_config(self.cfg)
         self.running = True
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
@@ -614,6 +616,7 @@ class WorkTimer:
         self._update_prompted = False
         self._update_dialog_open = False
         self._last_pin_rotate = 0.0
+        self._fest_day = datetime.now().strftime("%Y-%m-%d")
 
         w, h = self._load_size()
         self._win_w, self._win_h = w, h
@@ -721,6 +724,7 @@ class WorkTimer:
         if theme_id not in themes.theme_map():
             return
         self.cfg["theme"] = theme_id
+        self.cfg["midautumn_theme_auto"] = False
         store.save_config(self.cfg)
         self._last_key = ""
         self._force_surface_sample = True
@@ -1204,66 +1208,6 @@ class WorkTimer:
         _run_card_modal(dlg, self.win)
         return result[0]
 
-    def _ask_schedule_images(
-        self,
-        sid: str,
-        *,
-        cover: tuple[int, int, int, int] | None = None,
-    ) -> list[dict] | None:
-        item = schedules.find_schedule(self.cfg, sid)
-        if item is None:
-            return None
-        result: list[list[dict] | None] = [None]
-        if cover is not None:
-            cx, cy, cw, ch = (int(v) for v in cover)
-            near = (cx, cy)
-            dlg = _card_dialog(self._tk_root(), near=near, width=max(480, cw), height=max(380, ch))
-        else:
-            near = self._dialog_near()
-            dlg = _card_dialog(self._tk_root(), near=near, width=480, height=380)
-        try:
-            dlg.withdraw()
-        except Exception:
-            pass
-        bar = tk.Frame(dlg, bg=_CARD_BG)
-        bar.pack(side="bottom", fill="x", pady=(8, 16))
-        err = tk.StringVar(value="")
-        body = tk.Frame(dlg, bg=_CARD_BG)
-        body.pack(side="top", fill="both", expand=True, padx=18)
-        _pack_err_line(body, err, wrap=420)
-        attach = _new_attach_state(item.get("images"))
-        _pack_attach_editor(body, dlg=dlg, state=attach, kind="schedule", owner_id=sid, err=err, pack_side="bottom")
-        tk.Label(
-            body,
-            text=f"图片 · {item.get('title') or '日程'}",
-            fg=_CARD_FG,
-            bg=_CARD_BG,
-            font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(pady=(16, 6), anchor="w")
-        tk.Label(
-            body,
-            text="添加、去掉或把图片拖进窗口",
-            fg=_CARD_MUTED,
-            bg=_CARD_BG,
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w")
-
-        def ok() -> None:
-            result[0] = attachments.commit(
-                "schedule",
-                sid,
-                keep=attach["keep"],
-                pending=attach["pending"],
-                removed=attach["removed"],
-            )
-            dlg.destroy()
-
-        _card_btn(bar, "保存", ok, accent=True).pack(side="left", padx=(18, 6))
-        _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
-        _reveal_card(dlg, min_w=480, min_h=380, near=near, cover=cover)
-        _run_card_modal(dlg, self.win)
-        return result[0]
-
     def _open_schedule_list(self) -> None:
         if self._schedule_list_open:
             self._need_close_schedule_list = True
@@ -1472,15 +1416,6 @@ class WorkTimer:
                     side="left", padx=(0, 8)
                 )
                 if can_del:
-                    def edit_imgs(s=sid) -> None:
-                        hint.set("")
-                        _unbind_wheel()
-                        imgs = self._ask_schedule_images(s, cover=_panel_cover())
-                        if imgs is not None:
-                            schedules.set_images(self.cfg, s, imgs)
-                            store.save_config(self.cfg)
-                        _after_card(rebuild if imgs is not None else None)
-
                     def drop(s=sid) -> None:
                         hint.set("")
                         schedules.remove_schedule(self.cfg, s)
@@ -1489,9 +1424,6 @@ class WorkTimer:
                         rebuild()
 
                     _card_btn(btns, "编辑", lambda s=sid: edit_schedule(s)).pack(side="left", padx=(0, 8))
-                    _card_btn(btns, f"图片{nimg}" if nimg else "图片", edit_imgs).pack(
-                        side="left", padx=(0, 8)
-                    )
                     _card_btn(btns, "删除", drop, danger=True).pack(side="left")
                     for w in (card, inner, title_lbl, when_lbl):
                         w.bind("<Button-1>", lambda _e, s=sid: edit_schedule(s))
@@ -2102,6 +2034,13 @@ class WorkTimer:
                     last_save = time.monotonic()
                     was_dragging = False
                 now_m = time.monotonic()
+                today = self._today()
+                if today != self._fest_day:
+                    self._fest_day = today
+                    if schedules.sync_festival(self.cfg):
+                        store.save_config(self.cfg)
+                        self._last_key = ""
+                        self._force_surface_sample = True
                 if schedules.rotate_tick(self.cfg, self._last_pin_rotate, now_m):
                     self._last_pin_rotate = now_m
                     store.save_config(self.cfg)
