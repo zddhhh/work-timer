@@ -74,6 +74,8 @@ def main() -> None:
         "--hidden-import",
         "festival",
         "--hidden-import",
+        "kinetic",
+        "--hidden-import",
         "flex_time",
         "--hidden-import",
         "updater",

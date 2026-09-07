@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 新桌面图标；重复打开只唤起已有窗口"
+                    "- 启动时动能字幕，点卡片可跳过"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

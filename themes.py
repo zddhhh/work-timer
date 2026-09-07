@@ -379,6 +379,8 @@ def _halo_text(
     ghost: bool,
     glow: bool = False,
 ) -> None:
+    if not text:
+        return
     x, y = xy
     if glow:
         aura = (fill[0], fill[1], fill[2], max(40, min(120, fill[3] // 2)))

@@ -19,7 +19,9 @@ import attachments
 import autostart
 import backdrop
 import desktop_shortcut
+import festival
 import flex_time
+import kinetic
 import layered_win
 import memos
 import ornaments
@@ -43,6 +45,11 @@ def _font(size: int) -> ImageFont.ImageFont:
         except OSError:
             continue
     return ImageFont.load_default()
+
+
+def _kinetic_font(w: int, n: int) -> ImageFont.ImageFont:
+    n = max(1, n)
+    return _font(max(16, min(40, int((w * 0.76) / n))))
 
 
 def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
@@ -651,6 +658,9 @@ class WorkTimer:
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
+        txt = kinetic.intro_text(festival=festival.in_season())
+        self._kinetic: kinetic.Show | None = kinetic.Show(txt, time.monotonic())
+        self._font_kinetic = _kinetic_font(w, len(txt))
         self._last_key = ""
         self._surface = "dark"
         self._force_surface_sample = True
@@ -756,6 +766,8 @@ class WorkTimer:
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
+        if self._kinetic is not None:
+            self._font_kinetic = _kinetic_font(w, len(self._kinetic.text))
         self._last_key = ""
 
     def _persist_size(self) -> None:
@@ -829,6 +841,11 @@ class WorkTimer:
 
     def _on_click(self, lx: int, ly: int) -> None:
         if self._disguised:
+            return
+        if self._kinetic is not None:
+            self._kinetic.skip()
+            self._kinetic = None
+            self._last_key = ""
             return
         pins = self.cfg.get("pin_order") or []
         if isinstance(pins, list) and len(pins) >= 2:
@@ -1938,31 +1955,60 @@ class WorkTimer:
                 key = f"{key}-a{int(phase * fps)}"
             elif theme.kind != "ghost":
                 key = f"{key}-p{int(phase * 6)}"
+            if kinetic.playing(self._kinetic, phase):
+                key = f"kinetic-{self._kinetic.text}-{int(phase * 60)}-{theme.id}-{w}x{h}"
 
             if key == self._last_key:
                 return
 
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            themes.paint_card(
-                img,
-                w,
-                h,
-                theme,
-                title if not idle else "距离下班",
-                big,
-                sub,
-                accent,
-                self._font_title,
-                self._font_big,
-                self._font_sub,
-                stage=stage,
-                env_rgb=self._env_rgb,
-            )
-            chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
-            if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
-                chev = (40, 44, 52, 90)
-            dots = (idx, n) if n >= 2 and bool(self.cfg.get("auto_rotate_pins")) else (0, 0)
-            ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
+            if kinetic.playing(self._kinetic, phase):
+                themes.paint_card(
+                    img,
+                    w,
+                    h,
+                    theme,
+                    "",
+                    "",
+                    "",
+                    accent,
+                    self._font_title,
+                    self._font_big,
+                    self._font_sub,
+                    stage=stage,
+                    env_rgb=self._env_rgb,
+                )
+                kinetic.paint(
+                    img,
+                    self._kinetic,
+                    self._font_kinetic,
+                    accent,
+                    phase,
+                    ghost=theme.kind == "ghost",
+                )
+            else:
+                if self._kinetic is not None:
+                    self._kinetic = None
+                themes.paint_card(
+                    img,
+                    w,
+                    h,
+                    theme,
+                    title if not idle else "距离下班",
+                    big,
+                    sub,
+                    accent,
+                    self._font_title,
+                    self._font_big,
+                    self._font_sub,
+                    stage=stage,
+                    env_rgb=self._env_rgb,
+                )
+                chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
+                if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
+                    chev = (40, 44, 52, 90)
+                dots = (idx, n) if n >= 2 and bool(self.cfg.get("auto_rotate_pins")) else (0, 0)
+                ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
             self._last_key = key
@@ -2060,7 +2106,7 @@ class WorkTimer:
                 if now - last_save > 1.5:
                     self._persist_pos()
                     last_save = now
-                if now < self._surface_hot_until:
+                if now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
                     time.sleep(0.001)
                 else:
                     time.sleep(1.0 / FPS)
