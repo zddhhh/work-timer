@@ -660,7 +660,6 @@ class WorkTimer:
         self._font_sub = _font(fs)
         self._kinetic: kinetic.Show | None = None
         self._font_kinetic = self._font_big
-        self._kinetic_due: float | None = None
         self._last_key = ""
         self._surface = "dark"
         self._force_surface_sample = True
@@ -674,8 +673,6 @@ class WorkTimer:
         self.cfg["display_mode"] = mode if mode in flex_time.DISPLAY_MODES else "hms"
         tid = str(self.cfg.get("theme") or themes.DEFAULT_THEME_ID)
         self.cfg["theme"] = tid
-        if tid == festival.MIDAUTUMN_THEME_ID:
-            self._schedule_kinetic(soon=False)
         try:
             ssl.create_default_context()
         except Exception:
@@ -744,46 +741,48 @@ class WorkTimer:
     def _set_theme(self, theme_id: str) -> None:
         if theme_id not in themes.theme_map():
             return
-        prev = str(self.cfg.get("theme") or "")
         self.cfg["theme"] = theme_id
         self.cfg["midautumn_theme_auto"] = False
         store.save_config(self.cfg)
         self._last_key = ""
         self._force_surface_sample = True
-        if theme_id == festival.MIDAUTUMN_THEME_ID and prev != theme_id:
-            self._schedule_kinetic(soon=True)
-        elif theme_id != festival.MIDAUTUMN_THEME_ID:
-            self._stop_kinetic()
-
-    def _schedule_kinetic(self, *, soon: bool) -> None:
-        self._kinetic_due = time.monotonic() + kinetic.next_delay(soon=soon)
 
     def _stop_kinetic(self) -> None:
         if self._kinetic is not None:
             self._kinetic.skip()
             self._kinetic = None
-        self._kinetic_due = None
         self._last_key = ""
 
     def _start_kinetic(self) -> None:
-        txt = kinetic.TEXT
-        self._kinetic = kinetic.Show(txt, time.monotonic())
-        self._font_kinetic = _kinetic_font(self._win_w, len(txt))
+        phrases = kinetic.PHRASES
+        self._kinetic = kinetic.Show(phrases, time.monotonic())
+        self._font_kinetic = _kinetic_font(self._win_w, max(len(p) for p in phrases))
         self._last_key = ""
-        self._schedule_kinetic(soon=False)
 
     def _tick_kinetic(self, now: float) -> None:
-        if str(self.cfg.get("theme") or "") != festival.MIDAUTUMN_THEME_ID:
+        if festival.past_season():
+            return
+        if kinetic.playing(self._kinetic, now):
+            return
+        item = schedules.find_schedule(self.cfg, festival.MIDAUTUMN_ID)
+        if item is None:
+            return
+        _, done = schedules.schedule_remaining(item, datetime.now())
+        if not done:
+            if self.cfg.get("midautumn_kinetic_done"):
+                self.cfg["midautumn_kinetic_done"] = False
+                store.save_config(self.cfg)
+            return
+        if self.cfg.get("midautumn_kinetic_done"):
             return
         if self._disguised or self._update_dialog_open or self._need_dialog:
             return
         if self.win.dragging or self.win.resizing:
             return
-        if kinetic.playing(self._kinetic, now):
-            return
-        due = self._kinetic_due
-        if due is None or now < due:
-            return
+        self.cfg["midautumn_kinetic_done"] = True
+        if festival.MIDAUTUMN_ID in (self.cfg.get("pin_order") or []):
+            self.cfg["active_pin_id"] = festival.MIDAUTUMN_ID
+        store.save_config(self.cfg)
         self._start_kinetic()
 
     def _load_size(self) -> tuple[int, int]:
@@ -1035,6 +1034,7 @@ class WorkTimer:
         now = datetime.now()
         existing = schedules.find_schedule(self.cfg, schedule_id) if schedule_id else None
         editing = existing is not None
+        fest = editing and str(existing.get("id") or "") == festival.MIDAUTUMN_ID
         if cover is not None:
             cx, cy, cw, ch = (int(v) for v in cover)
             near = (cx, cy)
@@ -1051,6 +1051,9 @@ class WorkTimer:
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         init_kind = "duration" if editing and str(existing.get("kind") or "") == "duration" else "clock"
         init_title = str(existing.get("title") or "") if editing else ""
+        if fest:
+            init_kind = "clock"
+            init_title = festival.MIDAUTUMN_TITLE
         init_time = "15:00"
         init_y, init_mo, init_d = now.year, now.month, now.day
         if editing:
@@ -1097,14 +1100,25 @@ class WorkTimer:
 
         tk.Label(
             body,
-            text="编辑日程" if editing else "新增日程",
+            text="编辑中秋日程" if fest else ("编辑日程" if editing else "新增日程"),
             fg=_CARD_FG,
             bg=_CARD_BG,
             font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(pady=(16, 6), anchor="w")
+        if fest:
+            tk.Label(
+                body,
+                text="名称固定为「中秋」，可改倒计时时间；节后自动消失，不可删除。",
+                fg=_CARD_MUTED,
+                bg=_CARD_BG,
+                font=("Microsoft YaHei UI", 9),
+                wraplength=420,
+                justify="left",
+            ).pack(anchor="w", pady=(0, 6))
         box = tk.Frame(body, bg=_CARD_BG)
         box.pack(anchor="w")
-        for val, lab in (("clock", "指定日期+时刻"), ("duration", "倒计时长（分钟）")):
+        kind_opts = (("clock", "指定日期+时刻"),) if fest else (("clock", "指定日期+时刻"), ("duration", "倒计时长（分钟）"))
+        for val, lab in kind_opts:
             tk.Radiobutton(
                 box, text=lab, variable=kind_var, value=val, fg=_CARD_FG, bg=_CARD_BG,
                 selectcolor=_CARD_BTN, activebackground=_CARD_BG, font=("Microsoft YaHei UI", 10),
@@ -1113,10 +1127,13 @@ class WorkTimer:
         tk.Label(body, text="名称", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
             anchor="w", pady=(8, 0)
         )
-        tk.Entry(
+        title_ent = tk.Entry(
             body, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
             insertbackground=_CARD_FG, relief="flat", width=28,
-        ).pack(anchor="w", ipady=5)
+        )
+        title_ent.pack(anchor="w", ipady=5)
+        if fest:
+            title_ent.configure(state="disabled", disabledbackground="#1c212c", disabledforeground=_CARD_MUTED)
 
         date_row = tk.Frame(body, bg=_CARD_BG)
         date_row.pack(pady=(10, 0), anchor="w")
@@ -1153,6 +1170,9 @@ class WorkTimer:
 
         def ok() -> None:
             err.set("")
+            if fest:
+                kind_var.set("clock")
+                title_var.set(festival.MIDAUTUMN_TITLE)
             name = title_var.get().strip() or ("日程" if kind_var.get() == "clock" else "倒计时")
             if kind_var.get() == "clock":
                 hm = flex_time.parse_clock(time_var.get())
@@ -1430,7 +1450,8 @@ class WorkTimer:
                     else flex_time.format_remaining(left, self._display_mode())
                 )
                 when = schedules.format_schedule_when(s)
-                items.append((sid, str(s.get("title") or "日程"), rem, when, True, attachments.count(s)))
+                can_del = sid != festival.MIDAUTUMN_ID
+                items.append((sid, str(s.get("title") or "日程"), rem, when, can_del, attachments.count(s)))
 
             if not items:
                 tk.Label(
@@ -1481,6 +1502,11 @@ class WorkTimer:
                 _card_btn(btns, "优先" if pinned else "未优先", toggle_pin, accent=pinned).pack(
                     side="left", padx=(0, 8)
                 )
+                can_edit = can_del or sid == festival.MIDAUTUMN_ID
+                if can_edit:
+                    _card_btn(btns, "编辑", lambda s=sid: edit_schedule(s)).pack(side="left", padx=(0, 8))
+                    for w in (card, inner, title_lbl, when_lbl):
+                        w.bind("<Button-1>", lambda _e, s=sid: edit_schedule(s))
                 if can_del:
                     def drop(s=sid) -> None:
                         hint.set("")
@@ -1489,10 +1515,7 @@ class WorkTimer:
                         self._last_key = ""
                         rebuild()
 
-                    _card_btn(btns, "编辑", lambda s=sid: edit_schedule(s)).pack(side="left", padx=(0, 8))
                     _card_btn(btns, "删除", drop, danger=True).pack(side="left")
-                    for w in (card, inner, title_lbl, when_lbl):
-                        w.bind("<Button-1>", lambda _e, s=sid: edit_schedule(s))
             _sync()
 
         def rebuild_memos() -> None:
@@ -1996,7 +2019,10 @@ class WorkTimer:
             elif theme.kind != "ghost":
                 key = f"{key}-p{int(phase * 6)}"
             if kinetic.playing(self._kinetic, phase):
-                key = f"kinetic-{self._kinetic.text}-{int(phase * 60)}-{theme.id}-{w}x{h}"
+                key = (
+                    f"kinetic-{self._kinetic.current_text(phase)}"
+                    f"-{int(phase * 60)}-{theme.id}-{w}x{h}"
+                )
 
             if key == self._last_key:
                 return
@@ -2137,7 +2163,9 @@ class WorkTimer:
                         store.save_config(self.cfg)
                         self._last_key = ""
                         self._force_surface_sample = True
-                if schedules.rotate_tick(self.cfg, self._last_pin_rotate, now_m):
+                if not kinetic.playing(self._kinetic, now_m) and schedules.rotate_tick(
+                    self.cfg, self._last_pin_rotate, now_m
+                ):
                     self._last_pin_rotate = now_m
                     store.save_config(self.cfg)
                     self._last_key = ""

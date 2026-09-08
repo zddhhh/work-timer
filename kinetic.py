@@ -1,40 +1,60 @@
-"""动能字幕：拆字错峰弹出，过冲回弹，播完淡出。"""
+"""动能字幕：拆字错峰弹出，过冲回弹，多句串播后淡出。"""
 from __future__ import annotations
 
-import math
-import random
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
 
-STAGGER = 0.16
-CHAR_DUR = 0.85
-HOLD = 2.2
-FADE = 0.7
-TEXT = "中秋快乐"
-_SWITCH_DELAY = (1.4, 2.6)
-_OCCASIONAL = (8 * 60, 16 * 60)
+STAGGER = 0.13
+CHAR_DUR = 0.72
+HOLD = 1.45
+FADE = 0.5
+PHRASES: tuple[str, ...] = (
+    "月圆人圆",
+    "花好月圆",
+    "但愿人长久",
+    "千里共婵娟",
+    "中秋快乐",
+)
 
 _GLYPH_CACHE: dict[tuple, Image.Image] = {}
 
 
 @dataclass
 class Show:
-    text: str
+    phrases: tuple[str, ...]
     started: float
     skipped: bool = False
 
     def skip(self) -> None:
         self.skipped = True
 
+    @property
+    def text(self) -> str:
+        """字号按最长一句来，避免中途换句撑破卡片。"""
+        return max(self.phrases, key=len) if self.phrases else ""
 
-def intro_text() -> str:
-    return TEXT
+    def current_text(self, now: float) -> str:
+        t = now - self.started
+        acc = 0.0
+        last = self.phrases[-1] if self.phrases else ""
+        for p in self.phrases:
+            d = duration(p)
+            if t < acc + d:
+                return p
+            acc += d
+        return last
 
-
-def next_delay(*, soon: bool) -> float:
-    lo, hi = _SWITCH_DELAY if soon else _OCCASIONAL
-    return random.uniform(lo, hi)
+    def phrase_elapsed(self, now: float) -> float:
+        t = now - self.started
+        acc = 0.0
+        last_d = duration(self.phrases[-1]) if self.phrases else 0.0
+        for p in self.phrases:
+            d = duration(p)
+            if t < acc + d:
+                return t - acc
+            acc += d
+        return last_d + 1.0
 
 
 def duration(text: str) -> float:
@@ -42,10 +62,14 @@ def duration(text: str) -> float:
     return (n - 1) * STAGGER + CHAR_DUR + HOLD + FADE
 
 
+def total_duration(phrases: tuple[str, ...]) -> float:
+    return sum(duration(p) for p in phrases) if phrases else 0.0
+
+
 def playing(show: Show | None, now: float) -> bool:
     if show is None or show.skipped:
         return False
-    return (now - show.started) < duration(show.text)
+    return (now - show.started) < total_duration(show.phrases)
 
 
 def _ease_out_cubic(t: float) -> float:
@@ -117,11 +141,11 @@ def paint(
 ) -> None:
     if show.skipped:
         return
-    chars = list(show.text)
+    chars = list(show.current_text(now))
     n = len(chars)
     if n == 0:
         return
-    elapsed = now - show.started
+    elapsed = show.phrase_elapsed(now)
     end_in = (n - 1) * STAGGER + CHAR_DUR
     fade = 1.0
     if elapsed > end_in + HOLD:

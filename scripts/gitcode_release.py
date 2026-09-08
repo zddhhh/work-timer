@@ -108,7 +108,8 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 点「点我开始」会进设置，不再被日程轮换抢走"
+                    "- 中秋日程不可删除，只能改倒计时时间\n"
+                    "- 到点后连播多句祝福，节后自动删掉该日程"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

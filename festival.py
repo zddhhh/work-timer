@@ -1,4 +1,4 @@
-"""2026 中秋限定：皮肤与日程只在节期内主动现身，过季自动让位。"""
+"""2026 中秋限定：皮肤与不可删除的中秋日程只在节期内现身，过季自动删日程并让位。"""
 from __future__ import annotations
 
 from datetime import date, datetime
