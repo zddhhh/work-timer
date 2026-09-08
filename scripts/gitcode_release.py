@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 动能字幕只在中秋皮：切换后清屏播放，偶尔再来"
+                    "- 点「点我开始」会进设置，不再被日程轮换抢走"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

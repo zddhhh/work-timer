@@ -885,16 +885,18 @@ class WorkTimer:
             self._kinetic = None
             self._last_key = ""
             return
+        schedules.ensure_fields(self.cfg)
+        aid = schedules.active_id(self.cfg)
+        # 下班项空闲「点我开始」始终进设置，不要被多日程轮换抢走
+        if (aid is None or aid == schedules.OFFWORK_ID) and not self._has_target():
+            self._need_dialog = True
+            return
         pins = self.cfg.get("pin_order") or []
         if isinstance(pins, list) and len(pins) >= 2:
             if schedules.cycle_active(self.cfg):
                 store.save_config(self.cfg)
                 self._last_key = ""
                 self._last_pin_rotate = time.monotonic()
-            return
-        if not self._has_target():
-            self._need_dialog = True
-            return
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("esc_disguise"))
