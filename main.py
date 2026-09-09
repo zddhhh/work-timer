@@ -14,7 +14,6 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageFont, ImageTk
 
-import ad_disguise
 import attachments
 import autostart
 import backdrop
@@ -641,9 +640,7 @@ class WorkTimer:
         self.win = layered_win.LayeredPetWindow(w, h, "下班倒计时")
         self.win.set_left_click_handler(self._on_click)
         self.win.set_right_click_handler(self._request_menu)
-        self.ad = ad_disguise.AdDisguise()
-        self.ad.set_dismiss_handler(self._toggle_disguise)
-        self._disguised = False
+        self._esc_hidden = False
         self._esc_held = False
 
         area = layered_win.work_area()
@@ -775,7 +772,7 @@ class WorkTimer:
             return
         if self.cfg.get("midautumn_kinetic_done"):
             return
-        if self._disguised or self._update_dialog_open or self._need_dialog:
+        if self._esc_hidden or self._update_dialog_open or self._need_dialog:
             return
         if self.win.dragging or self.win.resizing:
             return
@@ -877,7 +874,7 @@ class WorkTimer:
         threading.Thread(target=_run, daemon=True, name="silent-update").start()
 
     def _on_click(self, lx: int, ly: int) -> None:
-        if self._disguised:
+        if self._esc_hidden:
             return
         if self._kinetic is not None:
             self._kinetic.skip()
@@ -903,11 +900,8 @@ class WorkTimer:
     def _set_esc_disguise(self, on: bool) -> None:
         self.cfg["esc_disguise"] = bool(on)
         store.save_config(self.cfg)
-        if not on and self._disguised:
-            self.ad.hide()
-            self.win.show()
-            self._disguised = False
-            self._last_key = ""
+        if not on and self._esc_hidden:
+            self._show_after_esc()
 
     def _auto_start_on(self) -> bool:
         return bool(self.cfg.get("auto_start"))
@@ -925,27 +919,30 @@ class WorkTimer:
         self.cfg["auto_start"] = on
         store.save_config(self.cfg)
 
-    def _toggle_disguise(self) -> None:
-        if not self._esc_disguise_on() and not self._disguised:
+    def _show_after_esc(self) -> None:
+        self.win.show()
+        self.win.keep_topmost()
+        self._esc_hidden = False
+        self._last_key = ""
+        self._force_surface_sample = True
+
+    def _toggle_esc_hide(self) -> None:
+        if not self._esc_disguise_on() and not self._esc_hidden:
             return
-        if self._disguised:
-            self.ad.hide()
-            self.win.show()
-            self._disguised = False
-            self._last_key = ""
+        if self._esc_hidden:
+            self._show_after_esc()
             return
         self.win.hide()
-        self.ad.show()
-        self._disguised = True
+        self._esc_hidden = True
 
     def _poll_esc(self) -> None:
         down = bool(layered_win.user32.GetAsyncKeyState(0x1B) & 0x8000)
         if down and not self._esc_held and self._esc_disguise_on():
-            self._toggle_disguise()
+            self._toggle_esc_hide()
         self._esc_held = down
 
     def _request_menu(self, sx: int, sy: int) -> None:
-        if self._disguised:
+        if self._esc_hidden:
             return
         self._menu_pos = (sx, sy)
 
@@ -2096,9 +2093,8 @@ class WorkTimer:
         while self.running and not self.win.closed:
             try:
                 self.win.pump()
-                self.ad.pump()
                 self._poll_esc()
-                if self._disguised:
+                if self._esc_hidden:
                     time.sleep(0.008)
                     continue
                 if self._menu_pos is not None:
@@ -2112,7 +2108,7 @@ class WorkTimer:
                     self._update_available
                     and not self._update_prompted
                     and not self._update_dialog_open
-                    and not self._disguised
+                    and not self._esc_hidden
                 ):
                     self._update_prompted = True
                     self._check_update(known=self._update_info)
@@ -2184,7 +2180,6 @@ class WorkTimer:
                 time.sleep(0.05)
         self._persist_pos()
         self._persist_size()
-        self.ad.destroy()
         self.win.destroy()
         if self._tk is not None:
             self._tk.destroy()

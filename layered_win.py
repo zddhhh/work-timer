@@ -267,6 +267,7 @@ class LayeredPetWindow:
         self._just_moved = False
         self._just_resized = False
         self._desktop_changed = False
+        self._user_hidden = False
         self._winevent_hooks: list = []
         self._winevent_proc = WINEVENTPROC(self._on_win_event)
 
@@ -399,10 +400,12 @@ class LayeredPetWindow:
             self.hwnd = 0
 
     def hide(self) -> None:
+        self._user_hidden = True
         if self.hwnd:
             user32.ShowWindow(self.hwnd, 0)
 
     def show(self) -> None:
+        self._user_hidden = False
         if self.hwnd:
             user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
 
@@ -453,7 +456,7 @@ class LayeredPetWindow:
 
     def ensure_visible(self) -> None:
         """拖到任务栏/最小化后，分层窗没有任务栏按钮，看起来像崩了。拉回工作区。"""
-        if not self.hwnd or self._closed:
+        if not self.hwnd or self._closed or self._user_hidden:
             return
         if user32.IsIconic(self.hwnd):
             user32.ShowWindow(self.hwnd, SW_RESTORE)
@@ -464,9 +467,10 @@ class LayeredPetWindow:
         self.keep_topmost()
 
     def keep_topmost(self) -> None:
-        user32.SetWindowPos(
-            self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | SWP_NOACTIVATE | SWP_SHOWWINDOW
-        )
+        flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+        if not self._user_hidden:
+            flags |= SWP_SHOWWINDOW
+        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
 
     def present_bgra(self, bgra: bytes, alpha_mask: bytes) -> None:
         """只更新画面，不改窗口位置（避免切显示时乱跳）。"""
@@ -672,7 +676,7 @@ class LayeredPetWindow:
             hmenu,
             MF_STRING | (MF_CHECKED if esc_disguise else 0),
             ID_DISGUISE,
-            "Esc 广告伪装",
+            "Esc 隐藏窗口",
         )
         user32.AppendMenuW(
             hmenu,

@@ -108,8 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 中秋日程不可删除，只能改倒计时时间\n"
-                    "- 到点后连播多句祝福，节后自动删掉该日程"
+                    "- Esc 改为隐藏窗口，再按一次显示；不再弹广告伪装"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

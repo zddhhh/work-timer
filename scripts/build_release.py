@@ -60,8 +60,6 @@ def main() -> None:
         "--hidden-import",
         "PIL.ImageTk",
         "--hidden-import",
-        "ad_disguise",
-        "--hidden-import",
         "autostart",
         "--hidden-import",
         "desktop_shortcut",
