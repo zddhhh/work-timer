@@ -22,6 +22,8 @@ WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TOPMOST = 0x00000008
 WS_EX_NOACTIVATE = 0x08000000
 HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
+GWL_EXSTYLE = -20
 SWP_SHOWWINDOW = 0x0040
 SWP_NOACTIVATE = 0x0010
 SW_SHOWNOACTIVATE = 4
@@ -225,6 +227,10 @@ user32.IsIconic.argtypes = [wintypes.HWND]
 user32.IsIconic.restype = wintypes.BOOL
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
+user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
 
 
 class LayeredPetWindow:
@@ -268,6 +274,7 @@ class LayeredPetWindow:
         self._just_resized = False
         self._desktop_changed = False
         self._user_hidden = False
+        self._need_topmost = True
         self._winevent_hooks: list = []
         self._winevent_proc = WINEVENTPROC(self._on_win_event)
 
@@ -381,8 +388,13 @@ class LayeredPetWindow:
         """左键单击回调，参数为窗口内坐标 (lx, ly)。"""
         self._on_left_click = fn
 
-    def _on_win_event(self, _hook, _event, _hwnd, _obj, _child, _thread, _time) -> None:
+    def _on_win_event(self, _hook, event, hwnd, _obj, _child, _thread, _time) -> None:
         self._desktop_changed = True
+        if self._user_hidden:
+            return
+        if event in (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_DESKTOPSWITCH):
+            if hwnd != self.hwnd:
+                self._need_topmost = True
 
     def destroy(self) -> None:
         for hook in self._winevent_hooks:
@@ -408,6 +420,7 @@ class LayeredPetWindow:
         self._user_hidden = False
         if self.hwnd:
             user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
+            self.keep_topmost()
 
     def _blit(self, *, move: bool) -> None:
         if not self.hwnd or not self._has_pixels:
@@ -467,10 +480,16 @@ class LayeredPetWindow:
         self.keep_topmost()
 
     def keep_topmost(self) -> None:
+        """钉回最前。ShowWindow 隐藏后再显示，Win11 常会丢掉 WS_EX_TOPMOST。"""
+        if not self.hwnd or self._closed or self._user_hidden:
+            return
+        hwnd = self.hwnd
         flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
-        if not self._user_hidden:
-            flags |= SWP_SHOWWINDOW
-        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+        ex = int(user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) or 0)
+        if not (ex & WS_EX_TOPMOST):
+            user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW)
+            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags | SWP_SHOWWINDOW)
 
     def present_bgra(self, bgra: bytes, alpha_mask: bytes) -> None:
         """只更新画面，不改窗口位置（避免切显示时乱跳）。"""
@@ -763,6 +782,13 @@ class LayeredPetWindow:
         while user32.PeekMessageW(ctypes.byref(msg), self.hwnd, 0, 0, PM_REMOVE):
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
+        # hwnd=-1 才吃到线程消息，WinEvent（切前台）靠这个才会回调
+        while user32.PeekMessageW(ctypes.byref(msg), wintypes.HWND(-1), 0, 0, PM_REMOVE):
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        if self._need_topmost:
+            self._need_topmost = False
+            self.keep_topmost()
 
     @property
     def closed(self) -> bool:

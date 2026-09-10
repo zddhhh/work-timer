@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- Esc 改为隐藏窗口，再按一次显示；不再弹广告伪装"
+                    "- 修好计时器被别的窗口盖住，会重新钉回最前"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

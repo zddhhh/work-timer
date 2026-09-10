@@ -2122,6 +2122,7 @@ class WorkTimer:
                 if self.win.desktop_changed:
                     self._force_surface_sample = True
                     self._last_key = ""
+                    self.win.keep_topmost()
                 if resizing:
                     was_resizing = True
                     self._sync_layout_from_window()
