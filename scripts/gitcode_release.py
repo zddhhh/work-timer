@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 检查更新不再使用 PowerShell，避免安全软件误报可疑脚本"
+                    "- 供 1.0.86 验证无 PowerShell 的检查更新"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
