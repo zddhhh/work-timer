@@ -2293,6 +2293,8 @@ class WorkTimer:
 
 def main() -> None:
     sys.excepthook = lambda *args: store.append_log("".join(__import__("traceback").format_exception(*args)))
+    if updater.run_ota_replace_if_requested():
+        return
     try:
         WorkTimer().run()
     except Exception as e:  # noqa: BLE001

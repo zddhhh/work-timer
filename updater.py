@@ -1,6 +1,7 @@
 """从 GitCode Release 检查/下载更新。"""
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from ctypes import wintypes
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -374,113 +376,197 @@ def download_update(
     return tmp
 
 
-def _spawn_replacer(ps1: str, pid: int) -> None:
-    tmp_dir = Path(tempfile.gettempdir())
-    ps1_path = tmp_dir / f"WorkTimer_update_{pid}.ps1"
-    ps1_path.write_text(ps1, encoding="utf-8")
-    create_no_window = 0x08000000
+_MIN_EXE = 1024 * 100
+_STILL_ACTIVE = 259
+_PROCESS_QUERY_LIMITED = 0x1000
+_ERROR_ACCESS_DENIED = 5
+_DETACHED = 0x00000008
+_NEW_GROUP = 0x00000200
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _arg_value(argv: list[str], name: str) -> str:
+    try:
+        i = argv.index(name)
+    except ValueError:
+        return ""
+    if i + 1 >= len(argv):
+        return ""
+    return argv[i + 1]
+
+
+def _pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    k32 = ctypes.windll.kernel32
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = k32.OpenProcess(_PROCESS_QUERY_LIMITED, False, pid)
+    if handle:
+        code = wintypes.DWORD(0)
+        k32.GetExitCodeProcess(handle, ctypes.byref(code))
+        k32.CloseHandle(handle)
+        return int(code.value) == _STILL_ACTIVE
+    return int(k32.GetLastError()) == _ERROR_ACCESS_DENIED
+
+
+def _ota_log(pid: int, msg: str) -> None:
+    line = f"[{time.strftime('%H:%M:%S')}] {msg}\n"
+    try:
+        p = Path(tempfile.gettempdir()) / f"WorkTimer_update_{pid}.log"
+        with p.open("a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        pass
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return os.path.normcase(str(a)) == os.path.normcase(str(b))
+
+
+def _file_ok(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size >= _MIN_EXE
+    except OSError:
+        return False
+
+
+def _unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _spawn_hidden(exe: Path, args: list[str], *, cwd: Path) -> None:
+    env = os.environ.copy()
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0
     subprocess.Popen(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-WindowStyle",
-            "Hidden",
-            "-File",
-            str(ps1_path),
-        ],
-        creationflags=create_no_window,
+        [str(exe), *args],
+        cwd=str(cwd),
+        env=env,
         close_fds=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        startupinfo=si,
+        creationflags=_DETACHED | _NEW_GROUP | _CREATE_NO_WINDOW,
     )
 
 
-def _replace_script(*, pid: int, new_exe: Path, cur: Path, already_staged: bool) -> str:
-    """等待本进程退出后，用 rename 替换 exe（比直接 Move 覆盖更稳）。"""
-    new_s = str(new_exe).replace("'", "''")
-    cur_s = str(cur).replace("'", "''")
-    cur_dir = str(cur.parent).replace("'", "''")
-    tmp_dir_s = str(Path(tempfile.gettempdir())).replace("'", "''")
-    log_s = str(Path(tempfile.gettempdir()) / f"WorkTimer_update_{pid}.log").replace("'", "''")
-    stage = "1" if already_staged else "0"
-    ver_s = str(APP_VERSION).replace("'", "''")
-    return f"""$ErrorActionPreference = 'Stop'
-function Log($m) {{ Add-Content -LiteralPath '{log_s}' -Value ("[{{0}}] {{1}}" -f (Get-Date -Format 'HH:mm:ss'), $m) -ErrorAction SilentlyContinue }}
-Log 'updater started'
-$deadline = (Get-Date).AddSeconds(120)
-while (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{
-  if ((Get-Date) -gt $deadline) {{ Log 'wait timeout, abort'; exit 1 }}
-  Start-Sleep -Milliseconds 400
-}}
-Log 'process exited'
-Start-Sleep -Seconds 1
-$cur = '{cur_s}'
-$new = '{new_s}'
-$staged = '{cur_s}.new'
-$old = '{cur_s}.old'
-if ({stage} -eq 0) {{
-  $src = Get-Item -LiteralPath $new
-  if ($src.Length -lt 100KB) {{ throw 'update file too small' }}
-  Copy-Item -LiteralPath $new -Destination $staged -Force
-  Log 'staged to .new'
-}} else {{
-  if (-not (Test-Path -LiteralPath $staged)) {{ throw 'missing staged .new' }}
-  if ((Get-Item -LiteralPath $staged).Length -lt 100KB) {{ throw 'staged file too small' }}
-  Log 'using existing .new'
-}}
-$ok = $false
-for ($i = 0; $i -lt 40; $i++) {{
-  try {{
-    if (Test-Path -LiteralPath $old) {{ Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }}
-    if (Test-Path -LiteralPath $cur) {{
-      Move-Item -LiteralPath $cur -Destination $old -Force
-    }}
-    Move-Item -LiteralPath $staged -Destination $cur -Force
-    $ok = $true
-    Log ('replaced ok, size=' + (Get-Item -LiteralPath $cur).Length)
-    break
-  }} catch {{
-    Log ("retry $i : " + $_.Exception.Message)
-    Start-Sleep -Milliseconds 500
-  }}
-}}
-if (-not $ok) {{
-  Log 'replace failed, fallback LocalAppData'
-  $ErrorActionPreference = 'Stop'
-  $fbDir = Join-Path $env:LOCALAPPDATA 'WorkTimer'
-  New-Item -ItemType Directory -Force -Path $fbDir | Out-Null
-  $fb = Join-Path $fbDir 'WorkTimer.exe'
-  $from = $staged
-  if (-not (Test-Path -LiteralPath $from)) {{ $from = $new }}
-  Copy-Item -LiteralPath $from -Destination $fb -Force
-  Set-Content -LiteralPath (Join-Path $fbDir 'installed_version.txt') -Value '{ver_s}' -Encoding UTF8
-  $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
-  $p = Start-Process -FilePath $fb -WorkingDirectory $fbDir -PassThru
-  Log ('fallback restarted pid=' + $p.Id)
-  Remove-Item -LiteralPath $new,$old,'{cur_s}.bak' -Force -ErrorAction SilentlyContinue
-  Get-ChildItem -LiteralPath '{tmp_dir_s}' -Filter 'WorkTimer_update_*' -ErrorAction SilentlyContinue | ForEach-Object {{
-    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
-  }}
-  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-  exit 0
-}}
-Remove-Item -LiteralPath $new,$old,'{cur_s}.bak' -Force -ErrorAction SilentlyContinue
-Get-ChildItem -LiteralPath '{cur_dir}' -Filter 'WorkTimer-*.exe' -ErrorAction SilentlyContinue | ForEach-Object {{
-  if ($_.FullName -ne $cur) {{
-    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
-  }}
-}}
-Get-ChildItem -LiteralPath '{tmp_dir_s}' -Filter 'WorkTimer_update_*' -ErrorAction SilentlyContinue | ForEach-Object {{
-  Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
-}}
-$env:PYINSTALLER_RESET_ENVIRONMENT = '1'
-$p = Start-Process -FilePath $cur -WorkingDirectory '{cur_dir}' -PassThru
-Log ('restarted pid=' + $p.Id)
-Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-"""
+def _spawn_ota_helper(*, helper: Path, pid: int, target: Path, staged: Path, source: Path) -> None:
+    _spawn_hidden(
+        helper,
+        [
+            "--ota-replace",
+            "--wait-pid",
+            str(pid),
+            "--target",
+            str(target),
+            "--staged",
+            str(staged),
+            "--source",
+            str(source),
+        ],
+        cwd=helper.parent,
+    )
+
+
+def _fallback_install(source: Path, staged: Path) -> Path:
+    dest = store.install_exe_path()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    src = staged if _file_ok(staged) else source
+    if not _file_ok(src):
+        raise RuntimeError("没有可用的更新文件")
+    shutil.copy2(src, dest)
+    return dest
+
+
+def _replace_once(cur: Path, staged: Path, old: Path) -> None:
+    _unlink(old)
+    if cur.exists():
+        cur.replace(old)
+    if not staged.exists():
+        raise OSError("missing staged")
+    staged.replace(cur)
+
+
+def run_ota_replace_if_requested(argv: list[str] | None = None) -> bool:
+    """新 exe 自己当更新助手：等旧进程退出后换文件再启动。不走 PowerShell。"""
+    args = list(sys.argv if argv is None else argv)
+    if "--ota-replace" not in args:
+        return False
+    pid_s = _arg_value(args, "--wait-pid")
+    target = Path(_arg_value(args, "--target"))
+    staged = Path(_arg_value(args, "--staged"))
+    source = Path(_arg_value(args, "--source"))
+    try:
+        pid = int(pid_s)
+    except ValueError:
+        pid = 0
+    _ota_log(pid, "updater started")
+    try:
+        deadline = time.monotonic() + 120
+        while _pid_running(pid):
+            if time.monotonic() > deadline:
+                _ota_log(pid, "wait timeout, abort")
+                return True
+            time.sleep(0.4)
+        _ota_log(pid, "process exited")
+        time.sleep(1)
+        if not _file_ok(staged):
+            if not _file_ok(source):
+                raise RuntimeError("update file too small")
+            if not _same_file(source, staged):
+                shutil.copy2(source, staged)
+                _ota_log(pid, "staged to .new")
+        else:
+            _ota_log(pid, "using existing .new")
+        if not _file_ok(staged):
+            raise RuntimeError("staged file too small")
+        old = Path(str(target) + ".old")
+        ok = False
+        for i in range(40):
+            try:
+                _replace_once(target, staged, old)
+                ok = True
+                _ota_log(pid, f"replaced ok, size={target.stat().st_size}")
+                break
+            except OSError as e:
+                _ota_log(pid, f"retry {i} : {e}")
+                time.sleep(0.5)
+        if not ok:
+            _ota_log(pid, "replace failed, fallback LocalAppData")
+            fb = _fallback_install(source, staged)
+            _spawn_stable(fb)
+            _ota_log(pid, "fallback restarted")
+        else:
+            _spawn_stable(target)
+            _ota_log(pid, "restarted")
+        me = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else None
+        for p in (old, Path(str(target) + ".bak"), source):
+            if me is None or not _same_file(p, me):
+                _unlink(p)
+        if target.parent.is_dir():
+            for p in target.parent.glob("WorkTimer-*.exe"):
+                if me is None or not _same_file(p, me):
+                    if not _same_file(p, target):
+                        _unlink(p)
+    except Exception as e:  # noqa: BLE001
+        _ota_log(pid, f"helper failed: {e}")
+        try:
+            store.append_log(f"ota-replace: {e}")
+        except OSError:
+            pass
+    return True
 
 
 def apply_update_and_restart(new_exe: Path) -> None:
@@ -495,8 +581,8 @@ def apply_update_and_restart(new_exe: Path) -> None:
         _spawn_stable(dest)
         return
     pid = os.getpid()
-    ps1 = _replace_script(pid=pid, new_exe=new_exe, cur=cur, already_staged=False)
-    _spawn_replacer(ps1, pid)
+    staged = Path(str(cur) + ".new")
+    _spawn_ota_helper(helper=new_exe, pid=pid, target=cur, staged=staged, source=new_exe)
 
 
 def resume_pending_update() -> bool:
@@ -506,8 +592,12 @@ def resume_pending_update() -> bool:
     if cur is None or pending is None:
         return False
     pid = os.getpid()
-    ps1 = _replace_script(pid=pid, new_exe=pending, cur=cur, already_staged=True)
-    _spawn_replacer(ps1, pid)
+    helper = Path(tempfile.gettempdir()) / f"WorkTimer_update_{pid}_helper.exe"
+    try:
+        shutil.copy2(pending, helper)
+    except OSError:
+        return False
+    _spawn_ota_helper(helper=helper, pid=pid, target=cur, staged=pending, source=pending)
     return True
 
 

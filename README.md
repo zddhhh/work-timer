@@ -49,7 +49,7 @@ python main.py
 
 ## 自动更新
 
-右键「检查更新」读 GitCode Release，下载 `WorkTimer.exe` 并重启替换。
+右键「检查更新」读 GitCode Release，下载 `WorkTimer.exe` 并由新版自己替换重启（不走 PowerShell）。
 
 发版：改 `version.py` 的 `APP_VERSION` → 打包 → 上传 Release 附件，文件名保持 `WorkTimer.exe`。
 

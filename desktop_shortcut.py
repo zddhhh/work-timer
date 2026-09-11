@@ -1,15 +1,99 @@
-"""桌面快捷方式：没有安装向导，首次落到本机时建一次。"""
+"""桌面快捷方式：没有安装向导，首次落到本机时建一次。不走 PowerShell。"""
 from __future__ import annotations
 
 import ctypes
-import subprocess
 import sys
+from ctypes import POINTER, WINFUNCTYPE, byref, c_void_p, c_wchar_p
+from ctypes.wintypes import BOOL, DWORD, LPCWSTR, WORD
 from pathlib import Path
 
 _LNK_NAME = "下班倒计时.lnk"
 _ICON_STAMP = "hourglass-1"
 _CSIDL_DESKTOPDIRECTORY = 0x0010
-_CREATE_NO_WINDOW = 0x08000000
+_CLSCTX_INPROC_SERVER = 1
+_COINIT_APARTMENTTHREADED = 0x2
+_CLSID_SHELL_LINK = "{00021401-0000-0000-C000-000000000046}"
+_IID_ISHELL_LINK_W = "{000214F9-0000-0000-C000-000000000046}"
+_IID_IPERSIST_FILE = "{0000010b-0000-0000-C000-000000000046}"
+
+ole32 = ctypes.WinDLL("ole32")
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = (
+        ("Data1", DWORD),
+        ("Data2", WORD),
+        ("Data3", WORD),
+        ("Data4", ctypes.c_ubyte * 8),
+    )
+
+
+ole32.CLSIDFromString.argtypes = [LPCWSTR, POINTER(_GUID)]
+ole32.CLSIDFromString.restype = ctypes.HRESULT
+ole32.CoInitializeEx.argtypes = [c_void_p, DWORD]
+ole32.CoInitializeEx.restype = ctypes.HRESULT
+ole32.CoCreateInstance.argtypes = [
+    POINTER(_GUID),
+    c_void_p,
+    DWORD,
+    POINTER(_GUID),
+    POINTER(c_void_p),
+]
+ole32.CoCreateInstance.restype = ctypes.HRESULT
+
+
+def _guid(text: str) -> _GUID:
+    g = _GUID()
+    if ole32.CLSIDFromString(c_wchar_p(text), byref(g)):
+        raise OSError("bad guid")
+    return g
+
+
+def _vtbl(punk: int):
+    obj = ctypes.cast(c_void_p(punk), POINTER(c_void_p))
+    return ctypes.cast(obj.contents, POINTER(c_void_p))
+
+
+def _release(punk: int) -> None:
+    fn = WINFUNCTYPE(ctypes.c_ulong, c_void_p)(_vtbl(punk)[2])
+    fn(punk)
+
+
+def _query_interface(punk: int, iid: str) -> int:
+    out = c_void_p()
+    g = _guid(iid)
+    fn = WINFUNCTYPE(ctypes.HRESULT, c_void_p, POINTER(_GUID), POINTER(c_void_p))(_vtbl(punk)[0])
+    hr = fn(punk, byref(g), byref(out))
+    if hr or not out.value:
+        return 0
+    return int(out.value)
+
+
+_com_ready = False
+
+
+def _ensure_com() -> None:
+    global _com_ready
+    if _com_ready:
+        return
+    hr = ole32.CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
+    # S_OK / S_FALSE / RPC_E_CHANGED_MODE 都继续试
+    if hr not in (0, 1) and (hr & 0xFFFFFFFF) != 0x80010106:
+        pass
+    _com_ready = True
+
+
+def _create_shell_link() -> int:
+    _ensure_com()
+    punk = c_void_p()
+    clsid = _guid(_CLSID_SHELL_LINK)
+    iid = _guid(_IID_ISHELL_LINK_W)
+    hr = ole32.CoCreateInstance(
+        byref(clsid), None, _CLSCTX_INPROC_SERVER, byref(iid), byref(punk)
+    )
+    if hr or not punk.value:
+        raise OSError(f"CoCreateInstance {hr}")
+    return int(punk.value)
 
 
 def _desktop_dir() -> Path | None:
@@ -26,10 +110,6 @@ def _desktop_dir() -> Path | None:
     return fallback if fallback.is_dir() else None
 
 
-def _ps_quote(s: str) -> str:
-    return "'" + str(s).replace("'", "''") + "'"
-
-
 def _current_exe() -> Path | None:
     if not getattr(sys, "frozen", False):
         return None
@@ -39,54 +119,67 @@ def _current_exe() -> Path | None:
         return None
 
 
-def _run_ps(command: str) -> str:
-    try:
-        proc = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-STA",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                command,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            creationflags=_CREATE_NO_WINDOW,
-            stdin=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    out = (proc.stdout or "").strip()
-    return out
-
-
 def _read_target(lnk: Path) -> str:
     if not lnk.exists():
         return ""
-    cmd = (
-        "$w = New-Object -ComObject WScript.Shell; "
-        f"$w.CreateShortcut({_ps_quote(str(lnk))}).TargetPath"
-    )
-    return _run_ps(cmd)
+    try:
+        sl = _create_shell_link()
+    except OSError:
+        return ""
+    persist = 0
+    try:
+        persist = _query_interface(sl, _IID_IPERSIST_FILE)
+        if not persist:
+            return ""
+        load = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR, DWORD)(_vtbl(persist)[5])
+        if load(persist, str(lnk), 0):
+            return ""
+        get_path = WINFUNCTYPE(
+            ctypes.HRESULT, c_void_p, ctypes.c_wchar_p, ctypes.c_int, c_void_p, DWORD
+        )(_vtbl(sl)[3])
+        buf = ctypes.create_unicode_buffer(32768)
+        if get_path(sl, buf, 32768, None, 0):
+            return ""
+        return buf.value
+    except OSError:
+        return ""
+    finally:
+        if persist:
+            _release(persist)
+        _release(sl)
 
 
 def _write_shortcut(lnk: Path, exe: Path) -> bool:
-    cmd = (
-        "$w = New-Object -ComObject WScript.Shell; "
-        f"$s = $w.CreateShortcut({_ps_quote(str(lnk))}); "
-        f"$s.TargetPath = {_ps_quote(str(exe))}; "
-        f"$s.WorkingDirectory = {_ps_quote(str(exe.parent))}; "
-        f"$s.IconLocation = {_ps_quote(str(exe) + ',0')}; "
-        "$s.Description = '弹性下班计时器'; "
-        "$s.Save()"
-    )
-    _run_ps(cmd)
-    return lnk.exists()
+    try:
+        sl = _create_shell_link()
+    except OSError:
+        return False
+    persist = 0
+    try:
+        v = _vtbl(sl)
+        set_path = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR)(v[20])
+        set_dir = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR)(v[9])
+        set_desc = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR)(v[7])
+        set_icon = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR, ctypes.c_int)(v[17])
+        if set_path(sl, str(exe)):
+            return False
+        if set_dir(sl, str(exe.parent)):
+            return False
+        set_desc(sl, "弹性下班计时器")
+        set_icon(sl, str(exe), 0)
+        persist = _query_interface(sl, _IID_IPERSIST_FILE)
+        if not persist:
+            return False
+        save = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR, BOOL)(_vtbl(persist)[6])
+        if save(persist, str(lnk), True):
+            return False
+        return lnk.exists()
+    except OSError:
+        return False
+    finally:
+        if persist:
+            _release(persist)
+        _release(sl)
 
 
 def _notify_shell() -> None:

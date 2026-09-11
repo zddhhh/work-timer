@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 右键不再放「记住固定下班」；该选项只在设置固定下班时出现"
+                    "- 检查更新不再使用 PowerShell，避免安全软件误报可疑脚本"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
