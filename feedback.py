@@ -8,6 +8,7 @@ import urllib.request
 import webbrowser
 from datetime import datetime
 
+import store
 import updater
 from version import APP_VERSION
 
@@ -26,7 +27,23 @@ def open_repo(cfg: dict) -> None:
 
 
 def _token(cfg: dict) -> str:
-    return str(cfg.get("feedback_token") or cfg.get("gitcode_token") or "").strip()
+    """只用专用 feedback_token，不用发版用的 gitcode_token。"""
+    t = str(cfg.get("feedback_token") or "").strip()
+    if t:
+        return t
+    for name in ("update_defaults.secret.json", "update_defaults.json"):
+        p = store.app_dir() / name
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict):
+            t = str(data.get("feedback_token") or "").strip()
+            if t:
+                return t
+    return ""
 
 
 def _issue_new_url(cfg: dict, title: str, body: str) -> str:
@@ -83,6 +100,16 @@ def _post_issue(owner: str, repo: str, title: str, body: str, token: str) -> str
 
 def submit(cfg: dict, title: str, text: str) -> tuple[str, str]:
     """返回 (ok|browser|err, 说明或链接)。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    if str(cfg.get("feedback_date") or "") != today:
+        cfg["feedback_date"] = today
+        cfg["feedback_count"] = 0
+    try:
+        n = int(cfg.get("feedback_count") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n >= 8:
+        return "err", "今天反馈次数已用完，明天再试"
     title = (title or "").strip() or "用户反馈"
     if not title.startswith("[反馈]"):
         title = f"[反馈] {title}"
@@ -92,6 +119,8 @@ def submit(cfg: dict, title: str, text: str) -> tuple[str, str]:
         try:
             owner, name = updater.parse_repo(repo_url(cfg))
             url = _post_issue(owner, name, title, body, token)
+            cfg["feedback_count"] = n + 1
+            store.save_config(cfg)
             return "ok", url
         except Exception as e:  # noqa: BLE001
             return "err", str(e)

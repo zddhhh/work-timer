@@ -1022,41 +1022,7 @@ class WorkTimer:
         self._last_key = ""
 
     def _open_about(self) -> None:
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=400, height=280)
-        bar = tk.Frame(dlg, bg=_CARD_BG)
-        bar.pack(side="bottom", fill="x", pady=(8, 16))
-        tk.Label(
-            dlg, text="关于", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(pady=(18, 8), padx=20, anchor="w")
-        tk.Label(
-            dlg,
-            text=f"下班倒计时  {APP_VERSION}",
-            fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11),
-        ).pack(padx=20, anchor="w")
-        tk.Label(
-            dlg,
-            text=feedback.repo_url(self.cfg),
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
-            wraplength=350, justify="left",
-        ).pack(padx=20, pady=(8, 0), anchor="w")
-        want_fb = {"v": False}
-
-        def go_feedback() -> None:
-            want_fb["v"] = True
-            dlg.destroy()
-
-        _card_btn(bar, "打开官方仓库", lambda: feedback.open_repo(self.cfg), accent=True).pack(
-            side="left", padx=(20, 6)
-        )
-        _card_btn(bar, "用户反馈", go_feedback).pack(side="left", padx=6)
-        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
-        _fit_card(dlg, min_w=400, min_h=240, near=self._dialog_near())
-        _run_card_modal(dlg, self.win)
-        if want_fb["v"]:
-            self._open_feedback()
-
-    def _open_feedback(self) -> None:
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=420)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=560)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         body = tk.Frame(dlg, bg=_CARD_BG)
@@ -1064,25 +1030,39 @@ class WorkTimer:
         err = tk.StringVar(value="")
         _pack_err_line(body, err, wrap=420)
         tk.Label(
-            body, text="用户反馈", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+            body, text="关于", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(pady=(16, 6), anchor="w")
         tk.Label(
-            body, text="会发到官方仓库的 Issue，方便我们拉下来看。",
+            body,
+            text=f"下班倒计时  {APP_VERSION}",
+            fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11),
+        ).pack(anchor="w")
+        tk.Label(
+            body,
+            text=feedback.repo_url(self.cfg),
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=420, justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(
+            body, text="用户反馈", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(anchor="w", pady=(14, 4))
+        tk.Label(
+            body, text="发到官方仓库 Issue，我们可随时拉下来看。",
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
         ).pack(anchor="w")
         title_var = tk.StringVar()
         tk.Label(body, text="标题", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
-            anchor="w", pady=(10, 0)
+            anchor="w", pady=(8, 0)
         )
         tk.Entry(
             body, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
             insertbackground=_CARD_FG, relief="flat",
         ).pack(anchor="w", ipady=5, fill="x")
         tk.Label(body, text="内容", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
-            anchor="w", pady=(10, 0)
+            anchor="w", pady=(8, 0)
         )
         text = tk.Text(
-            body, height=8, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
+            body, height=7, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
             insertbackground=_CARD_FG, relief="flat", bd=0, highlightthickness=0, padx=8, pady=8,
         )
         text.pack(anchor="w", fill="both", expand=True, pady=(4, 8))
@@ -1105,25 +1085,19 @@ class WorkTimer:
             kind, info = feedback.submit(self.cfg, title, content)
             busy["v"] = False
             if kind == "ok":
-                err.set("")
-                dlg.destroy()
-                try:
-                    messagebox.showinfo("用户反馈", f"已提交到仓库\n{info}", parent=self._tk_root())
-                except Exception:
-                    pass
+                err.set("已提交到仓库")
+                title_var.set("")
+                text.delete("1.0", "end")
                 return
             if kind == "browser":
                 err.set("已打开仓库反馈页，登录后点提交即可。")
                 return
             err.set(info)
 
-        _card_btn(bar, "提交", send, accent=True).pack(side="left", padx=(18, 6))
-        _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
-        _reveal_card(dlg, min_w=480, min_h=400, near=self._dialog_near())
-        try:
-            text.focus_set()
-        except Exception:
-            pass
+        _card_btn(bar, "打开官方仓库", lambda: feedback.open_repo(self.cfg)).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "提交反馈", send, accent=True).pack(side="left", padx=6)
+        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        _reveal_card(dlg, min_w=480, min_h=520, near=self._dialog_near())
         _run_card_modal(dlg, self.win)
 
     def _open_idle_dialog(self) -> None:
@@ -1857,8 +1831,6 @@ class WorkTimer:
             self._set_remember_offwork(not self._remember_offwork())
         elif op == "about":
             self._open_about()
-        elif op == "feedback":
-            self._open_feedback()
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":

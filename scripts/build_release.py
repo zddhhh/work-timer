@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,23 @@ OUT_DIR = ROOT / "release"
 EXE_PATH = OUT_DIR / f"{DIST_NAME}.exe"
 
 
+def _bundle_update_defaults() -> Path:
+    """把本地 update_defaults.secret.json 的 feedback_token 打进包，不改仓库里的 json。"""
+    data = json.loads((ROOT / "update_defaults.json").read_text(encoding="utf-8"))
+    secret = ROOT / "update_defaults.secret.json"
+    if secret.exists():
+        extra = json.loads(secret.read_text(encoding="utf-8"))
+        if isinstance(extra, dict):
+            for k, v in extra.items():
+                if v not in ("", None):
+                    data[k] = v
+    out_dir = ROOT / "build" / "_bundle"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "update_defaults.json"
+    out.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return out
+
+
 def main() -> None:
     py = str(VENV_PY if VENV_PY.exists() else sys.executable)
     for p in (ROOT / "build", OUT_DIR, ROOT / f"{DIST_NAME}.spec"):
@@ -23,6 +41,7 @@ def main() -> None:
         elif p.is_file():
             p.unlink(missing_ok=True)
 
+    bundled_defaults = _bundle_update_defaults()
     cmd = [
         py,
         "-m",
@@ -40,7 +59,7 @@ def main() -> None:
         "--workpath",
         str(ROOT / "build"),
         "--add-data",
-        "update_defaults.json;.",
+        f"{bundled_defaults};.",
         "--add-data",
         "themes.json;.",
         "--add-data",

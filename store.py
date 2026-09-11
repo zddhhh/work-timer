@@ -130,7 +130,9 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> None:
     try:
-        config_path().write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        out = dict(cfg)
+        out.pop("feedback_token", None)
+        config_path().write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         pass
 

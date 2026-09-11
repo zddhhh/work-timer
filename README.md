@@ -34,8 +34,7 @@ python main.py
 | 右键 → 显示方式 | 时分秒 / 分钟 / 秒 |
 | 右键 → 记住固定下班时间 | 开关，默认开；固定下班点会跨天沿用，关掉则每天重设 |
 | 右键 → Esc 隐藏窗口 | 开关，默认关；打开后 Esc 隐藏计时器，再按 Esc 显示 |
-| 右键 → 用户反馈 | 填建议/问题，发到官方仓库 Issue |
-| 右键 → 关于 | 版本号，可打开官方仓库 |
+| 右键 → 关于 | 版本号、打开官方仓库、提交用户反馈 |
 | 右键 → 检查更新 | GitCode OTA |
 | 右键 → 退出 | 退出 |
 
@@ -59,7 +58,7 @@ Windows 误报见 [`docs/Windows安全说明.md`](docs/Windows安全说明.md)�
 
 ## 用户反馈
 
-右键「用户反馈」会发到仓库 Issue（标题带 `[反馈]`）。本机拉下来分析：
+右键「关于」里提交，会发到仓库 Issue（标题带 `[反馈]`）。本机拉下来分析：
 
 ```powershell
 $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
@@ -67,6 +66,14 @@ $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
 ```
 
 文件写在 `feedback/`（不进 git）。
+
+给用户免登录提交：头像 → 个人设置 → 访问令牌，新建一个 **只勾选 Issue**（不要勾选代码推送/项目设置）的 PAT，复制成 `update_defaults.secret.json`：
+
+```json
+{ "feedback_token": "你的PAT" }
+```
+
+然后打包。这个文件不进 git。令牌仍可能从 exe 里被拆出来刷 Issue，所以权限一定要收窄，并设过期时间。
 
 ## 在线换皮（不用发新版本）
 

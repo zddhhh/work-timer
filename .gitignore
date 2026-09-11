@@ -8,4 +8,5 @@ release/
 *.spec
 *.log
 .gitcode_token
+update_defaults.secret.json
 feedback/

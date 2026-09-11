@@ -81,7 +81,6 @@ ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
 ID_ABOUT = 13
-ID_FEEDBACK = 14
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -715,7 +714,6 @@ class LayeredPetWindow:
         )
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
-        user32.AppendMenuW(hmenu, MF_STRING, ID_FEEDBACK, "用户反馈…")
         user32.AppendMenuW(hmenu, MF_STRING, ID_ABOUT, "关于…")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_QUIT, "退出")
@@ -739,8 +737,6 @@ class LayeredPetWindow:
             return "quit"
         if cmd == ID_CHECK_UPDATE:
             return "update"
-        if cmd == ID_FEEDBACK:
-            return "feedback"
         if cmd == ID_ABOUT:
             return "about"
         if cmd == ID_SET_TIME:

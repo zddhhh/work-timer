@@ -108,8 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 固定下班时间默认跨天记住\n"
-                    "- 关于可打开官方仓库，用户反馈发到 Issue"
+                    "- 关于页可打开仓库并提交反馈（可用仅 Issue 的 token）"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
