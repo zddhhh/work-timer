@@ -58,7 +58,7 @@ Windows 误报见 [`docs/Windows安全说明.md`](docs/Windows安全说明.md)�
 
 ## 用户反馈
 
-右键「关于」里提交，会发到仓库 Issue（标题带 `[反馈]`）。本机拉下来分析：
+右键「关于」里提交，会直接发到仓库 Issue（标题带 `[反馈]`），用户不用登录 GitCode。本机拉下来分析：
 
 ```powershell
 $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
