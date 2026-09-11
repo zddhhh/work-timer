@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 供 1.0.86 验证无 PowerShell 的检查更新"
+                    "- 开机自启动改为启动文件夹快捷方式，不再写 Run 注册表"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

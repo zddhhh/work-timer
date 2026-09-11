@@ -149,7 +149,7 @@ def _read_target(lnk: Path) -> str:
         _release(sl)
 
 
-def _write_shortcut(lnk: Path, exe: Path) -> bool:
+def _write_shortcut(lnk: Path, exe: Path, *, arguments: str = "") -> bool:
     try:
         sl = _create_shell_link()
     except OSError:
@@ -161,9 +161,12 @@ def _write_shortcut(lnk: Path, exe: Path) -> bool:
         set_dir = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR)(v[9])
         set_desc = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR)(v[7])
         set_icon = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR, ctypes.c_int)(v[17])
+        set_args = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR)(v[11])
         if set_path(sl, str(exe)):
             return False
         if set_dir(sl, str(exe.parent)):
+            return False
+        if arguments and set_args(sl, arguments):
             return False
         set_desc(sl, "弹性下班计时器")
         set_icon(sl, str(exe), 0)
