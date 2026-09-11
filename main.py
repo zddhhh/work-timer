@@ -19,6 +19,7 @@ import autostart
 import backdrop
 import desktop_shortcut
 import festival
+import feedback
 import flex_time
 import kinetic
 import layered_win
@@ -473,16 +474,18 @@ def _ask_offwork_setup(
     mode: str,
     start_preset: tuple[int, int] | None,
     off_preset: tuple[int, int] | None,
+    remember_off: bool = True,
     near: tuple[int, int] | None = None,
     win: layered_win.LayeredPetWindow | None = None,
-) -> tuple[str, tuple[int, int]] | None:
-    """统一设置下班：卡片风无边框。返回 (mode, hm)。"""
-    result: list[tuple[str, tuple[int, int]] | None] = [None]
-    dlg = _card_dialog(parent, near=near, width=400, height=380)
+) -> tuple[str, tuple[int, int], bool] | None:
+    """统一设置下班：卡片风无边框。返回 (mode, hm, 是否记住固定下班)。"""
+    result: list[tuple[str, tuple[int, int], bool] | None] = [None]
+    dlg = _card_dialog(parent, near=near, width=400, height=430)
     bar = tk.Frame(dlg, bg=_CARD_BG)
     bar.pack(side="bottom", fill="x", pady=(8, 16))
     init_mode = "flex" if mode == "flex" else "direct"
     mode_var = tk.StringVar(value=init_mode)
+    remember_var = tk.BooleanVar(value=bool(remember_off))
     sh, sm = start_preset if start_preset else (9, 0)
     oh, om = off_preset if off_preset else (18, 0)
     start_var = tk.StringVar(value="" if start_preset is None else f"{sh}:{sm:02d}")
@@ -530,21 +533,34 @@ def _ask_offwork_setup(
     tk.Label(dlg, textvariable=preview, fg="#7ec8ff", bg=_CARD_BG, font=("Microsoft YaHei UI", 10)).pack(
         padx=20, anchor="w"
     )
+    remember_row = tk.Frame(dlg, bg=_CARD_BG)
+    tk.Checkbutton(
+        remember_row,
+        text="记住这个下班时间，第二天不用再设",
+        variable=remember_var,
+        fg=_CARD_FG,
+        bg=_CARD_BG,
+        activebackground=_CARD_BG,
+        activeforeground=_CARD_FG,
+        selectcolor=_CARD_BTN,
+        font=("Microsoft YaHei UI", 10),
+        anchor="w",
+    ).pack(anchor="w")
     err = tk.StringVar(value="")
-    tk.Label(dlg, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
-        padx=20, pady=(6, 0), anchor="w"
-    )
+    err_lbl = tk.Label(dlg, textvariable=err, fg="#ff8b8b", bg=_CARD_BG, font=("Microsoft YaHei UI", 9))
+    err_lbl.pack(padx=20, pady=(6, 0), anchor="w")
 
     def current_var() -> tk.StringVar:
         return start_var if mode_var.get() == "flex" else off_var
 
     def sync_entry_from_mode(*_a) -> None:
         entry.configure(textvariable=current_var())
-        tip.set(
-            "到岗时间，例如 8.45 / 9:10"
-            if mode_var.get() == "flex"
-            else "下班时刻，例如 18:00"
-        )
+        if mode_var.get() == "flex":
+            tip.set("到岗时间，例如 8.45 / 9:10")
+            remember_row.pack_forget()
+        else:
+            tip.set("下班时刻，例如 18:00")
+            remember_row.pack(padx=20, pady=(10, 0), anchor="w", before=err_lbl)
         refresh_preview()
 
     def refresh_preview(*_a) -> None:
@@ -570,24 +586,25 @@ def _ask_offwork_setup(
 
     def ok() -> None:
         err.set("")
+        remember = bool(remember_var.get())
         if mode_var.get() == "flex":
             parsed = flex_time.parse_start(start_var.get())
             if parsed is None:
                 err.set("到岗请填 8:30–9:30")
                 return
-            result[0] = ("flex", parsed)
+            result[0] = ("flex", parsed, remember)
         else:
             parsed = flex_time.parse_clock(off_var.get())
             if parsed is None:
                 err.set("请填合法时刻，例如 18:00")
                 return
-            result[0] = ("direct", parsed)
+            result[0] = ("direct", parsed, remember)
         dlg.destroy()
 
     _card_btn(bar, "开始计时", ok, accent=True).pack(side="left", padx=(20, 6))
     _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
     dlg.bind("<Return>", lambda _e: ok())
-    _fit_card(dlg, min_w=400, min_h=360, near=near)
+    _fit_card(dlg, min_w=400, min_h=400, near=near)
     _run_card_modal(dlg, win)
     return result[0]
 
@@ -675,6 +692,7 @@ class WorkTimer:
         except Exception:
             pass
         self.cfg["esc_disguise"] = bool(self.cfg.get("esc_disguise"))
+        self.cfg["remember_offwork"] = bool(self.cfg.get("remember_offwork", True))
         self.cfg["auto_start"] = bool(self.cfg.get("auto_start"))
         try:
             autostart.sync(self.cfg["auto_start"])
@@ -701,12 +719,20 @@ class WorkTimer:
         mode = str(self.cfg.get("time_mode") or "flex")
         return mode if mode in ("flex", "direct") else "flex"
 
+    def _remember_offwork(self) -> bool:
+        return bool(self.cfg.get("remember_offwork", True))
+
+    def _set_remember_offwork(self, on: bool) -> None:
+        self.cfg["remember_offwork"] = bool(on)
+        store.save_config(self.cfg)
+        self._last_key = ""
+
     def _has_target(self) -> bool:
-        if str(self.cfg.get("start_date") or "") != self._today():
-            return False
+        dated = str(self.cfg.get("start_date") or "") == self._today()
         if self._time_mode() == "direct":
-            return isinstance(self.cfg.get("off_h"), int) and isinstance(self.cfg.get("off_m"), int)
-        return self._has_start()
+            has_off = isinstance(self.cfg.get("off_h"), int) and isinstance(self.cfg.get("off_m"), int)
+            return has_off and (dated or self._remember_offwork())
+        return dated and self._has_start()
 
     def _off_hm(self) -> tuple[int, int] | None:
         if not self._has_target():
@@ -975,23 +1001,130 @@ class WorkTimer:
             mode=mode,
             start_preset=start_preset,
             off_preset=off_preset,
+            remember_off=self._remember_offwork(),
             near=self._dialog_near(),
             win=self.win,
         )
         if picked is None:
             return
-        mode, hm = picked
+        mode, hm, remember = picked
         self.cfg["time_mode"] = mode
         self.cfg["start_date"] = self._today()
         if mode == "flex":
             self.cfg["start_h"], self.cfg["start_m"] = hm
         else:
             self.cfg["off_h"], self.cfg["off_m"] = hm
+            self.cfg["remember_offwork"] = bool(remember)
         schedules.ensure_fields(self.cfg)
         schedules.set_pinned(self.cfg, schedules.OFFWORK_ID, True)
         self.cfg["active_pin_id"] = schedules.OFFWORK_ID
         store.save_config(self.cfg)
         self._last_key = ""
+
+    def _open_about(self) -> None:
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=400, height=280)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        tk.Label(
+            dlg, text="关于", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(18, 8), padx=20, anchor="w")
+        tk.Label(
+            dlg,
+            text=f"下班倒计时  {APP_VERSION}",
+            fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11),
+        ).pack(padx=20, anchor="w")
+        tk.Label(
+            dlg,
+            text=feedback.repo_url(self.cfg),
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=350, justify="left",
+        ).pack(padx=20, pady=(8, 0), anchor="w")
+        want_fb = {"v": False}
+
+        def go_feedback() -> None:
+            want_fb["v"] = True
+            dlg.destroy()
+
+        _card_btn(bar, "打开官方仓库", lambda: feedback.open_repo(self.cfg), accent=True).pack(
+            side="left", padx=(20, 6)
+        )
+        _card_btn(bar, "用户反馈", go_feedback).pack(side="left", padx=6)
+        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        _fit_card(dlg, min_w=400, min_h=240, near=self._dialog_near())
+        _run_card_modal(dlg, self.win)
+        if want_fb["v"]:
+            self._open_feedback()
+
+    def _open_feedback(self) -> None:
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=420)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        err = tk.StringVar(value="")
+        _pack_err_line(body, err, wrap=420)
+        tk.Label(
+            body, text="用户反馈", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 6), anchor="w")
+        tk.Label(
+            body, text="会发到官方仓库的 Issue，方便我们拉下来看。",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+        ).pack(anchor="w")
+        title_var = tk.StringVar()
+        tk.Label(body, text="标题", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w", pady=(10, 0)
+        )
+        tk.Entry(
+            body, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat",
+        ).pack(anchor="w", ipady=5, fill="x")
+        tk.Label(body, text="内容", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w", pady=(10, 0)
+        )
+        text = tk.Text(
+            body, height=8, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat", bd=0, highlightthickness=0, padx=8, pady=8,
+        )
+        text.pack(anchor="w", fill="both", expand=True, pady=(4, 8))
+        busy = {"v": False}
+
+        def send() -> None:
+            if busy["v"]:
+                return
+            title = title_var.get().strip()
+            content = text.get("1.0", "end-1c").strip()
+            if not title and not content:
+                err.set("请填写标题或内容")
+                return
+            busy["v"] = True
+            err.set("正在提交…")
+            try:
+                dlg.update()
+            except Exception:
+                pass
+            kind, info = feedback.submit(self.cfg, title, content)
+            busy["v"] = False
+            if kind == "ok":
+                err.set("")
+                dlg.destroy()
+                try:
+                    messagebox.showinfo("用户反馈", f"已提交到仓库\n{info}", parent=self._tk_root())
+                except Exception:
+                    pass
+                return
+            if kind == "browser":
+                err.set("已打开仓库反馈页，登录后点提交即可。")
+                return
+            err.set(info)
+
+        _card_btn(bar, "提交", send, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "取消", dlg.destroy).pack(side="left", padx=6)
+        _reveal_card(dlg, min_w=480, min_h=400, near=self._dialog_near())
+        try:
+            text.focus_set()
+        except Exception:
+            pass
+        _run_card_modal(dlg, self.win)
 
     def _open_idle_dialog(self) -> None:
         self._open_setup_dialog()
@@ -1703,6 +1836,7 @@ class WorkTimer:
             self._theme().id,
             esc_disguise=self._esc_disguise_on(),
             auto_start=self._auto_start_on(),
+            remember_offwork=self._remember_offwork(),
         )
         if op == "quit":
             self.running = False
@@ -1719,6 +1853,12 @@ class WorkTimer:
             self._set_esc_disguise(not self._esc_disguise_on())
         elif op == "toggle_auto_start":
             self._set_auto_start(not self._auto_start_on())
+        elif op == "toggle_remember_offwork":
+            self._set_remember_offwork(not self._remember_offwork())
+        elif op == "about":
+            self._open_about()
+        elif op == "feedback":
+            self._open_feedback()
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":

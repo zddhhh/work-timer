@@ -76,6 +76,8 @@ def main() -> None:
         "--hidden-import",
         "flex_time",
         "--hidden-import",
+        "feedback",
+        "--hidden-import",
         "updater",
         "--hidden-import",
         "win_drop",

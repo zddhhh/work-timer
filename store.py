@@ -83,6 +83,7 @@ def load_config() -> dict:
         "off_m": None,
         "time_mode": "flex",
         "start_date": "",
+        "remember_offwork": True,
         "display_mode": "hms",
         "theme": "ghost",
         "win_w": 248,

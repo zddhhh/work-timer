@@ -76,9 +76,12 @@ ID_REFRESH_THEMES = 5
 ID_SET_OFF = 6
 ID_SCHEDULES = 7
 ID_AUTO_START = 8
+ID_REMEMBER_OFF = 9
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
+ID_ABOUT = 13
+ID_FEEDBACK = 14
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -666,6 +669,7 @@ class LayeredPetWindow:
         *,
         esc_disguise: bool = False,
         auto_start: bool = False,
+        remember_offwork: bool = True,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -693,6 +697,12 @@ class LayeredPetWindow:
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(
             hmenu,
+            MF_STRING | (MF_CHECKED if remember_offwork else 0),
+            ID_REMEMBER_OFF,
+            "记住固定下班时间",
+        )
+        user32.AppendMenuW(
+            hmenu,
             MF_STRING | (MF_CHECKED if esc_disguise else 0),
             ID_DISGUISE,
             "Esc 隐藏窗口",
@@ -705,6 +715,8 @@ class LayeredPetWindow:
         )
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
+        user32.AppendMenuW(hmenu, MF_STRING, ID_FEEDBACK, "用户反馈…")
+        user32.AppendMenuW(hmenu, MF_STRING, ID_ABOUT, "关于…")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_QUIT, "退出")
         try:
@@ -727,12 +739,18 @@ class LayeredPetWindow:
             return "quit"
         if cmd == ID_CHECK_UPDATE:
             return "update"
+        if cmd == ID_FEEDBACK:
+            return "feedback"
+        if cmd == ID_ABOUT:
+            return "about"
         if cmd == ID_SET_TIME:
             return "set_time"
         if cmd == ID_SET_OFF:
             return "set_off"
         if cmd == ID_SCHEDULES:
             return "schedules"
+        if cmd == ID_REMEMBER_OFF:
+            return "toggle_remember_offwork"
         if cmd == ID_DISGUISE:
             return "toggle_esc_disguise"
         if cmd == ID_AUTO_START:
