@@ -722,11 +722,6 @@ class WorkTimer:
     def _remember_offwork(self) -> bool:
         return bool(self.cfg.get("remember_offwork", True))
 
-    def _set_remember_offwork(self, on: bool) -> None:
-        self.cfg["remember_offwork"] = bool(on)
-        store.save_config(self.cfg)
-        self._last_key = ""
-
     def _has_target(self) -> bool:
         dated = str(self.cfg.get("start_date") or "") == self._today()
         if self._time_mode() == "direct":
@@ -1012,6 +1007,7 @@ class WorkTimer:
         self.cfg["start_date"] = self._today()
         if mode == "flex":
             self.cfg["start_h"], self.cfg["start_m"] = hm
+            # 弹性每天重填到岗，不沿用固定下班点
         else:
             self.cfg["off_h"], self.cfg["off_m"] = hm
             self.cfg["remember_offwork"] = bool(remember)
@@ -1810,7 +1806,6 @@ class WorkTimer:
             self._theme().id,
             esc_disguise=self._esc_disguise_on(),
             auto_start=self._auto_start_on(),
-            remember_offwork=self._remember_offwork(),
         )
         if op == "quit":
             self.running = False
@@ -1827,8 +1822,6 @@ class WorkTimer:
             self._set_esc_disguise(not self._esc_disguise_on())
         elif op == "toggle_auto_start":
             self._set_auto_start(not self._auto_start_on())
-        elif op == "toggle_remember_offwork":
-            self._set_remember_offwork(not self._remember_offwork())
         elif op == "about":
             self._open_about()
         elif op == "fmt_hms":

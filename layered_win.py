@@ -76,7 +76,6 @@ ID_REFRESH_THEMES = 5
 ID_SET_OFF = 6
 ID_SCHEDULES = 7
 ID_AUTO_START = 8
-ID_REMEMBER_OFF = 9
 ID_FMT_HMS = 10
 ID_FMT_MIN = 11
 ID_FMT_SEC = 12
@@ -668,7 +667,6 @@ class LayeredPetWindow:
         *,
         esc_disguise: bool = False,
         auto_start: bool = False,
-        remember_offwork: bool = True,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -694,12 +692,6 @@ class LayeredPetWindow:
         user32.AppendMenuW(hmenu, MF_STRING, ID_SCHEDULES, "日程列表…")
         user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
-        user32.AppendMenuW(
-            hmenu,
-            MF_STRING | (MF_CHECKED if remember_offwork else 0),
-            ID_REMEMBER_OFF,
-            "记住固定下班时间",
-        )
         user32.AppendMenuW(
             hmenu,
             MF_STRING | (MF_CHECKED if esc_disguise else 0),
@@ -745,8 +737,6 @@ class LayeredPetWindow:
             return "set_off"
         if cmd == ID_SCHEDULES:
             return "schedules"
-        if cmd == ID_REMEMBER_OFF:
-            return "toggle_remember_offwork"
         if cmd == ID_DISGUISE:
             return "toggle_esc_disguise"
         if cmd == ID_AUTO_START:

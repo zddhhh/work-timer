@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 关于页可直接提交反馈到仓库，无需登录 GitCode"
+                    "- 右键不再放「记住固定下班」；该选项只在设置固定下班时出现"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",
