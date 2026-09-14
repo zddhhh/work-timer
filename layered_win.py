@@ -696,7 +696,7 @@ class LayeredPetWindow:
             hmenu,
             MF_STRING | (MF_CHECKED if esc_disguise else 0),
             ID_DISGUISE,
-            "Esc 隐藏窗口",
+            "Ctrl 隐藏窗口",
         )
         user32.AppendMenuW(
             hmenu,

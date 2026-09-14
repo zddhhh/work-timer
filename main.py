@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -648,7 +648,14 @@ class WorkTimer:
         self._update_prompted = False
         self._update_dialog_open = False
         self._last_pin_rotate = 0.0
+        self._last_key = ""
         self._fest_day = datetime.now().strftime("%Y-%m-%d")
+        self._wall_at = datetime.now()
+        self._mono_at = time.monotonic()
+        self._ctrl_held = False
+        self._ctrl_chord = False
+        self._ctrl_down_at = 0.0
+        self._check_clock_on_boot()
 
         w, h = self._load_size()
         self._win_w, self._win_h = w, h
@@ -658,7 +665,6 @@ class WorkTimer:
         self.win.set_left_click_handler(self._on_click)
         self.win.set_right_click_handler(self._request_menu)
         self._esc_hidden = False
-        self._esc_held = False
 
         area = layered_win.work_area()
         x = self.cfg.get("win_x")
@@ -674,7 +680,6 @@ class WorkTimer:
         self._font_sub = _font(fs)
         self._kinetic: kinetic.Show | None = None
         self._font_kinetic = self._font_big
-        self._last_key = ""
         self._surface = "dark"
         self._force_surface_sample = True
         self._wallpaper_token = backdrop.wallpaper_token()
@@ -704,6 +709,63 @@ class WorkTimer:
     def _today(self) -> str:
         return datetime.now().strftime("%Y-%m-%d")
 
+    def _wall_plausible(self, dt: datetime) -> bool:
+        return 2024 <= dt.year <= 2035
+
+    def _parse_last_wall(self) -> datetime | None:
+        raw = str(self.cfg.get("last_wall") or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    def _touch_last_wall(self, now: datetime | None = None) -> None:
+        now = now or datetime.now()
+        if not self._wall_plausible(now):
+            return
+        self.cfg["last_wall"] = now.strftime("%Y-%m-%dT%H:%M:%S")
+
+    def _session_stale(self) -> bool:
+        return bool(self.cfg.get("session_stale"))
+
+    def _mark_session_stale(self, why: str) -> None:
+        if self.cfg.get("session_stale"):
+            self._last_key = ""
+            return
+        self.cfg["session_stale"] = True
+        self._touch_last_wall()
+        store.save_config(self.cfg)
+        self._last_key = ""
+        store.append_log(f"session_stale: {why}")
+
+    def _clear_session_stale(self) -> None:
+        self.cfg["session_stale"] = False
+        self._touch_last_wall()
+
+    def _check_clock_on_boot(self) -> None:
+        now = datetime.now()
+        prev = self._parse_last_wall()
+        if prev is not None and now < prev - timedelta(minutes=5):
+            self._mark_session_stale("clock went backward on boot")
+        self._touch_last_wall(now)
+        self._wall_at = now
+        self._mono_at = time.monotonic()
+
+    def _poll_clock_skew(self) -> None:
+        now = datetime.now()
+        mono = time.monotonic()
+        wall_delta = (now - self._wall_at).total_seconds()
+        mono_delta = mono - self._mono_at
+        self._wall_at = now
+        self._mono_at = mono
+        if abs(wall_delta - mono_delta) >= 300:
+            self._mark_session_stale(
+                f"clock skew wall={wall_delta:.0f}s mono={mono_delta:.0f}s"
+            )
+        self._touch_last_wall(now)
+
     def _has_start(self) -> bool:
         if str(self.cfg.get("start_date") or "") != self._today():
             return False
@@ -723,6 +785,8 @@ class WorkTimer:
         return bool(self.cfg.get("remember_offwork", True))
 
     def _has_target(self) -> bool:
+        if self._session_stale():
+            return False
         dated = str(self.cfg.get("start_date") or "") == self._today()
         if self._time_mode() == "direct":
             has_off = isinstance(self.cfg.get("off_h"), int) and isinstance(self.cfg.get("off_m"), int)
@@ -956,11 +1020,32 @@ class WorkTimer:
         self.win.hide()
         self._esc_hidden = True
 
+    def _ctrl_other_key_down(self) -> bool:
+        ignore = {0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}
+        for vk in range(0x08, 0xA6):
+            if vk in ignore:
+                continue
+            if layered_win.user32.GetAsyncKeyState(vk) & 0x8000:
+                return True
+        return False
+
     def _poll_esc(self) -> None:
-        down = bool(layered_win.user32.GetAsyncKeyState(0x1B) & 0x8000)
-        if down and not self._esc_held and self._esc_disguise_on():
-            self._toggle_esc_hide()
-        self._esc_held = down
+        self._poll_clock_skew()
+        ctrl = bool(layered_win.user32.GetAsyncKeyState(0x11) & 0x8000)
+        if ctrl and not self._ctrl_held:
+            self._ctrl_chord = self._ctrl_other_key_down()
+            self._ctrl_down_at = time.monotonic()
+        elif ctrl and self._ctrl_other_key_down():
+            self._ctrl_chord = True
+        if (not ctrl) and self._ctrl_held:
+            held = time.monotonic() - self._ctrl_down_at
+            if (
+                self._esc_disguise_on()
+                and not self._ctrl_chord
+                and 0.04 <= held <= 0.55
+            ):
+                self._toggle_esc_hide()
+        self._ctrl_held = ctrl
 
     def _request_menu(self, sx: int, sy: int) -> None:
         if self._esc_hidden:
@@ -1005,6 +1090,7 @@ class WorkTimer:
         mode, hm, remember = picked
         self.cfg["time_mode"] = mode
         self.cfg["start_date"] = self._today()
+        self._clear_session_stale()
         if mode == "flex":
             self.cfg["start_h"], self.cfg["start_m"] = hm
             # 弹性每天重填到岗，不沿用固定下班点

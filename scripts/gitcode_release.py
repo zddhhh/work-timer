@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 开机自启动改为启动文件夹快捷方式，不再写 Run 注册表"
+                    "- 系统对时乱跳后回到点我开始；隐藏窗口改为轻点 Ctrl"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

@@ -89,6 +89,8 @@ def load_config() -> dict:
         "win_w": 248,
         "win_h": 92,
         "esc_disguise": False,
+        "session_stale": False,
+        "last_wall": "",
         "auto_start": False,
         "win_x": None,
         "win_y": None,
