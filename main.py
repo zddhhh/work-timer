@@ -2400,6 +2400,7 @@ class WorkTimer:
                     self._font_sub,
                     stage=stage,
                     env_rgb=self._env_rgb,
+                    surface=surface,
                 )
                 kinetic.paint(
                     img,
@@ -2426,6 +2427,7 @@ class WorkTimer:
                     self._font_sub,
                     stage=stage,
                     env_rgb=self._env_rgb,
+                    surface=surface,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:

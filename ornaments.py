@@ -247,7 +247,7 @@ def paste_skin(
     if kind in _PROC_KINDS:
         layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         if kind == "neonflow":
-            fx.paint_neonflow(layer, phase, stage=stage, radius=int(radius))
+            fx.paint_neonflow(layer, phase, stage=stage, radius=int(radius), light=light)
         img.alpha_composite(_round_mask(layer, radius), (x0, y0))
         return True
 
@@ -268,24 +268,27 @@ def paste_skin(
     elif kind == "nationalday" and not freeze:
         drift = 12
 
-    glow_kinds = {"neon", "terminal", "aurora"}
-    if kind in glow_kinds:
-        a0 = 0.90 if not light else 0.55
-        a1 = 0.72 if not light else 0.40
+    # 每皮单独调叠层：深底要透桌面；浅底托住深色字；夜景/红绸保持氛围并加浓 scrim
+    if kind == "neon":
+        a0, a1 = (0.68, 0.55) if not light else (0.36, 0.28)
+    elif kind == "terminal":
+        a0, a1 = (0.74, 0.58) if not light else (0.40, 0.30)
+    elif kind == "aurora":
+        a0, a1 = (0.72, 0.58) if not light else (0.38, 0.32)
     elif kind == "warmglow":
-        a0 = 0.88 if not light else 0.92
-        a1 = 0.60 if not light else 0.70
+        a0, a1 = (0.70, 0.48) if not light else (0.52, 0.42)
     elif kind == "midautumn":
-        a0 = 0.94 if not light else 0.84
-        a1 = 0.48 if not light else 0.36
+        a0, a1 = (0.82, 0.42) if not light else (0.70, 0.34)
     elif kind == "nationalday":
-        # 红绸半透：对齐玻璃/极光那档，桌面能透出来
-        a0 = 0.58 if not light else 0.50
-        # 光斑层跟着周期「炸开」一下再回落
-        a1 = (0.42 if not light else 0.30) * (1.0 + 0.55 * _burst(phase))
-    else:
-        a0 = 0.82 if not light else 0.62
-        a1 = 0.55 if not light else 0.38
+        burst = 1.0 + 0.55 * _burst(phase)
+        a0 = 0.62 if not light else 0.55
+        a1 = (0.40 if not light else 0.32) * burst
+    elif kind == "frost":
+        a0, a1 = (0.76, 0.50) if not light else (0.48, 0.32)
+    elif kind == "inkgold":
+        a0, a1 = (0.78, 0.52) if not light else (0.46, 0.34)
+    else:  # glass 等
+        a0, a1 = (0.74, 0.48) if not light else (0.50, 0.34)
     bamp = 0.0 if freeze else (0.035 if stage == "warn" else 0.025)
     if kind == "nationalday" and not freeze:
         bamp = 0.05

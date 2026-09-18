@@ -314,7 +314,7 @@ def consume_updated() -> bool:
 
 # 这些皮会随版本改配色/自适应，优先用内置覆盖缓存或在线版本
 _PREFER_BUNDLED = frozenset(
-    {"ghost", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow"}
+    {"ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow"}
 )
 
 
@@ -452,6 +452,7 @@ def paint_card(
     text_right: int | None = None,
     stage: str = "run",
     env_rgb: tuple[int, int, int] | None = None,
+    surface: str = "dark",
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (4, 4, w - 5, h - 5)
@@ -465,42 +466,50 @@ def paint_card(
 
     if kind != "ghost":
         light_card = _luma(theme.fill) >= 160
+        wallpaper_light = surface == "light"
+        # 夜景/红绸按墙纸加浓；玻璃/霓虹等按配色亮度走浅色处理
+        if kind in ("midautumn", "nationalday"):
+            skin_light = wallpaper_light
+        else:
+            skin_light = light_card
         if ornaments.has_skin(kind):
-            # 圆角卡片：托底和贴图用同一半径，四个圆角弧也铺上生图
-            if kind in ("aurora", "neon", "terminal"):
-                base = (248, 246, 255, 22) if light_card else (12, 14, 24, 16)
+            if kind == "neon":
+                base = (236, 252, 250, 170) if skin_light else (6, 10, 16, 72)
+            elif kind == "terminal":
+                base = (232, 244, 236, 150) if skin_light else (4, 10, 6, 68)
+            elif kind == "aurora":
+                base = (242, 240, 252, 145) if skin_light else (10, 10, 22, 60)
             elif kind == "frost":
-                base = (248, 250, 252, 40) if light_card else (20, 24, 32, 36)
+                base = (248, 250, 252, 110) if skin_light else (18, 22, 30, 48)
             elif kind == "inkgold":
-                base = (250, 244, 230, 36) if light_card else (16, 12, 10, 28)
+                base = (250, 244, 230, 120) if skin_light else (14, 10, 8, 55)
             elif kind == "warmglow":
-                # 浅底托底加厚，避免暖色纹理被墙纸洗掉
-                base = (255, 236, 214, 96) if light_card else (28, 18, 12, 36)
+                base = (255, 236, 214, 130) if skin_light else (28, 16, 10, 55)
             elif kind == "midautumn":
-                base = (236, 232, 255, 42) if light_card else (8, 10, 32, 30)
+                base = (8, 10, 34, 155) if skin_light else (8, 10, 32, 55)
             elif kind == "nationalday":
-                base = (255, 232, 224, 36) if light_card else (40, 6, 10, 28)
+                base = (56, 8, 12, 140) if skin_light else (40, 6, 10, 50)
             elif kind == "neonflow":
-                # 对齐玻璃档透明度，不再实黑底
-                base = (6, 8, 14, 150)
+                base = (244, 250, 255, 165) if skin_light else (6, 8, 14, 135)
             else:  # glass
-                base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
+                base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
             d.rounded_rectangle(box, radius=r, fill=base)
             ornaments.paste_skin(
-                img, box, kind, light=light_card, stage=stage, env_rgb=env_rgb, radius=r
+                img, box, kind, light=skin_light, stage=stage, env_rgb=env_rgb, radius=r
             )
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
                 d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
             inset = 2
             ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
-            rim_a = int((18 if light_card else 22) * pulse)
+            pale_rim = skin_light and kind not in ("midautumn", "nationalday")
+            rim_a = int((18 if pale_rim else 22) * pulse)
             if stage == "done":
                 rim_a = int(rim_a * 1.35)
             d.rounded_rectangle(
                 ibox,
                 radius=max(4, r - 2),
-                outline=(255, 255, 255, rim_a) if light_card else (255, 248, 236, rim_a),
+                outline=(255, 255, 255, rim_a) if pale_rim else (255, 248, 236, rim_a),
                 width=1,
             )
         else:

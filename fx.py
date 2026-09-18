@@ -9,7 +9,7 @@ FLAG_RED = (222, 41, 16)
 FLAG_GOLD = (255, 222, 0)
 
 _CANTON_CACHE: dict[int, tuple[Image.Image, Image.Image, Image.Image]] = {}
-_SCAN_CACHE: dict[tuple[int, int], Image.Image] = {}
+_SCAN_CACHE: dict[tuple, Image.Image] = {}
 
 
 # ---------------------------------------------------------------- 国旗星组
@@ -265,8 +265,16 @@ def paint_national(layer: Image.Image, phase: float, *, stage: str, light: bool 
 
 # ---------------------------------------------------------------- 霓虹流光 HUD
 
-def _stage_palette(stage: str) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
+def _stage_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
     """(主色, 副色, 绕行周期秒, 亮度)"""
+    if light:
+        if stage == "warn":
+            return (210, 110, 20), (200, 50, 60), 3.6, 0.95
+        if stage == "done":
+            return (20, 150, 110), (40, 160, 130), 14.0, 0.85
+        if stage == "idle":
+            return (0, 150, 180), (180, 40, 140), 16.0, 0.55
+        return (0, 170, 200), (180, 40, 150), 9.0, 0.9
     if stage == "warn":
         return (255, 150, 40), (255, 64, 72), 3.6, 1.0
     if stage == "done":
@@ -308,31 +316,37 @@ def _perimeter(bw: int, bh: int, r: float, inset: float):
     return total, point
 
 
-def _scanlines(bw: int, bh: int) -> Image.Image:
-    key = (bw, bh)
+def _scanlines(bw: int, bh: int, *, light: bool = False) -> Image.Image:
+    key = (bw, bh, int(light))
     got = _SCAN_CACHE.get(key)
     if got is not None:
         return got
     im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    for y in range(0, bh, 3):
-        d.line((0, y, bw, y), fill=(0, 0, 0, 46))
-    for x in range(0, bw, 24):
-        d.line((x, 0, x, bh), fill=(120, 200, 255, 9))
+    if light:
+        for y in range(0, bh, 3):
+            d.line((0, y, bw, y), fill=(120, 160, 180, 22))
+        for x in range(0, bw, 24):
+            d.line((x, 0, x, bh), fill=(80, 140, 170, 10))
+    else:
+        for y in range(0, bh, 3):
+            d.line((0, y, bw, y), fill=(0, 0, 0, 46))
+        for x in range(0, bw, 24):
+            d.line((x, 0, x, bh), fill=(120, 200, 255, 9))
     if len(_SCAN_CACHE) > 8:
         _SCAN_CACHE.clear()
     _SCAN_CACHE[key] = im
     return im
 
 
-def paint_neonflow(layer: Image.Image, phase: float, *, stage: str, radius: int) -> None:
+def paint_neonflow(layer: Image.Image, phase: float, *, stage: str, radius: int, light: bool = False) -> None:
     """霓虹 HUD：扫描线 + 角标 + 绕边流光（双头、拖尾、泛光）+ 偶发故障错位。"""
     bw, bh = layer.size
     if bw < 40 or bh < 20:
         return
-    c1, c2, period, gain = _stage_palette(stage)
+    c1, c2, period, gain = _stage_palette(stage, light=light)
     scale = max(0.7, min(2.4, bh / 92.0))
-    layer.alpha_composite(_scanlines(bw, bh))
+    layer.alpha_composite(_scanlines(bw, bh, light=light))
 
     d = ImageDraw.Draw(layer)
     # 四角 HUD 角标
