@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
 
+import fx
 import store
 
 _ASSET_CACHE: dict[str, Image.Image] = {}
@@ -30,6 +31,8 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "midautumn": ("skin_midautumn.png", "skin_midautumn_glow.png"),
     "nationalday": ("skin_nationalday.png", "skin_nationalday_glow.png"),
 }
+# 不用生图、逐帧程序化绘制的皮
+_PROC_KINDS = frozenset({"neonflow"})
 
 
 def asset_path(name: str) -> Path:
@@ -89,7 +92,7 @@ def _scale_alpha(im: Image.Image, factor: float) -> Image.Image:
 
 
 def has_skin(kind: str) -> bool:
-    return kind in _SKIN_LAYERS
+    return kind in _SKIN_LAYERS or kind in _PROC_KINDS
 
 
 def _orbit_xy(
@@ -236,7 +239,18 @@ def paste_skin(
     env_rgb: tuple[int, int, int] | None = None,
     radius: int = 0,
 ) -> bool:
-    """把对应皮肤的生图贴进圆角卡片（含四个圆角弧）。"""
+    """把对应皮肤的生图贴进圆角卡片（含四个圆角弧）；程序化皮直接按帧画。"""
+    x0, y0, x1, y1 = box
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    phase = time.monotonic()
+
+    if kind in _PROC_KINDS:
+        layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        if kind == "neonflow":
+            fx.paint_neonflow(layer, phase, stage=stage, radius=int(radius))
+        img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+        return True
+
     layers = _SKIN_LAYERS.get(kind)
     if layers is None:
         return False
@@ -246,9 +260,6 @@ def paste_skin(
     if drape is None and glow is None:
         return False
 
-    x0, y0, x1, y1 = box
-    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
-    phase = time.monotonic()
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     freeze = stage in ("idle", "done")
     drift = 0 if freeze else _DRIFT_PX
@@ -312,7 +323,7 @@ def paste_skin(
         _place(glow, name_b or "glow", a1, speed=base_speed * 0.78, twist=1.7)
 
     if kind == "nationalday":
-        _paint_embers(layer, phase, light=light, stage=stage)
+        _paint_embers(layer, phase, light=light, stage=stage, count=10)
         # 红底不叠蓝灰情绪色，只留环境光
         mood = _mix_env((255, 176, 96, 18 if light else 22), env_rgb)
     else:
@@ -320,20 +331,36 @@ def paste_skin(
     tint = Image.new("RGBA", (bw, bh), mood)
     layer = Image.alpha_composite(layer, tint)
     _paint_sweep(layer, phase, light=light, stage=stage)
-    rad = max(0, int(radius))
-    if rad > 0:
-        mk = (bw, bh, rad)
-        mask = _MASK_CACHE.get(mk)
-        if mask is None:
-            mask = Image.new("L", (bw, bh), 0)
-            ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw - 1, bh - 1), radius=rad, fill=255)
-            if len(_MASK_CACHE) > 16:
-                _MASK_CACHE.clear()
-            _MASK_CACHE[mk] = mask
-        r, g, b, a = layer.split()
-        layer = Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
-    img.alpha_composite(layer, (x0, y0))
+    if kind == "nationalday":
+        # 右上角飘动的国旗：避开左侧标题和下方大数字
+        fw = max(36, int(round(bw * 0.21)))
+        fx.paint_flag(
+            layer, phase,
+            x=bw - fw - int(round(bw * 0.05)),
+            y=int(round(bh * 0.09)),
+            width=fw,
+            slow=freeze,
+        )
+    img.alpha_composite(_round_mask(layer, radius), (x0, y0))
     return True
+
+
+def _round_mask(layer: Image.Image, radius: int) -> Image.Image:
+    """把图层的 alpha 裁成圆角矩形。"""
+    rad = max(0, int(radius))
+    if rad <= 0:
+        return layer
+    bw, bh = layer.size
+    mk = (bw, bh, rad)
+    mask = _MASK_CACHE.get(mk)
+    if mask is None:
+        mask = Image.new("L", (bw, bh), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw - 1, bh - 1), radius=rad, fill=255)
+        if len(_MASK_CACHE) > 16:
+            _MASK_CACHE.clear()
+        _MASK_CACHE[mk] = mask
+    r, g, b, a = layer.split()
+    return Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
 
 
 CONFETTI_SEC = 2.8
@@ -348,8 +375,8 @@ _CONFETTI_COLORS = (
 
 
 def is_animated(kind: str) -> bool:
-    """需要按帧重绘的皮（生图皮）。"""
-    return kind in _SKIN_LAYERS
+    """需要按帧重绘的皮。"""
+    return has_skin(kind)
 
 
 def _confetti_seed(i: int) -> tuple[float, ...]:

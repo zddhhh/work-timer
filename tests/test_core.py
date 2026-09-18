@@ -341,6 +341,42 @@ class ConfettiTests(unittest.TestCase):
         self.assertEqual(img.size, (248, 92))
 
 
+class FxTests(unittest.TestCase):
+    def test_flag_geometry(self):
+        import fx
+
+        flag = fx.flag_image(120)
+        self.assertEqual(flag.size, (120, 80))
+        # 大星心 (5,5)/30 为金色，右下角为红色，小星之间的空隙为红色
+        self.assertEqual(flag.getpixel((20, 20))[:3], fx.FLAG_GOLD)
+        self.assertEqual(flag.getpixel((110, 70))[:3], fx.FLAG_RED)
+        self.assertEqual(flag.getpixel((44, 44))[:3], fx.FLAG_RED)
+
+    def test_flag_and_neon_paint(self):
+        import fx
+
+        layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        for ph in (0.0, 0.7, 3.3):
+            fx.paint_flag(layer, ph, x=180, y=8, width=52)
+            for st in ("run", "warn", "done", "idle"):
+                fx.paint_neonflow(layer, ph, stage=st, radius=14)
+        self.assertEqual(layer.size, (248, 92))
+        self.assertTrue(ornaments.has_skin("neonflow"))
+        self.assertTrue(ornaments.is_animated("neonflow"))
+
+    def test_perimeter_closed(self):
+        import fx
+
+        total, point = fx._perimeter(248, 92, 14.0, 1.5)
+        self.assertGreater(total, 2 * (248 + 92) * 0.8)
+        x0, y0 = point(0.0)
+        x1, y1 = point(0.999999)
+        self.assertLess(abs(x0 - x1) + abs(y0 - y1), 1.0)
+        for u in (0.1, 0.3, 0.5, 0.7, 0.9):
+            x, y = point(u)
+            self.assertTrue(0 <= x <= 248 and 0 <= y <= 92)
+
+
 class FlexTimeTests(unittest.TestCase):
     def test_offwork_mapping(self):
         self.assertEqual(flex_time.offwork_hm(8, 30), (18, 0))

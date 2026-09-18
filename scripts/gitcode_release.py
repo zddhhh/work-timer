@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 弹层先排版再亮出，打开日程列表不再闪空壳；下架「天色」「自适应」外观"
+RELEASE_NOTE = "- 新皮「霓虹流光」：暗底扫描线、四角 HUD 角标、双色流光绕边跑、偶发故障错位；国庆皮重做为红绸底 + 右上角飘动国旗"
 
 
 def sha256_of(path: Path) -> str:
