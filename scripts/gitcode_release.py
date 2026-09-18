@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 国庆皮按海报构图重做（天安门剪影/金光/飘带/烟花/五星），红绸半透对齐经典皮；霓虹流光底也改半透"
+RELEASE_NOTE = "- 版本号进位到 1.1.0（补丁位已到 100）；功能与 1.0.100 相同：国庆海报构图+半透、霓虹流光半透底"
 
 
 def sha256_of(path: Path) -> str:
