@@ -103,23 +103,164 @@ def paint_canton(
         layer.alpha_composite(streak, (ox, oy))
 
 
-def paint_flutter(layer: Image.Image, phase: float, *, slow: bool = False) -> None:
-    """整块红绸的布面明暗起伏（只调明暗不位移，无缝），让底和星像同一块飘动的旗面。"""
+_TIANANMEN_CACHE: dict[tuple[int, bool], Image.Image] = {}
+
+
+def _tiananmen(height: int, light: bool) -> Image.Image:
+    """天安门剪影（金色，自上而下渐淡）：城台五门洞 + 重檐歇山顶。按国庆海报常见画法简化。"""
+    key = (int(height), bool(light))
+    got = _TIANANMEN_CACHE.get(key)
+    if got is not None:
+        return got
+    ss = 3
+    H = max(12, int(height)) * ss
+    W = int(H * 1.55)
+    mask = Image.new("L", (W + 2 * ss, H + 2 * ss), 0)
+    d = ImageDraw.Draw(mask)
+    ox, oy = ss, ss
+    cx = ox + W / 2
+
+    def rect(x0, y0, x1, y1, v=255):
+        d.rectangle((ox + x0 * W, oy + y0 * H, ox + x1 * W, oy + y1 * H), fill=v)
+
+    def poly(pts, v=255):
+        d.polygon([(cx + px * W, oy + py * H) for px, py in pts], fill=v)
+
+    # 城台 + 女儿墙
+    rect(0.0, 0.60, 1.0, 1.0)
+    rect(-0.01, 0.565, 1.01, 0.60)
+    # 五个门洞：中间最大
+    for k, (pos, aw, ah) in enumerate(((0.0, 0.11, 0.30), (-0.2, 0.085, 0.24), (0.2, 0.085, 0.24), (-0.37, 0.075, 0.20), (0.37, 0.075, 0.20))):
+        x0, x1 = cx + (pos - aw / 2) * W, cx + (pos + aw / 2) * W
+        y1 = oy + H
+        y0 = y1 - ah * H
+        d.rectangle((x0, y0 + aw * W / 2, x1, y1), fill=0)
+        d.ellipse((x0, y0, x1, y0 + aw * W), fill=0)
+    # 一层殿身 + 下层檐（翼角上翘）
+    poly([(-0.33, 0.40), (0.33, 0.40), (0.33, 0.565), (-0.33, 0.565)])
+    poly([(-0.47, 0.335), (-0.37, 0.395), (0.37, 0.395), (0.47, 0.335), (0.30, 0.295), (-0.30, 0.295)])
+    # 二层殿身 + 上层檐 + 正脊
+    poly([(-0.25, 0.20), (0.25, 0.20), (0.25, 0.295), (-0.25, 0.295)])
+    poly([(-0.37, 0.19), (-0.28, 0.235), (0.28, 0.235), (0.37, 0.19), (0.19, 0.11), (-0.19, 0.11)])
+    poly([(-0.20, 0.085), (0.20, 0.085), (0.19, 0.115), (-0.19, 0.115)])
+    poly([(-0.205, 0.06), (-0.175, 0.06), (-0.175, 0.10), (-0.205, 0.10)])
+    poly([(0.175, 0.06), (0.205, 0.06), (0.205, 0.10), (0.175, 0.10)])
+    # 檩条：檐下两道细横线，增加层次
+    rect(-0.31, 0.415, 0.31, 0.43, 0)
+    rect(-0.23, 0.245, 0.23, 0.258, 0)
+
+    small = (mask.width // ss, mask.height // ss)
+    mask = mask.resize(small, Image.Resampling.LANCZOS)
+    # 自上而下：金亮 → 橙金，alpha 也渐弱，像被底下的光托起
+    top_c = (255, 222, 140) if not light else (214, 96, 60)
+    bot_c = (255, 168, 80) if not light else (190, 60, 40)
+    grad = Image.linear_gradient("L").resize(small)
+    col = Image.composite(Image.new("RGBA", small, (*bot_c, 255)), Image.new("RGBA", small, (*top_c, 255)), grad)
+    fade = grad.point(lambda v: int(190 - 90 * v / 255))
+    col.putalpha(ImageChops.multiply(mask, fade))
+    if len(_TIANANMEN_CACHE) > 6:
+        _TIANANMEN_CACHE.clear()
+    _TIANANMEN_CACHE[key] = col
+    return col
+
+
+def _hash01(n: int, salt: int) -> float:
+    v = (n * 1103515245 + salt * 12345 + 2531011) & 0x7FFFFFFF
+    return ((v >> 8) & 0xFFFF) / 65535.0
+
+
+def paint_national(layer: Image.Image, phase: float, *, stage: str, light: bool = False) -> None:
+    """国庆海报式构图：金色光芒 + 底部飘带 + 右下天安门剪影 + 烟花 + 右上五星。"""
     bw, bh = layer.size
-    speed = 0.9 if slow else 1.7
-    light: list[tuple[int, int, int, int]] = []
-    dark: list[tuple[int, int, int, int]] = []
-    inv = 1.0 / max(1.0, bw)
-    for sx in range(bw):
-        k = sx * inv
-        s = math.sin(k * 5.6 - phase * speed) * 0.7 + math.sin(k * 11.3 - phase * speed * 1.6 + 1.1) * 0.3
-        light.append((255, 240, 220, int(max(0.0, s) * 34)))
-        dark.append((60, 0, 6, int(max(0.0, -s) * 46)))
-    # 一列亮、一列暗的 1px 高条带，拉伸到整张后叠上去：比 split/merge 乘法便宜得多
-    for data in (light, dark):
-        strip = Image.new("RGBA", (bw, 1))
-        strip.putdata(data)
-        layer.alpha_composite(strip.resize((bw, bh), Image.Resampling.NEAREST))
+    if bw < 40 or bh < 20:
+        return
+    slow = stage in ("idle", "done")
+    fxl = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(fxl)
+
+    # 光芒：从右下天安门后方向左上放射，整体缓慢摆动；画完再模糊，像海报光晕
+    ta_h = int(round(bh * 0.42))
+    ta = _tiananmen(ta_h, light)
+    # 再压一层透明度，融进红绸，避免剪影「贴上去」
+    ta = ta.copy()
+    ta.putalpha(ta.getchannel("A").point(lambda v: int(v * 0.72)))
+    ta_x = bw - ta.width - int(round(bw * 0.02))
+    ta_y = bh - ta.height + 3
+    acx, acy = ta_x + ta.width * 0.55, bh + bh * 0.02
+    wob = math.sin(phase * (0.25 if slow else 0.45)) * 4.0
+    ray_len = bw * 1.7
+    ray_c = (255, 214, 130) if not light else (255, 150, 90)
+    rays = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    rd = ImageDraw.Draw(rays)
+    for i in range(9):
+        ang = math.radians(-165 + i * 14.5 + wob)
+        hw = math.radians(1.0 if i % 2 else 0.65)
+        a = 28 if i % 2 else 16
+        rd.polygon(
+            [
+                (acx, acy),
+                (acx + math.cos(ang - hw) * ray_len, acy + math.sin(ang - hw) * ray_len),
+                (acx + math.cos(ang + hw) * ray_len, acy + math.sin(ang + hw) * ray_len),
+            ],
+            fill=(*ray_c, a),
+        )
+    fxl.alpha_composite(rays.filter(ImageFilter.GaussianBlur(radius=max(1.5, bh / 55))))
+
+    # 飘带：两条丝带沿中下流动，避开大数字区
+    def ribbon(y_base: float, amp: float, thick: float, freq: float, sp: float, fill, edge) -> None:
+        step = max(4, bw // 40)
+        xs = list(range(-step, bw + step * 2, step))
+        tops = []
+        for x in xs:
+            y = y_base + math.sin(x / bw * math.pi * 2 * freq + phase * sp) * amp
+            tops.append((x, y))
+        bots = [(x, y + thick) for x, y in reversed(tops)]
+        d.polygon(tops + bots, fill=fill)
+        d.line(tops, fill=edge, width=1)
+
+    rsp = 0.35 if slow else 0.7
+    ribbon(bh * 0.82, bh * 0.04, bh * 0.09, 1.05, rsp * 0.8, (150, 14, 26, 100), (200, 70, 70, 80))
+    ribbon(bh * 0.88, bh * 0.045, bh * 0.07, 1.3, rsp, (232, 56, 48, 110), (255, 214, 130, 160))
+
+    # 天安门剪影（右下，略模糊边缘）
+    fxl.alpha_composite(ta.filter(ImageFilter.GaussianBlur(radius=0.6)), (ta_x, ta_y))
+
+    # 烟花：每 3.2s 在右上偏中绽放一朵，金红交替
+    cyc = 3.2 if not slow else 6.0
+    n = int(phase / cyc)
+    p = (phase % cyc) / 1.5
+    if p < 1.0:
+        fxx = bw * (0.55 + 0.35 * _hash01(n, 1))
+        fyy = bh * (0.10 + 0.32 * _hash01(n, 2))
+        rad = (p ** 0.55) * bh * 0.22
+        fade = (1.0 - p) ** 1.3
+        gold = _hash01(n, 3) < 0.6
+        c = (255, 224, 130) if gold else (255, 128, 90)
+        spokes = 12
+        for k in range(spokes):
+            ang = k / spokes * math.pi * 2 + n * 0.37
+            for rr, sz, aa in ((1.0, 1.4, 220), (0.78, 1.0, 140), (0.56, 0.8, 85)):
+                x = fxx + math.cos(ang) * rad * rr
+                y = fyy + math.sin(ang) * rad * rr + (p * p) * bh * 0.05 * rr
+                a = int(aa * fade)
+                if a > 4:
+                    d.ellipse((x - sz, y - sz, x + sz, y + sz), fill=(*c, a))
+        if p < 0.18:
+            fa = int(190 * (1 - p / 0.18))
+            r0 = 2.5 + p * 12
+            d.ellipse((fxx - r0, fyy - r0, fxx + r0, fyy + r0), fill=(255, 250, 220, fa))
+
+    layer.alpha_composite(fxl)
+
+    # 右上五星：略缩小，明确落在右上角，不压天安门
+    unit = max(2.2, bh * 0.042)
+    paint_canton(
+        layer, phase,
+        unit=unit,
+        ox=int(round(bw - 13 * unit - bw * 0.03)),
+        oy=max(1, int(round(bh * 0.05))),
+        slow=slow,
+    )
 
 
 # ---------------------------------------------------------------- 霓虹流光 HUD

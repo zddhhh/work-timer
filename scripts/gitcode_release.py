@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 「外观」改为经典（两字皮）/ 特效（四字皮）/ 节日 三个子菜单，当前皮所在组名带勾"
+RELEASE_NOTE = "- 国庆皮按海报构图重做（天安门剪影/金光/飘带/烟花/五星），红绸半透对齐经典皮；霓虹流光底也改半透"
 
 
 def sha256_of(path: Path) -> str:

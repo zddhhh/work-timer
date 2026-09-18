@@ -279,9 +279,10 @@ def paste_skin(
         a0 = 0.94 if not light else 0.84
         a1 = 0.48 if not light else 0.36
     elif kind == "nationalday":
-        a0 = 0.96 if not light else 0.86
+        # 红绸半透：对齐玻璃/极光那档，桌面能透出来
+        a0 = 0.58 if not light else 0.50
         # 光斑层跟着周期「炸开」一下再回落
-        a1 = (0.46 if not light else 0.34) * (1.0 + 0.55 * _burst(phase))
+        a1 = (0.42 if not light else 0.30) * (1.0 + 0.55 * _burst(phase))
     else:
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38
@@ -323,17 +324,9 @@ def paste_skin(
         _place(glow, name_b or "glow", a1, speed=base_speed * 0.78, twist=1.7)
 
     if kind == "nationalday":
-        # 整张卡就是旗面：星组直接绣在右上角红绸上，再整体过一遍布面明暗起伏
-        unit = max(2.5, bh * 0.05)
-        fx.paint_canton(
-            layer, phase,
-            unit=unit,
-            ox=int(round(bw - 13 * unit - bw * 0.04)),
-            oy=int(round(bh * 0.07 - unit)),
-            slow=freeze,
-        )
-        fx.paint_flutter(layer, phase, slow=freeze)
-        _paint_embers(layer, phase, light=light, stage=stage, count=8)
+        # 海报式构图：光芒 / 飘带 / 天安门剪影 / 烟花 / 五星，全程序化画在红绸纹理上
+        fx.paint_national(layer, phase, stage=stage, light=light)
+        _paint_embers(layer, phase, light=light, stage=stage, count=6)
         # 红底不叠蓝灰情绪色，只留环境光
         mood = _mix_env((255, 176, 96, 18 if light else 22), env_rgb)
     else:

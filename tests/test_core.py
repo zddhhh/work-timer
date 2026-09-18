@@ -361,9 +361,8 @@ class FxTests(unittest.TestCase):
 
         layer = Image.new("RGBA", (248, 92), (160, 20, 24, 255))
         for ph in (0.0, 0.7, 3.3):
-            fx.paint_canton(layer, ph, unit=4.6, ox=178, oy=2)
-            fx.paint_flutter(layer, ph)
             for st in ("run", "warn", "done", "idle"):
+                fx.paint_national(layer, ph, stage=st, light=(st == "idle"))
                 fx.paint_neonflow(layer, ph, stage=st, radius=14)
         self.assertEqual(layer.size, (248, 92))
         self.assertTrue(ornaments.has_skin("neonflow"))

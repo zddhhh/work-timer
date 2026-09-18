@@ -479,9 +479,10 @@ def paint_card(
             elif kind == "midautumn":
                 base = (236, 232, 255, 42) if light_card else (8, 10, 32, 30)
             elif kind == "nationalday":
-                base = (255, 232, 224, 46) if light_card else (52, 8, 12, 40)
+                base = (255, 232, 224, 36) if light_card else (40, 6, 10, 28)
             elif kind == "neonflow":
-                base = (6, 8, 14, 238)
+                # 对齐玻璃档透明度，不再实黑底
+                base = (6, 8, 14, 150)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)
