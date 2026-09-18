@@ -37,11 +37,11 @@ def counted_pin_count(cfg: dict) -> int:
 def ensure_fields(cfg: dict) -> None:
     if not isinstance(cfg.get("schedules"), list):
         cfg["schedules"] = []
-    # 旧数据补 date
+    # 旧数据补 date：只在没有这个键时补一次，之后不再改（否则空 date 会天天被改成今天）
     for s in cfg["schedules"]:
         if not isinstance(s, dict):
             continue
-        if s.get("kind") == "clock" and not s.get("date"):
+        if s.get("kind") == "clock" and "date" not in s:
             s["date"] = datetime.now().strftime("%Y-%m-%d")
         s["images"] = attachments.normalize(s.get("images"))
     pins = cfg.get("pin_order")
@@ -108,14 +108,15 @@ def schedule_remaining(item: dict, now: datetime) -> tuple[int, bool]:
     if kind == "clock":
         target = schedule_target(item)
         if target is None:
-            return 0, True
+            # 时间字段非法：当「未到点、剩余 0」，别误触发到点提醒/动画
+            return 0, False
         sec = int((target - now).total_seconds())
         return abs(sec), sec <= 0
     if kind == "duration":
         try:
             span = max(1, int(item.get("duration_sec") or 0))
         except (TypeError, ValueError):
-            return 0, True
+            return 0, False
         started = _parse_started(item.get("started_at"))
         if started is None:
             return span, False
@@ -130,7 +131,7 @@ def format_schedule_when(item: dict) -> str:
     if kind == "clock":
         target = schedule_target(item)
         if target is None:
-            return ""
+            return "时间无效"
         return target.strftime("%m-%d %H:%M")
     if kind == "duration":
         try:
@@ -322,13 +323,19 @@ def _sync_one_festival(
 ) -> bool:
     """节期内补不可删除日程；默认皮换一次限定；过季删日程并还原。"""
     changed = False
-    if in_season:
+    if in_season and date:
         if cfg.pop(f"{sid}_dismissed", None) is not None:
             changed = True
-        if find_schedule(cfg, sid) is None:
+        cur_item = find_schedule(cfg, sid)
+        if cur_item is None:
             item = new_clock(title, hour, minute, date=date)
             item["id"] = sid
             cfg["schedules"].append(item)
+            changed = True
+        elif str(cur_item.get("date") or "") != date:
+            # 去年残留的节日项：改成今年的日期
+            cur_item["date"] = date
+            cur_item["hm"] = [hour, minute]
             changed = True
         if not cfg.get(f"{sid}_unpinned") and sid not in cfg["pin_order"]:
             pins = cfg["pin_order"]
@@ -354,7 +361,6 @@ def _sync_one_festival(
     if cfg.get(f"{sid}_theme_auto") and str(cfg.get("theme") or "") == theme_id:
         prev = str(cfg.get(f"theme_before_{sid}") or "ghost") or "ghost"
         cfg["theme"] = prev
-        cfg[f"{sid}_theme_auto"] = False
         changed = True
     if find_schedule(cfg, sid) is not None:
         remove_schedule(cfg, sid, force=True)
@@ -364,6 +370,8 @@ def _sync_one_festival(
         if cfg.get("active_pin_id") == sid:
             cfg["active_pin_id"] = cfg["pin_order"][0] if cfg["pin_order"] else None
         changed = True
+    # 过季把 offered/unpinned/kinetic_done 等一并清掉，来年节期才能重新触发一次
+    changed |= festival.clear_state(cfg, sid)
     return changed
 
 
@@ -381,7 +389,7 @@ def sync_festival(cfg: dict, *, now: datetime | None = None) -> bool:
         title=festival.MIDAUTUMN_TITLE,
         hour=festival.MIDAUTUMN_HOUR,
         minute=festival.MIDAUTUMN_MINUTE,
-        date=festival.MIDAUTUMN_DATE,
+        date=festival.midautumn_date(now),
         theme_id=festival.MIDAUTUMN_THEME_ID,
     )
     changed |= _sync_one_festival(
@@ -393,7 +401,7 @@ def sync_festival(cfg: dict, *, now: datetime | None = None) -> bool:
         title=festival.NATIONAL_TITLE,
         hour=festival.NATIONAL_HOUR,
         minute=festival.NATIONAL_MINUTE,
-        date=festival.NATIONAL_DATE,
+        date=festival.national_date(now),
         theme_id=festival.NATIONAL_THEME_ID,
     )
     return changed

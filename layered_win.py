@@ -222,7 +222,7 @@ user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
 user32.SendMessageW.restype = LRESULT
 user32.MonitorFromPoint.argtypes = [POINT, wintypes.DWORD]
 user32.MonitorFromPoint.restype = wintypes.HANDLE
-user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
 user32.GetMonitorInfoW.restype = wintypes.BOOL
 user32.IsIconic.argtypes = [wintypes.HWND]
 user32.IsIconic.restype = wintypes.BOOL
@@ -232,6 +232,80 @@ user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
 user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
 user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+
+# 句柄/指针在 Win64 是 64 位；不声明的话 ctypes 默认按 c_int 传/收，高位会被截掉。
+_HANDLE = wintypes.HANDLE
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+user32.LoadImageW.argtypes = [_HANDLE, ctypes.c_void_p, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+user32.LoadImageW.restype = _HANDLE
+user32.LoadCursorW.argtypes = [_HANDLE, ctypes.c_void_p]
+user32.LoadCursorW.restype = _HANDLE
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+user32.RegisterClassW.restype = wintypes.ATOM
+user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HWND, _HANDLE, _HANDLE, ctypes.c_void_p,
+]
+user32.CreateWindowExW.restype = wintypes.HWND
+user32.DestroyWindow.argtypes = [wintypes.HWND]
+user32.DestroyWindow.restype = wintypes.BOOL
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.ShowWindow.restype = wintypes.BOOL
+user32.SetWindowPos.argtypes = [
+    wintypes.HWND, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+]
+user32.SetWindowPos.restype = wintypes.BOOL
+user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+user32.SetForegroundWindow.restype = wintypes.BOOL
+user32.SetCapture.argtypes = [wintypes.HWND]
+user32.SetCapture.restype = wintypes.HWND
+user32.ReleaseCapture.argtypes = []
+user32.ReleaseCapture.restype = wintypes.BOOL
+user32.SetCursor.argtypes = [_HANDLE]
+user32.SetCursor.restype = _HANDLE
+user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
+user32.GetCursorPos.restype = wintypes.BOOL
+user32.GetDC.argtypes = [wintypes.HWND]
+user32.GetDC.restype = wintypes.HDC
+user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+user32.ReleaseDC.restype = ctypes.c_int
+user32.CreatePopupMenu.argtypes = []
+user32.CreatePopupMenu.restype = _HANDLE
+user32.AppendMenuW.argtypes = [_HANDLE, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+user32.AppendMenuW.restype = wintypes.BOOL
+user32.TrackPopupMenu.argtypes = [
+    _HANDLE, wintypes.UINT, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, ctypes.c_void_p,
+]
+user32.TrackPopupMenu.restype = ctypes.c_int
+user32.DestroyMenu.argtypes = [_HANDLE]
+user32.DestroyMenu.restype = wintypes.BOOL
+user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
+user32.PostMessageW.restype = wintypes.BOOL
+user32.PeekMessageW.argtypes = [ctypes.POINTER(MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
+user32.PeekMessageW.restype = wintypes.BOOL
+user32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
+user32.TranslateMessage.restype = wintypes.BOOL
+user32.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]
+user32.DispatchMessageW.restype = LRESULT
+gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = wintypes.HDC
+gdi32.CreateDIBSection.argtypes = [
+    wintypes.HDC, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), _HANDLE, wintypes.DWORD,
+]
+gdi32.CreateDIBSection.restype = _HANDLE
+gdi32.SelectObject.argtypes = [wintypes.HDC, _HANDLE]
+gdi32.SelectObject.restype = _HANDLE
+gdi32.DeleteObject.argtypes = [_HANDLE]
+gdi32.DeleteObject.restype = wintypes.BOOL
+gdi32.DeleteDC.argtypes = [wintypes.HDC]
+gdi32.DeleteDC.restype = wintypes.BOOL
+gdi32.BitBlt.argtypes = [
+    wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
+]
+gdi32.BitBlt.restype = wintypes.BOOL
 
 
 class LayeredPetWindow:
@@ -805,13 +879,24 @@ def work_area() -> RECT:
     return r
 
 
-def monitor_work_at(x: int, y: int) -> RECT:
+def _monitor_info_at(x: int, y: int) -> MONITORINFO | None:
     hmon = user32.MonitorFromPoint(POINT(int(x), int(y)), MONITOR_DEFAULTTONEAREST)
     mi = MONITORINFO()
     mi.cbSize = ctypes.sizeof(MONITORINFO)
     if hmon and user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
-        return mi.rcWork
-    return work_area()
+        return mi
+    return None
+
+
+def monitor_work_at(x: int, y: int) -> RECT:
+    mi = _monitor_info_at(x, y)
+    return mi.rcWork if mi is not None else work_area()
+
+
+def monitor_rect_at(x: int, y: int) -> RECT | None:
+    """该点所在显示器的完整物理矩形（含任务栏）。"""
+    mi = _monitor_info_at(x, y)
+    return mi.rcMonitor if mi is not None else None
 
 
 def snap_size(w: int, h: int) -> tuple[int, int]:

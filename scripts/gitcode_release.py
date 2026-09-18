@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 反馈必填联系方式；渲染提速；OTA 校验 exe 头与 sha256；token 不再进 URL"
+RELEASE_NOTE = "- 节日按年查表、过季清状态；副屏取色；配置原子写+节流；主循环降频；预发布不当正式版；附件 GC"
 
 
 def sha256_of(path: Path) -> str:

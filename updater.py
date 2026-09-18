@@ -39,15 +39,23 @@ class ReleaseInfo:
     asset_name: str
 
 
-def parse_version(text: str) -> tuple[int, ...]:
+def parse_version(text: str) -> tuple:
+    """`1.0.92` → (1, 0, 92, 1)；`1.0.92-beta` → (1, 0, 92, 0)，同号预发布排在正式版之前。"""
     text = (text or "").strip().lstrip("vV")
     nums: list[int] = []
+    pre = False
     for part in re.split(r"[.\-+_]", text):
         if part.isdigit():
+            if pre:
+                break
             nums.append(int(part))
         elif nums:
-            break
-    return tuple(nums) if nums else (0,)
+            pre = bool(part)
+            if pre:
+                break
+    if not nums:
+        return (0, 0)
+    return tuple(nums) + (0 if pre else 1,)
 
 
 def is_newer(remote: str, local: str = APP_VERSION) -> bool:
@@ -154,7 +162,7 @@ def fetch_latest_release(
         release = item
         break
     if release is None:
-        release = data[0]
+        raise RuntimeError("仓库暂无正式版 Release（只有预发布），稍后再试")
 
     tag = str(release.get("tag_name") or "")
     version = tag.lstrip("vV") or str(release.get("name") or "")
@@ -559,7 +567,14 @@ def run_ota_replace_if_requested(argv: list[str] | None = None) -> bool:
         deadline = time.monotonic() + 120
         while _pid_running(pid):
             if time.monotonic() > deadline:
-                _ota_log(pid, "wait timeout, abort")
+                # 旧进程 2 分钟还没退：把 .new 留好让下次启动 resume_pending_update 收尾，并记日志
+                _ota_log(pid, "wait timeout, leave .new for next launch")
+                try:
+                    if not _file_ok(staged) and _file_ok(source) and not _same_file(source, staged):
+                        shutil.copy2(source, staged)
+                    store.append_log("ota-replace: 等待旧进程退出超时，更新将在下次启动时完成")
+                except OSError as e:
+                    _ota_log(pid, f"stage on timeout failed: {e}")
                 return True
             time.sleep(0.4)
         _ota_log(pid, "process exited")
@@ -644,4 +659,8 @@ def resume_pending_update() -> bool:
 
 
 def force_exit_for_update() -> None:
+    try:
+        store.flush_pending(force=True)  # 挂起的配置先落盘，别被 os._exit 吞掉
+    except Exception:  # noqa: BLE001
+        pass
     os._exit(0)

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -88,7 +90,7 @@ def load_config() -> dict:
         "theme": "ghost",
         "win_w": 248,
         "win_h": 92,
-        "esc_disguise": False,
+        "ctrl_hide": False,
         "session_stale": False,
         "last_wall": "",
         "auto_start": False,
@@ -125,18 +127,57 @@ def load_config() -> dict:
         merged.update(data)
         if not (merged.get("gitcode_repo") or "").strip():
             merged["gitcode_repo"] = defaults.get("gitcode_repo", "")
+        # 旧键 esc_disguise → ctrl_hide（功能早就是「单击 Ctrl 隐藏」，键名跟着改）
+        if "ctrl_hide" not in data and "esc_disguise" in data:
+            merged["ctrl_hide"] = bool(data.get("esc_disguise"))
+        merged.pop("esc_disguise", None)
         return merged
     except json.JSONDecodeError:
         return dict(defaults)
 
 
-def save_config(cfg: dict) -> None:
+_SAVE_MIN_GAP = 1.0  # 两次落盘最小间隔（秒）；期间的改动合并成一次
+_pending: dict | None = None
+_last_write = 0.0
+
+
+def _write_config(cfg: dict) -> None:
+    global _last_write
+    out = dict(cfg)
+    # 两个 token 都只从 update_defaults(.secret).json / 环境变量进内存，不落用户配置
+    out.pop("feedback_token", None)
+    out.pop("gitcode_token", None)
+    path = config_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    _last_write = time.monotonic()
+
+
+def save_config(cfg: dict, *, now: bool = False) -> None:
+    """脏标记 + 节流落盘：距上次写入不足 1s 时先挂起，由主循环 flush_pending 收尾。
+
+    cfg 始终是同一个 dict 引用，挂起期间的后续改动会一起写出去。
+    """
+    global _pending
+    _pending = cfg
+    if now or time.monotonic() - _last_write >= _SAVE_MIN_GAP:
+        flush_pending(force=True)
+
+
+def flush_pending(*, force: bool = False) -> bool:
+    """主循环每帧调用；到期或 force 时把挂起的配置写盘。"""
+    global _pending
+    if _pending is None:
+        return False
+    if not force and time.monotonic() - _last_write < _SAVE_MIN_GAP:
+        return False
+    cfg, _pending = _pending, None
     try:
-        out = dict(cfg)
-        out.pop("feedback_token", None)
-        config_path().write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_config(cfg)
     except OSError:
         pass
+    return True
 
 
 def append_log(message: str) -> None:
@@ -144,7 +185,12 @@ def append_log(message: str) -> None:
         path = user_data_dir() / "error.log"
         line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n"
         if path.exists() and path.stat().st_size > 80_000:
-            path.write_text(line, encoding="utf-8")
+            # 超限只砍掉前半，保留最近 40KB，别把上下文全丢了
+            tail = path.read_bytes()[-40_000:]
+            nl = tail.find(b"\n")
+            if nl >= 0:
+                tail = tail[nl + 1:]
+            path.write_bytes(tail + line.encode("utf-8"))
         else:
             with path.open("a", encoding="utf-8") as f:
                 f.write(line)

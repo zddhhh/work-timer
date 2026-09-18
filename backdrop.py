@@ -46,6 +46,46 @@ class BITMAPINFO(ctypes.Structure):
     _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 1)]
 
 
+# 与 layered_win 保持一致的类型声明（ctypes 的 windll 函数对象全进程共享，两边必须同形）
+_HANDLE = wintypes.HANDLE
+user32.GetDC.argtypes = [wintypes.HWND]
+user32.GetDC.restype = wintypes.HDC
+user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+user32.ReleaseDC.restype = ctypes.c_int
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = wintypes.HDC
+gdi32.CreateDIBSection.argtypes = [
+    wintypes.HDC, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), _HANDLE, wintypes.DWORD,
+]
+gdi32.CreateDIBSection.restype = _HANDLE
+gdi32.SelectObject.argtypes = [wintypes.HDC, _HANDLE]
+gdi32.SelectObject.restype = _HANDLE
+gdi32.DeleteObject.argtypes = [_HANDLE]
+gdi32.DeleteObject.restype = wintypes.BOOL
+gdi32.DeleteDC.argtypes = [wintypes.HDC]
+gdi32.DeleteDC.restype = wintypes.BOOL
+gdi32.BitBlt.argtypes = [
+    wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
+]
+gdi32.BitBlt.restype = wintypes.BOOL
+
+
+def _monitor_rect(x: int, y: int) -> tuple[int, int, int, int]:
+    """窗口中心所在显示器的物理范围；副屏（负坐标/超主屏）也能正确采样。"""
+    try:
+        import layered_win  # 复用同一套 POINT/MONITORINFO 声明，避免 argtypes 冲突
+
+        r = layered_win.monitor_rect_at(int(x), int(y))
+        if r is not None:
+            return int(r.left), int(r.top), int(r.right), int(r.bottom)
+    except Exception:
+        pass
+    return 0, 0, int(user32.GetSystemMetrics(SM_CXSCREEN)), int(user32.GetSystemMetrics(SM_CYSCREEN))
+
+
 class _RingSampler:
     """复用一块 DIB，整圈一次截屏。"""
 
@@ -164,14 +204,13 @@ def wallpaper_token() -> tuple:
 
 def sample_around(x: int, y: int, w: int, h: int, *, strip: int = 8) -> tuple[float, tuple[int, int, int]] | None:
     """采窗周 + 窗下的亮度与平均色。"""
-    sw = int(user32.GetSystemMetrics(SM_CXSCREEN))
-    sh = int(user32.GetSystemMetrics(SM_CYSCREEN))
     x, y, w, h = int(x), int(y), int(w), int(h)
+    ml, mt, mr, mb = _monitor_rect(x + w // 2, y + h // 2)
     pad = max(4, int(strip))
-    left = max(0, x - pad)
-    top = max(0, y - pad)
-    right = min(sw, x + w + pad)
-    bottom = min(sh, y + h + pad)
+    left = max(ml, x - pad)
+    top = max(mt, y - pad)
+    right = min(mr, x + w + pad)
+    bottom = min(mb, y + h + pad)
     rw, rh = right - left, bottom - top
     if rw < 2 or rh < 2:
         return None

@@ -10,8 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import attachments  # noqa: E402
 import feedback  # noqa: E402
 import festival  # noqa: E402
+import store  # noqa: E402
 import flex_time  # noqa: E402
 import schedules  # noqa: E402
 import themes  # noqa: E402
@@ -21,10 +23,15 @@ from PIL import Image  # noqa: E402
 
 class VersionTests(unittest.TestCase):
     def test_parse_and_compare(self):
-        self.assertEqual(updater.parse_version("v1.0.91"), (1, 0, 91))
+        self.assertEqual(updater.parse_version("v1.0.91")[:3], (1, 0, 91))
         self.assertTrue(updater.is_newer("1.0.92", "1.0.91"))
         self.assertFalse(updater.is_newer("1.0.91", "1.0.91"))
         self.assertTrue(updater.is_newer("1.1.0", "1.0.99"))
+        # 预发布排在同号正式版之前
+        self.assertFalse(updater.is_newer("1.0.92-beta", "1.0.92"))
+        self.assertTrue(updater.is_newer("1.0.92", "1.0.92-beta"))
+        self.assertTrue(updater.is_newer("1.0.92-beta", "1.0.91"))
+        self.assertTrue(updater.is_newer("1.0.92-beta.2", "1.0.91"))
 
     def test_pick_asset(self):
         assets = [{"name": "readme.txt"}, {"name": "worktimer.EXE"}]
@@ -93,6 +100,34 @@ class FestivalScheduleTests(unittest.TestCase):
         self.assertTrue(schedules.sync_festival(cfg, now=datetime(2026, 10, 9)))
         self.assertEqual(cfg["theme"], "ghost")
         self.assertEqual(cfg["schedules"], [])
+        # 过季状态键清干净，再跑一次不该再有改动
+        self.assertFalse(any(k.startswith(("midautumn_", "nationalday_", "theme_before_")) for k in cfg))
+        self.assertFalse(schedules.sync_festival(cfg, now=datetime(2026, 10, 10)))
+
+    def test_next_year_retriggers(self):
+        cfg = self._cfg()
+        schedules.sync_festival(cfg, now=datetime(2026, 9, 18))
+        schedules.sync_festival(cfg, now=datetime(2026, 12, 1))
+        self.assertEqual(cfg["theme"], "ghost")
+        self.assertTrue(schedules.sync_festival(cfg, now=datetime(2027, 9, 10)))
+        self.assertEqual(cfg["theme"], "midautumn")
+        item = schedules.find_schedule(cfg, "midautumn")
+        self.assertEqual(item["date"], "2027-09-15")
+
+    def test_stale_item_date_refreshed(self):
+        cfg = self._cfg()
+        item = schedules.new_clock("中秋", 19, 0, date="2025-10-06")
+        item["id"] = "midautumn"
+        cfg["schedules"].append(item)
+        schedules.sync_festival(cfg, now=datetime(2026, 9, 18))
+        self.assertEqual(schedules.find_schedule(cfg, "midautumn")["date"], "2026-09-25")
+
+    def test_unknown_year_has_no_midautumn(self):
+        self.assertFalse(festival.midautumn_in_season(datetime(2099, 9, 20)))
+        self.assertTrue(festival.national_in_season(datetime(2099, 10, 1)))
+        cfg = self._cfg()
+        schedules.sync_festival(cfg, now=datetime(2099, 9, 20))
+        self.assertIsNone(schedules.find_schedule(cfg, "midautumn"))
 
     def test_manual_theme_not_overridden(self):
         cfg = self._cfg()
@@ -175,6 +210,79 @@ class FeedbackTests(unittest.TestCase):
 
     def test_normalize_contact_truncates(self):
         self.assertEqual(len(feedback.normalize_contact("a" * 500)), 120)
+
+
+class ScheduleFieldTests(unittest.TestCase):
+    def test_invalid_clock_not_done(self):
+        bad = {"kind": "clock", "hm": [99, 0], "date": "2026-09-18"}
+        self.assertEqual(schedules.schedule_remaining(bad, datetime(2026, 9, 18)), (0, False))
+        self.assertEqual(schedules.format_schedule_when(bad), "时间无效")
+
+    def test_ensure_fields_fills_date_once(self):
+        cfg = {"schedules": [{"id": "a", "kind": "clock", "hm": [9, 0]}, {"id": "b", "kind": "clock", "hm": [9, 0], "date": ""}]}
+        schedules.ensure_fields(cfg)
+        self.assertTrue(cfg["schedules"][0]["date"])
+        self.assertEqual(cfg["schedules"][1]["date"], "")
+
+
+class _TmpStore(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._orig = store.user_data_dir
+        tmp = Path(self._tmp.name)
+        store.user_data_dir = lambda: tmp  # type: ignore[assignment]
+        store._pending = None
+        store._last_write = 0.0
+
+    def tearDown(self):
+        store.user_data_dir = self._orig  # type: ignore[assignment]
+        store._pending = None
+        self._tmp.cleanup()
+
+
+class StoreTests(_TmpStore):
+    def test_tokens_not_persisted_and_debounce(self):
+        cfg = {"theme": "ghost", "feedback_token": "f", "gitcode_token": "g"}
+        store.save_config(cfg)  # 首次立即落盘
+        text = store.config_path().read_text(encoding="utf-8")
+        self.assertNotIn("_token", text)
+        cfg["theme"] = "neon"
+        store.save_config(cfg)  # 1s 内：挂起
+        self.assertIn('"ghost"', store.config_path().read_text(encoding="utf-8"))
+        self.assertFalse(store.flush_pending())
+        self.assertTrue(store.flush_pending(force=True))
+        self.assertIn('"neon"', store.config_path().read_text(encoding="utf-8"))
+        self.assertFalse(store.flush_pending(force=True))
+
+    def test_legacy_key_migrates(self):
+        store.config_path().write_text('{"esc_disguise": true}', encoding="utf-8")
+        cfg = store.load_config()
+        self.assertTrue(cfg["ctrl_hide"])
+        self.assertNotIn("esc_disguise", cfg)
+
+    def test_log_keeps_tail(self):
+        path = store.user_data_dir() / "error.log"
+        path.write_bytes(b"x" * 90_000 + b"\nKEEP\n")
+        store.append_log("new")
+        data = path.read_bytes()
+        self.assertLess(len(data), 41_000)
+        self.assertIn(b"KEEP", data)
+        self.assertTrue(data.endswith(b"new\n"))
+
+
+class AttachmentGcTests(_TmpStore):
+    def test_gc_removes_orphans(self):
+        root = store.user_data_dir() / "attachments"
+        (root / "schedule_a").mkdir(parents=True)
+        (root / "schedule_a" / "keep.jpg").write_bytes(b"1")
+        (root / "schedule_a" / "orphan.jpg").write_bytes(b"1")
+        (root / "memo_zzz").mkdir()
+        (root / "memo_zzz" / "x.jpg").write_bytes(b"1")
+        cfg = {"schedules": [{"id": "a", "images": [{"id": "k1", "file": "keep.jpg"}]}], "memos": []}
+        self.assertEqual(attachments.gc(cfg), 1)
+        self.assertTrue((root / "schedule_a" / "keep.jpg").exists())
+        self.assertFalse((root / "schedule_a" / "orphan.jpg").exists())
+        self.assertFalse((root / "memo_zzz").exists())
 
 
 class FlexTimeTests(unittest.TestCase):

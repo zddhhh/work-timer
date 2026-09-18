@@ -34,6 +34,7 @@ import win_drop
 from version import APP_VERSION
 
 FPS = 60
+IDLE_FPS = 30
 _LEGACY_SIZES = {"s": (248, 92), "m": (320, 118), "l": (400, 148)}
 
 
@@ -619,7 +620,7 @@ class WorkTimer:
         if updater.resume_pending_update():
             updater.force_exit_for_update()
         if not single_instance.claim():
-            updater.force_exit_for_update()
+            os._exit(0)  # 已有实例在跑，静默退出（和更新无关）
         updater.cleanup_update_artifacts()
         updater.stamp_stable_install_version()
         self.cfg = store.load_config()
@@ -632,6 +633,10 @@ class WorkTimer:
         memos.ensure_fields(self.cfg)
         if schedules.sync_festival(self.cfg):
             store.save_config(self.cfg)
+        try:
+            attachments.gc(self.cfg)
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("attachments-gc", e)
         self.running = True
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
@@ -650,6 +655,7 @@ class WorkTimer:
         self._ctrl_held = False
         self._ctrl_chord = False
         self._ctrl_down_at = 0.0
+        self._ctrl_scan_at = 0.0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -691,7 +697,7 @@ class WorkTimer:
             ssl.create_default_context()
         except Exception:
             pass
-        self.cfg["esc_disguise"] = bool(self.cfg.get("esc_disguise"))
+        self.cfg["ctrl_hide"] = bool(self.cfg.get("ctrl_hide"))
         self.cfg["remember_offwork"] = bool(self.cfg.get("remember_offwork", True))
         self.cfg["auto_start"] = bool(self.cfg.get("auto_start"))
         try:
@@ -819,8 +825,9 @@ class WorkTimer:
         if theme_id not in themes.theme_map():
             return
         self.cfg["theme"] = theme_id
-        self.cfg["midautumn_theme_auto"] = False
-        self.cfg["nationalday_theme_auto"] = False
+        # 用户手动选过皮，过季就不再替他还原
+        self.cfg.pop("midautumn_theme_auto", None)
+        self.cfg.pop("nationalday_theme_auto", None)
         store.save_config(self.cfg)
         self._last_key = ""
         self._force_surface_sample = True
@@ -1010,10 +1017,10 @@ class WorkTimer:
                 self._last_pin_rotate = time.monotonic()
 
     def _esc_disguise_on(self) -> bool:
-        return bool(self.cfg.get("esc_disguise"))
+        return bool(self.cfg.get("ctrl_hide"))
 
     def _set_esc_disguise(self, on: bool) -> None:
-        self.cfg["esc_disguise"] = bool(on)
+        self.cfg["ctrl_hide"] = bool(on)
         store.save_config(self.cfg)
         if not on and self._esc_hidden:
             self._show_after_esc()
@@ -1065,8 +1072,14 @@ class WorkTimer:
         if ctrl and not self._ctrl_held:
             self._ctrl_chord = self._ctrl_other_key_down()
             self._ctrl_down_at = time.monotonic()
-        elif ctrl and self._ctrl_other_key_down():
-            self._ctrl_chord = True
+            self._ctrl_scan_at = self._ctrl_down_at
+        elif ctrl and not self._ctrl_chord:
+            # 按住 Ctrl 期间扫 150 个 VK 判断是否组合键：节流到 50ms 一次
+            t = time.monotonic()
+            if t - self._ctrl_scan_at >= 0.05:
+                self._ctrl_scan_at = t
+                if self._ctrl_other_key_down():
+                    self._ctrl_chord = True
         if (not ctrl) and self._ctrl_held:
             held = time.monotonic() - self._ctrl_down_at
             if (
@@ -2397,8 +2410,8 @@ class WorkTimer:
                 if not kinetic.playing(self._kinetic, now_m) and schedules.rotate_tick(
                     self.cfg, self._last_pin_rotate, now_m
                 ):
+                    # active_pin 是易失状态，轮播切换不值得每 5s 写一次盘
                     self._last_pin_rotate = now_m
-                    store.save_config(self.cfg)
                     self._last_key = ""
                 self._refresh_surface()
                 self._paint()
@@ -2406,15 +2419,20 @@ class WorkTimer:
                 if now - last_save > 1.5:
                     self._persist_pos()
                     last_save = now
+                store.flush_pending()
                 if now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
                     time.sleep(0.001)
-                else:
+                elif ornaments.has_skin(self._theme().kind):
                     time.sleep(1.0 / FPS)
+                else:
+                    # 无动画皮时 _paint 只在秒数变化才重绘，主循环没必要 60Hz 空转
+                    time.sleep(1.0 / IDLE_FPS)
             except Exception as e:  # noqa: BLE001
                 store.log_exception("loop", e)
                 time.sleep(0.05)
         self._persist_pos()
         self._persist_size()
+        store.flush_pending(force=True)
         self.win.destroy()
         if self._tk is not None:
             self._tk.destroy()

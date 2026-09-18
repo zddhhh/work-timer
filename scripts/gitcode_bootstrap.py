@@ -128,10 +128,11 @@ def main() -> None:
         run(["git", "remote", "remove", "origin"])
     except subprocess.CalledProcessError:
         pass
-    push_url = f"https://oauth2:{token}@gitcode.com/{login}/{REPO_NAME}.git"
+    # 不把 token 写进 remote URL（会明文留在 .git/config 里）；推送时由凭据管理器保存一次即可
     run(["git", "remote", "add", "origin", clone])
-    run(["git", "remote", "set-url", "--push", "origin", push_url])
+    run(["git", "config", "credential.https://gitcode.com.username", "oauth2"])
     print("仓库：", html)
+    print("首次 push 会弹凭据窗口：用户名 oauth2，密码填 GitCode 令牌；之后由 Git Credential Manager 记住。")
 
 
 if __name__ == "__main__":

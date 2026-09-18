@@ -153,6 +153,45 @@ def commit(
     return out[:MAX_IMAGES]
 
 
+def gc(cfg: dict) -> int:
+    """启动时清理孤儿附件：不被任何日程/备忘引用的文件与目录。返回删除的文件数。"""
+    root = store.user_data_dir() / "attachments"
+    if not root.is_dir():
+        return 0
+    keep: dict[str, set[str]] = {}
+    for kind, key in (("schedule", "schedules"), ("memo", "memos")):
+        for item in cfg.get(key) or []:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            folder = f"{kind}_{_safe_id(str(item['id']))}"
+            names = keep.setdefault(folder, set())
+            for rec in normalize(item.get("images")):
+                names.add(Path(str(rec.get("file") or f"{rec.get('id')}.jpg")).name)
+    removed = 0
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return 0
+    for d in children:
+        if not d.is_dir():
+            continue
+        names = keep.get(d.name)
+        if names is None:
+            shutil.rmtree(d, ignore_errors=True)
+            continue
+        try:
+            for f in d.iterdir():
+                if f.is_file() and f.name not in names:
+                    try:
+                        f.unlink()
+                        removed += 1
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return removed
+
+
 def open_file(path: Path) -> None:
     try:
         os.startfile(str(path))  # type: ignore[attr-defined]

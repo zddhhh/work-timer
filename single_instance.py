@@ -51,12 +51,13 @@ def _activate_existing() -> bool:
 def claim() -> bool:
     """True 表示本进程继续跑；False 表示已有实例并已唤起。"""
     global _mutex_handle
-    if not getattr(sys, "frozen", False):
-        return True
+    # 源码模式用独立的 mutex：开发时能发现自己多开，又不会和用户机器上正在跑的 exe 互斥
+    name = _MUTEX_NAME if getattr(sys, "frozen", False) else _MUTEX_NAME + ".dev"
     kernel32 = ctypes.windll.kernel32
     kernel32.CreateMutexW.restype = wintypes.HANDLE
     kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
-    handle = kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.CreateMutexW(None, False, name)
     if not handle:
         return True
     err = kernel32.GetLastError()

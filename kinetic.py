@@ -1,6 +1,7 @@
 """动能字幕：拆字错峰弹出，过冲回弹，多句串播后淡出。"""
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
@@ -22,7 +23,7 @@ NATIONAL_PHRASES: tuple[str, ...] = (
     "山河无恙",
 )
 
-_GLYPH_CACHE: dict[tuple, Image.Image] = {}
+_GLYPH_CACHE: OrderedDict[tuple, Image.Image] = OrderedDict()
 
 
 @dataclass
@@ -110,6 +111,7 @@ def _glyph(
     key = (ch, id(font), fill, q, ghost)
     got = _GLYPH_CACHE.get(key)
     if got is not None:
+        _GLYPH_CACHE.move_to_end(key)
         return got
     pad = 8
     box = font.getbbox(ch)
@@ -129,8 +131,9 @@ def _glyph(
         nw = max(1, int(round(gw * s)))
         nh = max(1, int(round(gh * s)))
         g = g.resize((nw, nh), Image.Resampling.BILINEAR)
-    if len(_GLYPH_CACHE) > 96:
-        _GLYPH_CACHE.clear()
+    # LRU：一句话的字形在弹出期间反复命中，整表清空会让正在播的字重新光栅化
+    while len(_GLYPH_CACHE) >= 96:
+        _GLYPH_CACHE.popitem(last=False)
     _GLYPH_CACHE[key] = g
     return g
 

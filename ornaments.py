@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
@@ -10,8 +11,8 @@ from PIL import Image, ImageChops, ImageDraw
 import store
 
 _ASSET_CACHE: dict[str, Image.Image] = {}
-# (asset_name, tw, th) -> resized RGBA
-_RESIZE_CACHE: dict[tuple[str, int, int], Image.Image] = {}
+# (asset_name, tw, th) -> resized RGBA，LRU
+_RESIZE_CACHE: OrderedDict[tuple[str, int, int], Image.Image] = OrderedDict()
 _MASK_CACHE: dict[tuple[int, int, int], Image.Image] = {}
 _ALPHA_LUT: dict[int, list[int]] = {}
 # 贴图只在画面中心附近漂移，避免整张 640×360 慢扫导致「停一下跳一格」
@@ -54,11 +55,12 @@ def _resized(name: str, src: Image.Image, tw: int, th: int) -> Image.Image:
     key = (name, tw, th)
     got = _RESIZE_CACHE.get(key)
     if got is not None:
+        _RESIZE_CACHE.move_to_end(key)
         return got
     out = src.resize((tw, th), Image.Resampling.LANCZOS)
-    # 只留最近几档，避免拖放缩放时缓存膨胀
-    if len(_RESIZE_CACHE) > 24:
-        _RESIZE_CACHE.clear()
+    # LRU 只留最近几档，避免拖放缩放时缓存膨胀；不整表清空，免得当前皮的两层贴图被一起丢掉
+    while len(_RESIZE_CACHE) >= 24:
+        _RESIZE_CACHE.popitem(last=False)
     _RESIZE_CACHE[key] = out
     return out
 
