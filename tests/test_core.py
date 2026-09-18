@@ -351,18 +351,33 @@ class FxTests(unittest.TestCase):
         self.assertEqual(flag.getpixel((20, 20))[:3], fx.FLAG_GOLD)
         self.assertEqual(flag.getpixel((110, 70))[:3], fx.FLAG_RED)
         self.assertEqual(flag.getpixel((44, 44))[:3], fx.FLAG_RED)
+        # 四颗小星各自的星心为金色
+        for gx, gy in ((10, 2), (12, 4), (12, 7), (10, 9)):
+            r, g, b = flag.getpixel((gx * 4, gy * 4))[:3]
+            self.assertTrue(r > 240 and g > 180 and b < 60, (r, g, b))
 
     def test_flag_and_neon_paint(self):
         import fx
 
-        layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        layer = Image.new("RGBA", (248, 92), (160, 20, 24, 255))
         for ph in (0.0, 0.7, 3.3):
-            fx.paint_flag(layer, ph, x=180, y=8, width=52)
+            fx.paint_canton(layer, ph, unit=4.6, ox=178, oy=2)
+            fx.paint_flutter(layer, ph)
             for st in ("run", "warn", "done", "idle"):
                 fx.paint_neonflow(layer, ph, stage=st, radius=14)
         self.assertEqual(layer.size, (248, 92))
         self.assertTrue(ornaments.has_skin("neonflow"))
         self.assertTrue(ornaments.is_animated("neonflow"))
+
+    def test_menu_sections_cover_catalog(self):
+        secs = themes.menu_sections()
+        flat = [t.id for grp in secs.values() for t in grp]
+        self.assertEqual(sorted(flat), sorted(t.id for t in themes.list_themes()))
+        self.assertEqual(len(flat), len(set(flat)))
+        fest = {"midautumn", "nationalday"}
+        self.assertTrue(fest.issuperset({t.id for t in secs["featured"] + secs["festival"]}))
+        self.assertIn("ghost", [t.id for t in secs["basic"]])
+        self.assertIn("neonflow", [t.id for t in secs["fancy"]])
 
     def test_perimeter_closed(self):
         import fx

@@ -323,7 +323,17 @@ def paste_skin(
         _place(glow, name_b or "glow", a1, speed=base_speed * 0.78, twist=1.7)
 
     if kind == "nationalday":
-        _paint_embers(layer, phase, light=light, stage=stage, count=10)
+        # 整张卡就是旗面：星组直接绣在右上角红绸上，再整体过一遍布面明暗起伏
+        unit = max(2.5, bh * 0.05)
+        fx.paint_canton(
+            layer, phase,
+            unit=unit,
+            ox=int(round(bw - 13 * unit - bw * 0.04)),
+            oy=int(round(bh * 0.07 - unit)),
+            slow=freeze,
+        )
+        fx.paint_flutter(layer, phase, slow=freeze)
+        _paint_embers(layer, phase, light=light, stage=stage, count=8)
         # 红底不叠蓝灰情绪色，只留环境光
         mood = _mix_env((255, 176, 96, 18 if light else 22), env_rgb)
     else:
@@ -331,16 +341,6 @@ def paste_skin(
     tint = Image.new("RGBA", (bw, bh), mood)
     layer = Image.alpha_composite(layer, tint)
     _paint_sweep(layer, phase, light=light, stage=stage)
-    if kind == "nationalday":
-        # 右上角飘动的国旗：避开左侧标题和下方大数字
-        fw = max(36, int(round(bw * 0.21)))
-        fx.paint_flag(
-            layer, phase,
-            x=bw - fw - int(round(bw * 0.05)),
-            y=int(round(bh * 0.09)),
-            width=fw,
-            slow=freeze,
-        )
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
     return True
 

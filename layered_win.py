@@ -755,29 +755,54 @@ class LayeredPetWindow:
         user32.AppendMenuW(
             hfmt, MF_STRING | (MF_CHECKED if display_mode == "sec" else 0), ID_FMT_SEC, "秒"
         )
-        catalog = themes.list_themes()
+        # 外观：在季节日置顶 → 素底 → 炫彩 → 过季节日收进子菜单；catalog 按追加顺序做 ID 映射
+        sections = themes.menu_sections()
+        catalog: list = []
         htheme = user32.CreatePopupMenu()
-        for i, th in enumerate(catalog):
-            checked = MF_CHECKED if th.id == theme_id else 0
-            user32.AppendMenuW(htheme, MF_STRING | checked, ID_THEME_BASE + i, th.name)
+
+        def _append_themes(menu, group: list) -> None:
+            for th in group:
+                checked = MF_CHECKED if th.id == theme_id else 0
+                user32.AppendMenuW(menu, MF_STRING | checked, ID_THEME_BASE + len(catalog), th.name)
+                catalog.append(th)
+
+        if sections["featured"]:
+            _append_themes(htheme, sections["featured"])
+            user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
+        _append_themes(htheme, sections["basic"])
+        if sections["basic"] and sections["fancy"]:
+            user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
+        _append_themes(htheme, sections["fancy"])
+        if sections["festival"]:
+            hfest = user32.CreatePopupMenu()
+            _append_themes(hfest, sections["festival"])
+            user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
+            user32.AppendMenuW(htheme, MF_POPUP, hfest, "节日")
         user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(htheme, MF_STRING, ID_REFRESH_THEMES, "刷新在线外观")
-        user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间…")
-        user32.AppendMenuW(hmenu, MF_STRING, ID_SCHEDULES, "日程列表…")
-        user32.AppendMenuW(hmenu, MF_POPUP, hfmt, "显示方式")
-        user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
+
+        # 设置：显示方式三选一 + 两个开关，收成一个子菜单
+        hset = user32.CreatePopupMenu()
+        user32.AppendMenuW(hset, MF_POPUP, hfmt, "显示方式")
+        user32.AppendMenuW(hset, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(
-            hmenu,
+            hset,
             MF_STRING | (MF_CHECKED if esc_disguise else 0),
             ID_DISGUISE,
             "Ctrl 隐藏窗口",
         )
         user32.AppendMenuW(
-            hmenu,
+            hset,
             MF_STRING | (MF_CHECKED if auto_start else 0),
             ID_AUTO_START,
             "开机自启动",
         )
+
+        user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间…")
+        user32.AppendMenuW(hmenu, MF_STRING, ID_SCHEDULES, "日程列表…")
+        user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
+        user32.AppendMenuW(hmenu, MF_POPUP, hset, "设置")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
         user32.AppendMenuW(hmenu, MF_STRING, ID_ABOUT, "关于…")

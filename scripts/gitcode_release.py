@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 新皮「霓虹流光」：暗底扫描线、四角 HUD 角标、双色流光绕边跑、偶发故障错位；国庆皮重做为红绸底 + 右上角飘动国旗"
+RELEASE_NOTE = "- 国庆皮：整卡即旗面，星组直接绣在右上角红绸上，不再贴一面小旗；右键菜单分组收纳（外观分素底/炫彩/节日，显示方式与开关收进「设置」）"
 
 
 def sha256_of(path: Path) -> str:

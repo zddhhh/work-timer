@@ -279,6 +279,31 @@ def list_themes() -> list[Theme]:
     return out
 
 
+_BASIC_KINDS = frozenset({"ghost", "glass", "frost"})
+
+
+def menu_sections() -> dict[str, list[Theme]]:
+    """右键「外观」分组，避免十几套皮平铺一列。
+
+    featured：在季的节日限定，顶到最上；basic：淡影/玻璃/霜白这类素底；
+    fancy：其余炫彩皮；festival：过季的节日皮，收进「节日」子菜单里备查。"""
+    items = list_themes()
+    fest_ids = {festival.MIDAUTUMN_THEME_ID, festival.NATIONAL_THEME_ID}
+    in_season = {
+        festival.MIDAUTUMN_THEME_ID: festival.midautumn_in_season(),
+        festival.NATIONAL_THEME_ID: festival.national_in_season(),
+    }
+    out: dict[str, list[Theme]] = {"featured": [], "basic": [], "fancy": [], "festival": []}
+    for t in items:
+        if t.id in fest_ids:
+            out["featured" if in_season.get(t.id) else "festival"].append(t)
+        elif t.kind in _BASIC_KINDS:
+            out["basic"].append(t)
+        else:
+            out["fancy"].append(t)
+    return out
+
+
 def theme_map() -> dict[str, Theme]:
     return {t.id: t for t in list_themes()}
 
