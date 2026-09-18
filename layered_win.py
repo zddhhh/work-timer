@@ -755,29 +755,22 @@ class LayeredPetWindow:
         user32.AppendMenuW(
             hfmt, MF_STRING | (MF_CHECKED if display_mode == "sec" else 0), ID_FMT_SEC, "秒"
         )
-        # 外观：在季节日置顶 → 素底 → 炫彩 → 过季节日收进子菜单；catalog 按追加顺序做 ID 映射
+        # 外观：经典（两字）/ 特效（四字）/ 节日 三个子菜单；catalog 按追加顺序做 ID 映射
         sections = themes.menu_sections()
         catalog: list = []
         htheme = user32.CreatePopupMenu()
-
-        def _append_themes(menu, group: list) -> None:
+        for key, label in (("classic", "经典"), ("fancy", "特效"), ("festival", "节日")):
+            group = sections.get(key) or []
+            if not group:
+                continue
+            hsub = user32.CreatePopupMenu()
             for th in group:
                 checked = MF_CHECKED if th.id == theme_id else 0
-                user32.AppendMenuW(menu, MF_STRING | checked, ID_THEME_BASE + len(catalog), th.name)
+                user32.AppendMenuW(hsub, MF_STRING | checked, ID_THEME_BASE + len(catalog), th.name)
                 catalog.append(th)
-
-        if sections["featured"]:
-            _append_themes(htheme, sections["featured"])
-            user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
-        _append_themes(htheme, sections["basic"])
-        if sections["basic"] and sections["fancy"]:
-            user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
-        _append_themes(htheme, sections["fancy"])
-        if sections["festival"]:
-            hfest = user32.CreatePopupMenu()
-            _append_themes(hfest, sections["festival"])
-            user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
-            user32.AppendMenuW(htheme, MF_POPUP, hfest, "节日")
+            # 当前皮在哪组，组名也打勾，一眼能找到
+            mark = MF_CHECKED if any(th.id == theme_id for th in group) else 0
+            user32.AppendMenuW(htheme, MF_POPUP | mark, hsub, label)
         user32.AppendMenuW(htheme, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(htheme, MF_STRING, ID_REFRESH_THEMES, "刷新在线外观")
 

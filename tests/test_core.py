@@ -374,9 +374,9 @@ class FxTests(unittest.TestCase):
         flat = [t.id for grp in secs.values() for t in grp]
         self.assertEqual(sorted(flat), sorted(t.id for t in themes.list_themes()))
         self.assertEqual(len(flat), len(set(flat)))
-        fest = {"midautumn", "nationalday"}
-        self.assertTrue(fest.issuperset({t.id for t in secs["featured"] + secs["festival"]}))
-        self.assertIn("ghost", [t.id for t in secs["basic"]])
+        self.assertEqual({t.id for t in secs["festival"]}, {"midautumn", "nationalday"})
+        self.assertIn("ghost", [t.id for t in secs["classic"]])
+        self.assertTrue(all(len(t.name) <= 2 for t in secs["classic"]))
         self.assertIn("neonflow", [t.id for t in secs["fancy"]])
 
     def test_perimeter_closed(self):
