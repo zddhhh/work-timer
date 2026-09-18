@@ -26,7 +26,6 @@ import layered_win
 import memos
 import ornaments
 import schedules
-import sky
 import single_instance
 import store
 import themes
@@ -167,6 +166,14 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
         dlg.geometry(f"{w}x{h}+{x}+{y}")
     else:
         dlg.geometry(f"{w}x{h}")
+    # 第一次 fit 才亮出来：此时尺寸/位置都是最终值，不会先闪一块空壳
+    try:
+        if dlg.state() == "withdrawn":
+            dlg.deiconify()
+            dlg.lift()
+            dlg.focus_force()
+    except Exception:
+        pass
 
 
 def _reveal_card(
@@ -220,8 +227,13 @@ def _card_dialog(
     width: int,
     height: int,
 ) -> tk.Toplevel:
-    """无边框、置顶深色卡片（贴近主界面）。不裁圆角，避免把按钮切掉。"""
+    """无边框、置顶深色卡片（贴近主界面）。不裁圆角，避免把按钮切掉。
+
+    创建时先藏着（withdraw），控件排完由 _fit_card / _reveal_card 按最终尺寸、最终位置一次亮出，
+    否则会先看到一块空壳再变形跳位。
+    """
     dlg = tk.Toplevel(parent)
+    dlg.withdraw()
     dlg.overrideredirect(True)
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
@@ -231,11 +243,6 @@ def _card_dialog(
         dlg.geometry(f"{width}x{height}+{x}+{y}")
     else:
         dlg.geometry(f"{width}x{height}")
-    try:
-        dlg.lift()
-        dlg.focus_force()
-    except Exception:
-        pass
     state = {"x": 0, "y": 0}
 
     def start(e) -> None:
@@ -698,6 +705,11 @@ class WorkTimer:
             store.log_exception("desktop-shortcut", e)
         schedules.ensure_fields(self.cfg)
         memos.ensure_fields(self.cfg)
+        # 下架的皮（自适应/天色）回落到淡影
+        fixed_theme = themes.normalize_id(self.cfg.get("theme"))
+        if fixed_theme != self.cfg.get("theme"):
+            self.cfg["theme"] = fixed_theme
+            store.save_config(self.cfg)
         if schedules.sync_festival(self.cfg):
             store.save_config(self.cfg)
         try:
@@ -2328,13 +2340,7 @@ class WorkTimer:
             phase = time.monotonic()
             title, total, done, idle = self._active_view(now)
             self._check_celebrate(schedules.active_id(self.cfg) or "-", title, total, done, idle, phase)
-            sky_t: float | None = None
-            if base.kind == "sky":
-                # 天色皮：字色跟天亮/天黑走，不看桌面明暗
-                sky_t = sky.solar_t(now, remaining_sec=total, done=done, idle=idle)
-                surface = "light" if sky.is_bright(sky_t) else "dark"
-            else:
-                surface = self._surface if base.adaptive else "dark"
+            surface = self._surface if base.adaptive else "dark"
             theme = themes.resolve_for_surface(base, surface)
             sub = ""
             if idle:
@@ -2359,10 +2365,7 @@ class WorkTimer:
             env = self._env_rgb
             if env is not None:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
-            if sky_t is not None:
-                fps = 6 if stage in ("idle", "done") else 10
-                key = f"{key}-s{sky.bucket(sky_t)}-a{int(phase * fps)}"
-            elif ornaments.has_skin(theme.kind):
+            if ornaments.has_skin(theme.kind):
                 period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
                 sweeping = (phase % period) < 1.95
                 fps = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
@@ -2397,7 +2400,6 @@ class WorkTimer:
                     self._font_sub,
                     stage=stage,
                     env_rgb=self._env_rgb,
-                    sky_t=sky_t,
                 )
                 kinetic.paint(
                     img,
@@ -2424,7 +2426,6 @@ class WorkTimer:
                     self._font_sub,
                     stage=stage,
                     env_rgb=self._env_rgb,
-                    sky_t=sky_t,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:

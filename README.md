@@ -30,7 +30,7 @@ python main.py
 | 右键 → 设置下班时间… | 填 8:30–9:30 到岗按 9.5 小时算，或直接填今天下班几点 |
 | 右键 → 日程列表… | 自建到点/时长日程、备忘；最多优先显示 3 项（节日项不占名额），可自动轮播 |
 | 左键拖 | 挪位置（会记住） |
-| 右键 → 外观 | 淡影（默认，浅色墙纸也会缓变适配）/ 自适应 / 玻璃 / 霜白 / 霓虹 / 终端 / 极光 / 墨金 / 天色（随一天变色，最后 30 分钟日落、到点入夜）/ 中秋 / 国庆；可「刷新在线外观」 |
+| 右键 → 外观 | 淡影（默认，浅色墙纸也会缓变适配）/ 玻璃 / 霜白 / 霓虹 / 终端 / 极光 / 墨金 / 中秋 / 国庆；可「刷新在线外观」 |
 | 右键 → 显示方式 | 时分秒 / 分钟 / 秒 |
 | 右键 → Ctrl 隐藏窗口 | 开关，默认关；打开后轻点 Ctrl 藏起计时器，再点一次显示 |
 | 右键 → 开机自启动 | 开关；用「启动」文件夹快捷方式，不写注册表 |
@@ -79,4 +79,4 @@ $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
 
 ## 在线换皮（不用发新版本）
 
-`1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。可用 `kind`：`ghost` / `glass` / `frost` / `neon` / `terminal` / `aurora` / `inkgold` / `warmglow` / `midautumn` / `nationalday` / `sky`。`adaptive` + `on_light` 可调自适应两套色；全新画法才需要发版。
+`1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。可用 `kind`：`ghost` / `glass` / `frost` / `neon` / `terminal` / `aurora` / `inkgold` / `warmglow` / `midautumn` / `nationalday`。`adaptive` + `on_light` 可调自适应两套色；全新画法才需要发版。

@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 弹窗（检查更新/设置/日程）绕开计时器放置，不再遮挡倒计时"
+RELEASE_NOTE = "- 弹层先排版再亮出，打开日程列表不再闪空壳；下架「天色」「自适应」外观"
 
 
 def sha256_of(path: Path) -> str:

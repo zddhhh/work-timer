@@ -348,8 +348,8 @@ _CONFETTI_COLORS = (
 
 
 def is_animated(kind: str) -> bool:
-    """需要按帧重绘的皮（生图皮 + 天色）。"""
-    return kind in _SKIN_LAYERS or kind == "sky"
+    """需要按帧重绘的皮（生图皮）。"""
+    return kind in _SKIN_LAYERS
 
 
 def _confetti_seed(i: int) -> tuple[float, ...]:

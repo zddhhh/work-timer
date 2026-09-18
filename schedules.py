@@ -7,6 +7,7 @@ from typing import Any
 
 import attachments
 import festival
+import themes
 
 OFFWORK_ID = "offwork"
 MAX_PINS = 3
@@ -359,8 +360,7 @@ def _sync_one_festival(
         return changed
 
     if cfg.get(f"{sid}_theme_auto") and str(cfg.get("theme") or "") == theme_id:
-        prev = str(cfg.get(f"theme_before_{sid}") or "ghost") or "ghost"
-        cfg["theme"] = prev
+        cfg["theme"] = themes.normalize_id(cfg.get(f"theme_before_{sid}"))
         changed = True
     if find_schedule(cfg, sid) is not None:
         remove_schedule(cfg, sid, force=True)

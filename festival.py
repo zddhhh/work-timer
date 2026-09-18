@@ -34,7 +34,7 @@ NATIONAL_MINUTE = 0
 _NATIONAL_LEAD_DAYS = 3  # 09-28
 _NATIONAL_TAIL_DAYS = 7  # 10-08
 
-DEFAULT_THEME_IDS = frozenset({"ghost", "auto"})
+DEFAULT_THEME_IDS = frozenset({"ghost"})
 BONUS_PIN_IDS = frozenset({MIDAUTUMN_ID, NATIONAL_ID})
 
 # 节日流程里写进 cfg 的易失键（过季时统一清掉，来年才会重新触发一次自动换皮）

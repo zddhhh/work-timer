@@ -9,20 +9,27 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 import festival
 import ornaments
-import sky
 import store
 
 DEFAULT_THEME_ID = "ghost"
 _KINDS = frozenset(
-    {"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "sky"}
+    {"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"}
 )
+# 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
+_REMOVED_IDS = frozenset({"auto", "sky", "blink"})
+
+
+def normalize_id(theme_id: object) -> str:
+    tid = str(theme_id or "").strip()
+    if not tid or tid in _REMOVED_IDS:
+        return DEFAULT_THEME_ID
+    return tid
 _updated = False
 _lock = threading.Lock()
 
@@ -191,7 +198,7 @@ def _parse_catalog(data: object) -> list[Theme]:
     seen: set[str] = set()
     for item in items:
         th = _parse_theme(item)
-        if th is None or th.id in seen:
+        if th is None or th.id in seen or th.id in _REMOVED_IDS:
             continue
         seen.add(th.id)
         out.append(th)
@@ -291,7 +298,7 @@ def consume_updated() -> bool:
 
 # 这些皮会随版本改配色/自适应，优先用内置覆盖缓存或在线版本
 _PREFER_BUNDLED = frozenset(
-    {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "sky"}
+    {"ghost", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"}
 )
 
 
@@ -303,7 +310,7 @@ def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme
     items: list[Theme] = []
     seen: set[str] = set()
     for t in remote:
-        if t.id == "blink" or t.id in seen:
+        if t.id in _REMOVED_IDS or t.id in seen:
             continue
         items.append(bmap[t.id] if (t.id in _PREFER_BUNDLED and t.id in bmap) else t)
         seen.add(t.id)
@@ -312,11 +319,7 @@ def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme
             continue
         if len(items) >= 16:
             break
-        if t.id == "auto":
-            idx = next((i for i, x in enumerate(items) if x.id == "ghost"), -1) + 1
-            items.insert(max(0, idx), t)
-        else:
-            items.append(t)
+        items.append(t)
         seen.add(t.id)
     return items[:16]
 
@@ -433,7 +436,6 @@ def paint_card(
     text_right: int | None = None,
     stage: str = "run",
     env_rgb: tuple[int, int, int] | None = None,
-    sky_t: float | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (4, 4, w - 5, h - 5)
@@ -447,14 +449,7 @@ def paint_card(
 
     if kind != "ghost":
         light_card = _luma(theme.fill) >= 160
-        if kind == "sky":
-            t = sky_t if sky_t is not None else sky.clock_t(datetime.now())
-            sky.paint(img, box, t, now, radius=r, stage=stage)
-            oa = max(8, min(255, int(theme.outline[3] * pulse)))
-            d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
-            ibox = (box[0] + 2, box[1] + 2, box[2] - 2, box[3] - 2)
-            d.rounded_rectangle(ibox, radius=max(4, r - 2), outline=(255, 255, 255, int(20 * pulse)), width=1)
-        elif ornaments.has_skin(kind):
+        if ornaments.has_skin(kind):
             # 圆角卡片：托底和贴图用同一半径，四个圆角弧也铺上生图
             if kind in ("aurora", "neon", "terminal"):
                 base = (248, 246, 255, 22) if light_card else (12, 14, 24, 16)
