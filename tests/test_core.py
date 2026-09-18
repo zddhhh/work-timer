@@ -15,7 +15,9 @@ import feedback  # noqa: E402
 import festival  # noqa: E402
 import store  # noqa: E402
 import flex_time  # noqa: E402
+import ornaments  # noqa: E402
 import schedules  # noqa: E402
+import sky  # noqa: E402
 import themes  # noqa: E402
 import updater  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -283,6 +285,34 @@ class AttachmentGcTests(_TmpStore):
         self.assertTrue((root / "schedule_a" / "keep.jpg").exists())
         self.assertFalse((root / "schedule_a" / "orphan.jpg").exists())
         self.assertFalse((root / "memo_zzz").exists())
+
+
+class SkyTests(unittest.TestCase):
+    def test_solar_mapping(self):
+        noon = datetime(2026, 9, 18, 12, 0)
+        self.assertEqual(sky.solar_t(noon, remaining_sec=0, done=True, idle=False), 1.0)
+        # 剩余 > 30 分钟：太阳不落
+        self.assertLessEqual(sky.solar_t(noon, remaining_sec=7200, done=False, idle=False), 0.62)
+        late = datetime(2026, 9, 18, 23, 0)
+        self.assertGreaterEqual(sky.solar_t(late, remaining_sec=7200, done=False, idle=False), 0.3)
+        # 最后 30 分钟单调走向夜
+        a = sky.solar_t(noon, remaining_sec=1500, done=False, idle=False)
+        b = sky.solar_t(noon, remaining_sec=300, done=False, idle=False)
+        self.assertLess(a, b)
+        self.assertLess(b, 1.0)
+        # 闲置按钟点
+        self.assertLess(sky.solar_t(datetime(2026, 9, 18, 2, 0), remaining_sec=None, done=False, idle=True), 0.1)
+        self.assertTrue(sky.is_bright(0.5))
+        self.assertFalse(sky.is_bright(0.95))
+
+    def test_paint_and_confetti_do_not_crash(self):
+        img = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        for t in (0.0, 0.22, 0.5, 0.78, 0.9, 1.0):
+            sky.paint(img, (4, 4, 243, 87), t, 12.3, radius=18)
+        for tt in (0.0, 1.0, 2.7, 5.0):
+            ornaments.paint_confetti(img, 248, 92, tt)
+        self.assertEqual(img.size, (248, 92))
+        self.assertEqual(themes.get_theme("sky").kind, "sky")
 
 
 class FlexTimeTests(unittest.TestCase):

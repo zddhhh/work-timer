@@ -22,6 +22,7 @@ NATIONAL_PHRASES: tuple[str, ...] = (
     "金秋十月",
     "山河无恙",
 )
+OFFWORK_PHRASES: tuple[str, ...] = ("下班啦",)
 
 _GLYPH_CACHE: OrderedDict[tuple, Image.Image] = OrderedDict()
 

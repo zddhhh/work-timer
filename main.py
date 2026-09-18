@@ -26,6 +26,7 @@ import layered_win
 import memos
 import ornaments
 import schedules
+import sky
 import single_instance
 import store
 import themes
@@ -656,6 +657,9 @@ class WorkTimer:
         self._ctrl_chord = False
         self._ctrl_down_at = 0.0
         self._ctrl_scan_at = 0.0
+        self._done_seen: dict[str, bool] = {}
+        self._celebrate_start = 0.0
+        self._celebrate_until = 0.0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -881,6 +885,32 @@ class WorkTimer:
         store.save_config(self.cfg)
         self._start_kinetic(phrases)
         return True
+
+    def _check_celebrate(self, aid: str, title: str, total: int, done: bool, idle: bool, phase: float) -> None:
+        """当前显示的项从「未到点」翻到「到点」的那一刻：纸屑 + 一句字幕。
+
+        只认运行中发生的翻转（启动即已到点、切到早就到点的项都不算），且到点不超过 2 分钟。
+        """
+        if idle:
+            return
+        prev = self._done_seen.get(aid)
+        self._done_seen[aid] = done
+        if prev is not True and prev is not False:
+            return
+        if prev or not done or total > 120:
+            return
+        if self._esc_hidden or self._update_dialog_open or self._need_dialog or self._schedule_list_open:
+            return
+        if self.win.dragging or self.win.resizing:
+            return
+        self._celebrate_start = phase
+        self._celebrate_until = phase + ornaments.CONFETTI_SEC
+        if kinetic.playing(self._kinetic, phase):
+            return
+        if aid == schedules.OFFWORK_ID:
+            self._start_kinetic(kinetic.OFFWORK_PHRASES)
+        elif not festival.is_locked(aid) and 0 < len(title) <= 6:
+            self._start_kinetic((title,))
 
     def _tick_kinetic(self, now: float) -> None:
         if kinetic.playing(self._kinetic, now):
@@ -2227,11 +2257,18 @@ class WorkTimer:
             now = datetime.now()
             mode = self._display_mode()
             base = self._theme()
-            surface = self._surface if base.adaptive else "dark"
-            theme = themes.resolve_for_surface(base, surface)
             w, h = self._win_w, self._win_h
             phase = time.monotonic()
             title, total, done, idle = self._active_view(now)
+            self._check_celebrate(schedules.active_id(self.cfg) or "-", title, total, done, idle, phase)
+            sky_t: float | None = None
+            if base.kind == "sky":
+                # 天色皮：字色跟天亮/天黑走，不看桌面明暗
+                sky_t = sky.solar_t(now, remaining_sec=total, done=done, idle=idle)
+                surface = "light" if sky.is_bright(sky_t) else "dark"
+            else:
+                surface = self._surface if base.adaptive else "dark"
+            theme = themes.resolve_for_surface(base, surface)
             sub = ""
             if idle:
                 big = "点我开始"
@@ -2255,7 +2292,10 @@ class WorkTimer:
             env = self._env_rgb
             if env is not None:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
-            if ornaments.has_skin(theme.kind):
+            if sky_t is not None:
+                fps = 6 if stage in ("idle", "done") else 10
+                key = f"{key}-s{sky.bucket(sky_t)}-a{int(phase * fps)}"
+            elif ornaments.has_skin(theme.kind):
                 period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
                 sweeping = (phase % period) < 1.95
                 fps = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
@@ -2267,6 +2307,9 @@ class WorkTimer:
                     f"kinetic-{self._kinetic.current_text(phase)}"
                     f"-{int(phase * 60)}-{theme.id}-{w}x{h}"
                 )
+            celebrating = phase < self._celebrate_until
+            if celebrating:
+                key = f"{key}-c{int(phase * 30)}"
 
             if key == self._last_key:
                 return
@@ -2287,6 +2330,7 @@ class WorkTimer:
                     self._font_sub,
                     stage=stage,
                     env_rgb=self._env_rgb,
+                    sky_t=sky_t,
                 )
                 kinetic.paint(
                     img,
@@ -2313,12 +2357,15 @@ class WorkTimer:
                     self._font_sub,
                     stage=stage,
                     env_rgb=self._env_rgb,
+                    sky_t=sky_t,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
                     chev = (40, 44, 52, 90)
                 dots = (idx, n) if n >= 2 and bool(self.cfg.get("auto_rotate_pins")) else (0, 0)
                 ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
+            if celebrating:
+                ornaments.paint_confetti(img, w, h, phase - self._celebrate_start)
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
             self._last_key = key
@@ -2422,7 +2469,7 @@ class WorkTimer:
                 store.flush_pending()
                 if now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
                     time.sleep(0.001)
-                elif ornaments.has_skin(self._theme().kind):
+                elif ornaments.is_animated(self._theme().kind) or now < self._celebrate_until:
                     time.sleep(1.0 / FPS)
                 else:
                     # 无动画皮时 _paint 只在秒数变化才重绘，主循环没必要 60Hz 空转

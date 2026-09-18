@@ -336,6 +336,71 @@ def paste_skin(
     return True
 
 
+CONFETTI_SEC = 2.8
+_CONFETTI_COLORS = (
+    (255, 92, 108),
+    (255, 200, 64),
+    (72, 214, 190),
+    (96, 160, 255),
+    (255, 140, 200),
+    (250, 250, 250),
+)
+
+
+def is_animated(kind: str) -> bool:
+    """需要按帧重绘的皮（生图皮 + 天色）。"""
+    return kind in _SKIN_LAYERS or kind == "sky"
+
+
+def _confetti_seed(i: int) -> tuple[float, ...]:
+    s = (i * 3266489917 + 7) & 0xFFFFFFFF
+    out: list[float] = []
+    for _ in range(6):
+        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
+        out.append((s >> 8) / float(1 << 23))
+    return tuple(out)
+
+
+def paint_confetti(img: Image.Image, w: int, h: int, t: float, *, count: int = 42) -> None:
+    """到点庆祝：左右两角各一炮纸屑向内上抛，受重力落下、边翻边淡出。t 为开始后秒数。"""
+    if t < 0.0 or t > CONFETTI_SEC or w < 60 or h < 30:
+        return
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    scale = max(0.7, min(2.4, h / 92.0))
+    g = 150.0 * scale
+    fade = 1.0 if t < CONFETTI_SEC - 0.7 else max(0.0, (CONFETTI_SEC - t) / 0.7)
+    for i in range(count):
+        r_side, r_ang, r_speed, r_spin, r_size, r_delay = _confetti_seed(i)
+        delay = r_delay * 0.35
+        tt = t - delay
+        if tt <= 0.0:
+            continue
+        left = r_side < 0.5
+        sx = (0.08 if left else 0.92) * w
+        sy = h * 0.96
+        ang = math.radians((62 + r_ang * 40) if left else (118 - r_ang * 40))
+        sp = (150 + r_speed * 130) * scale
+        vx, vy = math.cos(ang) * sp, -math.sin(ang) * sp
+        x = sx + vx * tt * (1.0 - 0.18 * tt)
+        y = sy + vy * tt + 0.5 * g * tt * tt
+        if y > h + 8 or x < -8 or x > w + 8:
+            continue
+        rot = r_spin * 6.283 + tt * (4.0 + r_spin * 6.0) * (1 if i % 2 else -1)
+        lw = (1.7 + r_size * 1.9) * scale
+        lh = lw * (1.6 + r_size)
+        # 「翻转」：宽随余弦变化，像一片纸在转
+        flip = abs(math.cos(tt * (5.0 + r_spin * 4.0) + r_ang * 3.0))
+        lw2 = max(0.6, lw * (0.25 + 0.75 * flip))
+        c, s = math.cos(rot), math.sin(rot)
+        pts = []
+        for px, py in ((-lw2, -lh), (lw2, -lh), (lw2, lh), (-lw2, lh)):
+            pts.append((x + px * c - py * s, y + px * s + py * c))
+        rgb = _CONFETTI_COLORS[i % len(_CONFETTI_COLORS)]
+        d.polygon(pts, fill=(*rgb, int(235 * fade)))
+    img.alpha_composite(layer)
+
+
 def paste_aurora(img: Image.Image, box: tuple[int, int, int, int], *, light: bool = False) -> None:
     """兼容旧调用。"""
     paste_skin(img, box, "aurora", light=light)

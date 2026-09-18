@@ -9,16 +9,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 import festival
 import ornaments
+import sky
 import store
 
 DEFAULT_THEME_ID = "ghost"
-_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"})
+_KINDS = frozenset(
+    {"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "sky"}
+)
 _updated = False
 _lock = threading.Lock()
 
@@ -287,7 +291,7 @@ def consume_updated() -> bool:
 
 # 这些皮会随版本改配色/自适应，优先用内置覆盖缓存或在线版本
 _PREFER_BUNDLED = frozenset(
-    {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"}
+    {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "sky"}
 )
 
 
@@ -429,6 +433,7 @@ def paint_card(
     text_right: int | None = None,
     stage: str = "run",
     env_rgb: tuple[int, int, int] | None = None,
+    sky_t: float | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (4, 4, w - 5, h - 5)
@@ -442,7 +447,14 @@ def paint_card(
 
     if kind != "ghost":
         light_card = _luma(theme.fill) >= 160
-        if ornaments.has_skin(kind):
+        if kind == "sky":
+            t = sky_t if sky_t is not None else sky.clock_t(datetime.now())
+            sky.paint(img, box, t, now, radius=r, stage=stage)
+            oa = max(8, min(255, int(theme.outline[3] * pulse)))
+            d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
+            ibox = (box[0] + 2, box[1] + 2, box[2] - 2, box[3] - 2)
+            d.rounded_rectangle(ibox, radius=max(4, r - 2), outline=(255, 255, 255, int(20 * pulse)), width=1)
+        elif ornaments.has_skin(kind):
             # 圆角卡片：托底和贴图用同一半径，四个圆角弧也铺上生图
             if kind in ("aurora", "neon", "terminal"):
                 base = (248, 246, 255, 22) if light_card else (12, 14, 24, 16)
