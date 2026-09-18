@@ -203,6 +203,42 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(bgra[7], 128)
 
 
+class DialogAnchorTests(unittest.TestCase):
+    """弹窗绕开计时器：工作区固定为 1920×1040 便于断言。"""
+
+    def _anchor(self, x, y, w=248, h=92):
+        import main
+
+        a = main._Anchor(x, y, w, h)
+        a._work = lambda: (0, 0, 1920, 1040)  # type: ignore[method-assign]
+        return a
+
+    def _no_overlap(self, a, x, y, w, h):
+        return x + w <= a.x or x >= a.x + a.w or y + h <= a.y or y >= a.y + a.h
+
+    def test_bottom_right_timer_goes_above(self):
+        a = self._anchor(1660, 940)
+        x, y = a.place(320, 200)
+        self.assertTrue(self._no_overlap(a, x, y, 320, 200))
+        self.assertLess(y + 200, a.y)  # 放到上面
+
+    def test_top_left_timer_goes_below(self):
+        a = self._anchor(20, 20)
+        x, y = a.place(320, 200)
+        self.assertTrue(self._no_overlap(a, x, y, 320, 200))
+        self.assertGreaterEqual(y, a.y + a.h)
+
+    def test_tall_dialog_uses_side(self):
+        a = self._anchor(800, 500, 496, 184)  # 大号计时器居中，上下都放不下 620 高
+        x, y = a.place(480, 620)
+        self.assertTrue(self._no_overlap(a, x, y, 480, 620))
+
+    def test_tuple_compat(self):
+        a = self._anchor(100, 100)
+        self.assertEqual((a[0], a[1]), (100, 200))
+        self.assertTrue(a)
+
+
 class FeedbackTests(unittest.TestCase):
     def test_body_has_contact_and_roundtrip(self):
         body = feedback._compose_body("hi", "  me@x.com   wx:abc ")

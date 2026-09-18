@@ -77,18 +77,84 @@ _CARD_ACCENT = "#3d7eff"
 _CARD_BTN = "#2a3140"
 
 
-def _place_dialog(dlg: tk.Toplevel, near: tuple[int, int] | None, *, min_w: int, min_h: int) -> None:
+class _Anchor:
+    """弹窗锚点：绕开计时器矩形放置，下→上→右→左依次试，都放不下就选重叠最少的。
+
+    也可当 (x, y) 二元组用（兼容只取 near[0]/near[1] 的旧调用）。
+    """
+
+    GAP = 8
+
+    def __init__(self, x: int, y: int, w: int, h: int) -> None:
+        self.x, self.y, self.w, self.h = int(x), int(y), int(w), int(h)
+
+    def __getitem__(self, i: int) -> int:
+        return (self.x, self.y + self.h + self.GAP)[i]
+
+    def __len__(self) -> int:
+        return 2
+
+    def _work(self) -> tuple[int, int, int, int]:
+        try:
+            r = layered_win.monitor_work_at(self.x + self.w // 2, self.y + self.h // 2)
+            return int(r.left), int(r.top), int(r.right), int(r.bottom)
+        except Exception:
+            return 0, 0, 1920, 1040
+
+    def place(self, w: int, h: int) -> tuple[int, int]:
+        left, top, right, bottom = self._work()
+        pad = 8
+        g = self.GAP
+
+        def clamp(x: int, y: int) -> tuple[int, int]:
+            x = min(max(left + pad, x), max(left + pad, right - pad - w))
+            y = min(max(top + pad, y), max(top + pad, bottom - pad - h))
+            return x, y
+
+        def overlap(x: int, y: int) -> int:
+            ox = max(0, min(x + w, self.x + self.w) - max(x, self.x))
+            oy = max(0, min(y + h, self.y + self.h) - max(y, self.y))
+            return ox * oy
+
+        cands = (
+            (self.x, self.y + self.h + g),  # 下
+            (self.x, self.y - g - h),  # 上
+            (self.x + self.w + g, self.y),  # 右
+            (self.x - g - w, self.y),  # 左
+        )
+        best: tuple[int, int] | None = None
+        best_ov = 1 << 60
+        for cx, cy in cands:
+            x, y = clamp(cx, cy)
+            ov = overlap(x, y)
+            if ov == 0:
+                return x, y
+            if ov < best_ov:
+                best_ov, best = ov, (x, y)
+        return best or clamp(self.x, self.y + self.h + g)
+
+
+def _resolve_near(near, w: int, h: int, sw: int, sh: int) -> tuple[int, int]:
+    if isinstance(near, _Anchor):
+        return near.place(w, h)
+    x = min(max(8, int(near[0])), max(8, sw - w))
+    y = min(max(8, int(near[1])), max(8, sh - h))
+    return x, y
+
+
+def _place_dialog(dlg: tk.Toplevel, near, *, min_w: int, min_h: int) -> None:
     """按内容自适应尺寸，避免高 DPI 下按钮被裁切。"""
     dlg.update_idletasks()
     w = max(min_w, dlg.winfo_reqwidth() + 24)
     h = max(min_h, dlg.winfo_reqheight() + 24)
     if near:
-        dlg.geometry(f"{w}x{h}+{int(near[0])}+{int(near[1])}")
+        x, y = _resolve_near(near, w, h, int(dlg.winfo_screenwidth()), int(dlg.winfo_screenheight()))
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
     else:
         dlg.geometry(f"{w}x{h}")
 
 
-def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near: tuple[int, int] | None) -> None:
+def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     """按内容把卡片撑开，避免高 DPI 下底栏按钮被裁掉。"""
     dlg.update_idletasks()
     w = max(min_w, int(dlg.winfo_reqwidth()) + 20)
@@ -97,8 +163,7 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near: tuple[int, int]
     sh = max(min_h, int(dlg.winfo_screenheight()) - 48)
     w, h = min(w, sw), min(h, sh)
     if near:
-        x = min(max(8, int(near[0])), max(8, sw - w))
-        y = min(max(8, int(near[1])), max(8, sh - h))
+        x, y = _resolve_near(near, w, h, sw, sh)
         dlg.geometry(f"{w}x{h}+{x}+{y}")
     else:
         dlg.geometry(f"{w}x{h}")
@@ -162,7 +227,8 @@ def _card_dialog(
     dlg.attributes("-topmost", True)
     dlg.configure(bg=_CARD_BG)
     if near:
-        dlg.geometry(f"{width}x{height}+{int(near[0])}+{int(near[1])}")
+        x, y = _resolve_near(near, width, height, int(dlg.winfo_screenwidth()), int(dlg.winfo_screenheight()))
+        dlg.geometry(f"{width}x{height}+{x}+{y}")
     else:
         dlg.geometry(f"{width}x{height}")
     try:
@@ -1137,8 +1203,9 @@ class WorkTimer:
             self._tk = root
         return self._tk
 
-    def _dialog_near(self) -> tuple[int, int]:
-        return (self.win.x, self.win.y + self._win_h + 8)
+    def _dialog_near(self) -> _Anchor:
+        """弹窗绕开计时器本体放，不遮挡倒计时。"""
+        return _Anchor(self.win.x, self.win.y, self._win_w, self._win_h)
 
     def _open_setup_dialog(self) -> None:
         start_preset = self._start_hm()

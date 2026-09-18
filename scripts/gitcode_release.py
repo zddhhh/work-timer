@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 新皮「天色」：随一天变色，最后 30 分钟日落、到点入夜；到点纸屑庆祝 +「下班啦」字幕"
+RELEASE_NOTE = "- 弹窗（检查更新/设置/日程）绕开计时器放置，不再遮挡倒计时"
 
 
 def sha256_of(path: Path) -> str:
