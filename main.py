@@ -829,12 +829,6 @@ class WorkTimer:
         store.save_config(self.cfg)
         self._last_key = ""
         self._force_surface_sample = True
-        if theme_id == festival.NATIONAL_THEME_ID:
-            self._start_kinetic(kinetic.NATIONAL_PHRASES)
-            self._mark_fest_kinetic_if_done(festival.NATIONAL_ID, "nationalday_kinetic_done")
-        elif theme_id == festival.MIDAUTUMN_THEME_ID:
-            self._start_kinetic(kinetic.MIDAUTUMN_PHRASES)
-            self._mark_fest_kinetic_if_done(festival.MIDAUTUMN_ID, "midautumn_kinetic_done")
 
     def _stop_kinetic(self) -> None:
         if self._kinetic is not None:
@@ -847,15 +841,6 @@ class WorkTimer:
         self._kinetic = kinetic.Show(phrases, time.monotonic())
         self._font_kinetic = _kinetic_font(self._win_w, max(len(p) for p in phrases))
         self._last_key = ""
-
-    def _mark_fest_kinetic_if_done(self, sid: str, done_key: str) -> None:
-        item = schedules.find_schedule(self.cfg, sid)
-        if item is None:
-            return
-        _, done = schedules.schedule_remaining(item, datetime.now())
-        if done and not self.cfg.get(done_key):
-            self.cfg[done_key] = True
-            store.save_config(self.cfg)
 
     def _try_start_fest_kinetic(
         self,

@@ -24,10 +24,6 @@ NATIONAL_SEASON_END = date(2026, 10, 8)
 DEFAULT_THEME_IDS = frozenset({"ghost", "auto"})
 BONUS_PIN_IDS = frozenset({MIDAUTUMN_ID, NATIONAL_ID})
 
-# 兼容旧调用：默认指中秋
-SEASON_START = MIDAUTUMN_SEASON_START
-SEASON_END = MIDAUTUMN_SEASON_END
-
 
 def _when(now: datetime | None) -> datetime:
     return now or datetime.now()
@@ -49,14 +45,6 @@ def national_in_season(now: datetime | None = None) -> bool:
 
 def national_past_season(now: datetime | None = None) -> bool:
     return _when(now).date() > NATIONAL_SEASON_END
-
-
-def in_season(now: datetime | None = None) -> bool:
-    return midautumn_in_season(now)
-
-
-def past_season(now: datetime | None = None) -> bool:
-    return midautumn_past_season(now)
 
 
 def locked_title(sid: str) -> str | None:

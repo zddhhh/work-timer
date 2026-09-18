@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 国庆夜空花火皮：外观可预览；9/28–10/8 自动换皮并加不可删除的国庆倒计时"
+                    "- 国庆皮改绛红金花火并加火星动效；切皮不再播字幕，只在到点播"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

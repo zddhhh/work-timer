@@ -168,6 +168,62 @@ def _paint_sweep(layer: Image.Image, phase: float, *, light: bool, stage: str) -
     layer.alpha_composite(stripe)
 
 
+def _ember_seed(i: int) -> tuple[float, float, float, float, float]:
+    """按序号生成稳定的火星参数：x、y、闪烁速度、相位、上升速度。"""
+    s = (i * 2654435761) & 0xFFFFFFFF
+    vals: list[float] = []
+    for _ in range(5):
+        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
+        vals.append((s >> 8) / float(1 << 23))
+    x, y, sp, ph, rise = vals
+    return 0.34 + x * 0.64, y, 0.9 + sp * 1.6, ph * 6.2832, 0.010 + rise * 0.022
+
+
+def _burst(phase: float, period: float = 9.0, width: float = 0.9) -> float:
+    """周期性的一下「炸开」亮度包络，0~1。"""
+    t = float(phase) % period
+    return math.exp(-(t / width) ** 2)
+
+
+def _paint_embers(layer: Image.Image, phase: float, *, light: bool, stage: str, count: int = 16) -> None:
+    """国庆皮：金红火星在右侧缓缓上浮、忽明忽暗，让静态花火活起来。
+
+    画在独立透明层再合成：ImageDraw 直接画 RGBA 是覆盖像素，会把底图抠出洞。
+    """
+    bw, bh = layer.size
+    if bw < 60 or bh < 30:
+        return
+    slow = stage in ("idle", "done")
+    spark = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(spark)
+    burst = _burst(phase)
+    gain = 0.7 if light else 1.0
+    scale = max(0.8, min(2.2, bh / 92.0))
+    for i in range(count):
+        x0, y0, sp, ph, rise = _ember_seed(i)
+        if slow:
+            sp *= 0.55
+            rise *= 0.4
+        tw = math.sin(float(phase) * sp + ph)
+        tw = max(0.0, tw) ** 2.4
+        a = (0.15 + 0.85 * tw) * (0.65 + 0.55 * burst) * gain
+        if a < 0.06:
+            continue
+        y = (y0 - float(phase) * rise) % 1.0
+        px = x0 * bw
+        py = 0.04 * bh + y * bh * 0.92
+        gold = i % 3 != 1
+        rgb = (255, 222, 140) if gold else (255, 132, 84)
+        r = (0.6 + 0.8 * tw + (0.4 if i % 5 == 0 else 0.0)) * scale
+        halo = r * 3.0
+        ha = int(min(255, 44 * a))
+        if ha > 2:
+            d.ellipse((px - halo, py - halo, px + halo, py + halo), fill=(*rgb, ha))
+        ca = int(min(255, 210 * a))
+        d.ellipse((px - r, py - r, px + r, py + r), fill=(*rgb, ca))
+    layer.alpha_composite(spark)
+
+
 def paste_skin(
     img: Image.Image,
     box: tuple[int, int, int, int],
@@ -194,8 +250,10 @@ def paste_skin(
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     freeze = stage in ("idle", "done")
     drift = 0 if freeze else _DRIFT_PX
-    if kind in ("midautumn", "nationalday") and not freeze:
+    if kind == "midautumn" and not freeze:
         drift = 8
+    elif kind == "nationalday" and not freeze:
+        drift = 12
 
     glow_kinds = {"neon", "terminal", "aurora"}
     if kind in glow_kinds:
@@ -208,12 +266,15 @@ def paste_skin(
         a0 = 0.94 if not light else 0.84
         a1 = 0.48 if not light else 0.36
     elif kind == "nationalday":
-        a0 = 0.94 if not light else 0.84
-        a1 = 0.52 if not light else 0.38
+        a0 = 0.96 if not light else 0.86
+        # 光斑层跟着周期「炸开」一下再回落
+        a1 = (0.46 if not light else 0.34) * (1.0 + 0.55 * _burst(phase))
     else:
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38
     bamp = 0.0 if freeze else (0.035 if stage == "warn" else 0.025)
+    if kind == "nationalday" and not freeze:
+        bamp = 0.05
     base_speed = 0.26 if stage == "warn" else 0.20
 
     def _place(src_im: Image.Image, name: str, alpha: float, *, speed: float, twist: float) -> None:
@@ -248,7 +309,13 @@ def paste_skin(
     if glow is not None:
         _place(glow, name_b or "glow", a1, speed=base_speed * 0.78, twist=1.7)
 
-    tint = Image.new("RGBA", (bw, bh), _mix_env(_mood_rgba(stage, light), env_rgb))
+    if kind == "nationalday":
+        _paint_embers(layer, phase, light=light, stage=stage)
+        # 红底不叠蓝灰情绪色，只留环境光
+        mood = _mix_env((255, 176, 96, 18 if light else 22), env_rgb)
+    else:
+        mood = _mix_env(_mood_rgba(stage, light), env_rgb)
+    tint = Image.new("RGBA", (bw, bh), mood)
     layer = Image.alpha_composite(layer, tint)
     _paint_sweep(layer, phase, light=light, stage=stage)
     rad = max(0, int(radius))

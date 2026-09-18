@@ -21,7 +21,6 @@ NATIONAL_PHRASES: tuple[str, ...] = (
     "金秋十月",
     "山河无恙",
 )
-PHRASES = MIDAUTUMN_PHRASES
 
 _GLYPH_CACHE: dict[tuple, Image.Image] = {}
 

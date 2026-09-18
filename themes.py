@@ -453,7 +453,7 @@ def paint_card(
             elif kind == "midautumn":
                 base = (236, 232, 255, 42) if light_card else (8, 10, 32, 30)
             elif kind == "nationalday":
-                base = (255, 236, 232, 42) if light_card else (8, 10, 28, 30)
+                base = (255, 232, 224, 46) if light_card else (52, 8, 12, 40)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)
