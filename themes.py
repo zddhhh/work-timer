@@ -484,7 +484,7 @@ def paint_card(
             elif kind == "inkgold":
                 base = (250, 244, 230, 120) if skin_light else (14, 10, 8, 55)
             elif kind == "warmglow":
-                base = (255, 236, 214, 130) if skin_light else (28, 16, 10, 55)
+                base = (255, 236, 214, 175) if skin_light else (32, 18, 12, 95)
             elif kind == "midautumn":
                 base = (8, 10, 34, 155) if skin_light else (8, 10, 32, 55)
             elif kind == "nationalday":

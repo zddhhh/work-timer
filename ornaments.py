@@ -276,7 +276,8 @@ def paste_skin(
     elif kind == "aurora":
         a0, a1 = (0.72, 0.58) if not light else (0.38, 0.32)
     elif kind == "warmglow":
-        a0, a1 = (0.70, 0.48) if not light else (0.52, 0.42)
+        # 暖光要实：奶油底托住暖色纹理，浅墙纸也不要透得太狠
+        a0, a1 = (0.92, 0.65) if not light else (0.90, 0.72)
     elif kind == "midautumn":
         a0, a1 = (0.82, 0.42) if not light else (0.70, 0.34)
     elif kind == "nationalday":

@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 逐皮调适应与透明度：霓虹/霓虹流光补浅底；中秋国庆浅墙纸保持亮字并加浓 scrim；玻璃族叠层按皮单独校准"
+RELEASE_NOTE = "- 暖光皮加实：叠层与托底加厚，浅墙纸也不再透得太狠"
 
 
 def sha256_of(path: Path) -> str:
