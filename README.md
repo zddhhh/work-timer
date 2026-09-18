@@ -27,13 +27,14 @@ python main.py
 | 操作 | 效果 |
 |---|---|
 | 左键点一下 | 未计时：录入时间（上次用哪种还开哪种）；计时中：切换时分秒 / 分钟 / 秒 |
-| 右键 → 设置上班时间 | 填 8:30–9:30 到岗，按 9.5 小时算下班 |
-| 右键 → 设置下班时间 | 直接填今天下班几点，按这个点倒计时 |
+| 右键 → 设置下班时间… | 填 8:30–9:30 到岗按 9.5 小时算，或直接填今天下班几点 |
+| 右键 → 日程列表… | 自建到点/时长日程、备忘；最多优先显示 3 项（节日项不占名额），可自动轮播 |
 | 左键拖 | 挪位置（会记住） |
 | 右键 → 外观 | 淡影（默认，浅色墙纸也会缓变适配）/ 自适应 / 玻璃 / 霜白 / 霓虹 / 终端 / 极光 / 墨金 / 中秋 / 国庆；可「刷新在线外观」 |
 | 右键 → 显示方式 | 时分秒 / 分钟 / 秒 |
 | 右键 → Ctrl 隐藏窗口 | 开关，默认关；打开后轻点 Ctrl 藏起计时器，再点一次显示 |
-| 右键 → 关于 | 版本号、打开官方仓库、提交用户反馈 |
+| 右键 → 开机自启动 | 开关；用「启动」文件夹快捷方式，不写注册表 |
+| 右键 → 关于… | 版本号、打开官方仓库、提交用户反馈（需留联系方式） |
 | 右键 → 检查更新 | GitCode OTA |
 | 右键 → 退出 | 退出 |
 
@@ -49,15 +50,17 @@ python main.py
 
 ## 自动更新
 
-右键「检查更新」读 GitCode Release，下载 `WorkTimer.exe` 并由新版自己替换重启（不走 PowerShell）。
+右键「检查更新」读 GitCode Release，下载 `WorkTimer.exe`，校验 PE 头与 Release 说明里的 `sha256:`，再由新版自己替换重启（不走 PowerShell）。
 
-发版：改 `version.py` 的 `APP_VERSION` → 打包 → 上传 Release 附件，文件名保持 `WorkTimer.exe`。
+发版：改 `version.py` 的 `APP_VERSION` → `scripts\gitcode_release.py`（打包到 `release/`、创建 Release、把 sha256 写进说明、上传附件）。
+
+测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests -v`。待办见 [`docs/优化清单.md`](docs/优化清单.md)。
 
 Windows 误报见 [`docs/Windows安全说明.md`](docs/Windows安全说明.md)。
 
 ## 用户反馈
 
-右键「关于」里提交，会直接发到仓库 Issue（标题带 `[反馈]`），用户不用登录 GitCode。本机拉下来分析：
+右键「关于」里提交，会直接发到仓库 Issue（标题带 `[反馈]`，正文带 `- 联系：` 一行），用户不用登录 GitCode。联系方式必填并会记住。本机拉下来分析（`feedback/index.json` 里有 `contact` 字段）：
 
 ```powershell
 $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw

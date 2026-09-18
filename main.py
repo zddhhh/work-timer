@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from PIL import Image, ImageFont, ImageTk
+from PIL import Image, ImageChops, ImageFont, ImageTk
 
 import attachments
 import autostart
@@ -52,25 +52,20 @@ def _kinetic_font(w: int, n: int) -> ImageFont.ImageFont:
     return _font(max(16, min(40, int((w * 0.76) / n))))
 
 
+_ALPHA_FLOOR_LUT = bytes([1] + list(range(1, 256)))
+
+
 def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
+    """直接 RGBA → 预乘 BGRA。全部走 PIL 通道运算，比逐像素 Python 循环快约 10 倍。"""
     w, h = img.size
-    raw = img.tobytes("raw", "RGBA")
-    bgra = bytearray(w * h * 4)
-    mask = bytearray(w * h)
-    for i in range(w * h):
-        r = raw[i * 4 + 0]
-        g = raw[i * 4 + 1]
-        b = raw[i * 4 + 2]
-        a = raw[i * 4 + 3]
-        # 分层窗 alpha=0 的像素系统会点穿到后面的程序；整块区域至少留 1，肉眼看不出。
-        if a < 1:
-            a = 1
-        bgra[i * 4 + 0] = (b * a) // 255
-        bgra[i * 4 + 1] = (g * a) // 255
-        bgra[i * 4 + 2] = (r * a) // 255
-        bgra[i * 4 + 3] = a
-        mask[i] = 255
-    return bytes(bgra), bytes(mask)
+    r, g, b, a = img.split()
+    # 分层窗 alpha=0 的像素系统会点穿到后面的程序；整块区域至少留 1，肉眼看不出。
+    a = a.point(_ALPHA_FLOOR_LUT)
+    pm = Image.merge(
+        "RGBA",
+        (ImageChops.multiply(r, a), ImageChops.multiply(g, a), ImageChops.multiply(b, a), a),
+    )
+    return pm.tobytes("raw", "BGRA"), b"\xff" * (w * h)
 
 
 _CARD_BG = "#161a22"
@@ -1139,7 +1134,7 @@ class WorkTimer:
         self._last_key = ""
 
     def _open_about(self) -> None:
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=560)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=620)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         body = tk.Frame(dlg, bg=_CARD_BG)
@@ -1175,11 +1170,20 @@ class WorkTimer:
             body, textvariable=title_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
             insertbackground=_CARD_FG, relief="flat",
         ).pack(anchor="w", ipady=5, fill="x")
+        contact_var = tk.StringVar(value=str(self.cfg.get("feedback_contact") or ""))
+        tk.Label(
+            body, text="联系方式（邮箱 / 微信，方便我们回复你；会记住）",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+        ).pack(anchor="w", pady=(8, 0))
+        tk.Entry(
+            body, textvariable=contact_var, font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat",
+        ).pack(anchor="w", ipady=4, fill="x")
         tk.Label(body, text="内容", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
             anchor="w", pady=(8, 0)
         )
         text = tk.Text(
-            body, height=7, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
+            body, height=6, wrap="word", font=("Microsoft YaHei UI", 11), bg="#222733", fg=_CARD_FG,
             insertbackground=_CARD_FG, relief="flat", bd=0, highlightthickness=0, padx=8, pady=8,
         )
         text.pack(anchor="w", fill="both", expand=True, pady=(4, 8))
@@ -1190,8 +1194,12 @@ class WorkTimer:
                 return
             title = title_var.get().strip()
             content = text.get("1.0", "end-1c").strip()
+            contact = feedback.normalize_contact(contact_var.get())
             if not title and not content:
                 err.set("请填写标题或内容")
+                return
+            if not contact:
+                err.set("请留一个联系方式，不然我们没法回复你")
                 return
             busy["v"] = True
             err.set("正在提交…")
@@ -1199,7 +1207,7 @@ class WorkTimer:
                 dlg.update()
             except Exception:
                 pass
-            kind, info = feedback.submit(self.cfg, title, content)
+            kind, info = feedback.submit(self.cfg, title, content, contact)
             busy["v"] = False
             if kind == "ok":
                 err.set("已提交到仓库")
@@ -1214,7 +1222,7 @@ class WorkTimer:
         _card_btn(bar, "打开官方仓库", lambda: feedback.open_repo(self.cfg)).pack(side="left", padx=(18, 6))
         _card_btn(bar, "提交反馈", send, accent=True).pack(side="left", padx=6)
         _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
-        _reveal_card(dlg, min_w=480, min_h=520, near=self._dialog_near())
+        _reveal_card(dlg, min_w=480, min_h=580, near=self._dialog_near())
         _run_card_modal(dlg, self.win)
 
     def _open_idle_dialog(self) -> None:
@@ -1968,7 +1976,6 @@ class WorkTimer:
             self._update_dialog_open = False
 
     def _check_update_ui(self, *, known: updater.ReleaseInfo | None = None) -> None:
-        self.cfg = store.load_config()
         near = self._dialog_near()
         dlg = _card_dialog(self._tk_root(), near=near, width=320, height=200)
         btn_row = tk.Frame(dlg, bg=_CARD_BG)

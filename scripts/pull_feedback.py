@@ -52,15 +52,24 @@ def main() -> None:
         body = str(it.get("body") or "")
         html = str(it.get("html_url") or "")
         created = str(it.get("created_at") or "")
+        contact = feedback.parse_contact(body)
         path = out / _safe_name(n, title)
         path.write_text(
-            f"# {title}\n\n- 编号: #{n}\n- 时间: {created}\n- 链接: {html}\n\n{body}\n",
+            f"# {title}\n\n- 编号: #{n}\n- 时间: {created}\n- 联系: {contact or '（未留）'}\n- 链接: {html}\n\n{body}\n",
             encoding="utf-8",
         )
-        print("写入", path.name)
+        print("写入", path.name, f"联系={contact or '-'}")
     (out / "index.json").write_text(
         json.dumps(
-            [{"number": it.get("number"), "title": it.get("title"), "html_url": it.get("html_url")} for it in items],
+            [
+                {
+                    "number": it.get("number"),
+                    "title": it.get("title"),
+                    "contact": feedback.parse_contact(str(it.get("body") or "")),
+                    "html_url": it.get("html_url"),
+                }
+                for it in items
+            ],
             ensure_ascii=False,
             indent=2,
         ),

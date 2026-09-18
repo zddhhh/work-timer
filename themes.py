@@ -285,37 +285,42 @@ def consume_updated() -> bool:
         return flag
 
 
+# 这些皮会随版本改配色/自适应，优先用内置覆盖缓存或在线版本
+_PREFER_BUNDLED = frozenset(
+    {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"}
+)
+
+
+def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme]:
+    """在线/缓存目录 + 内置目录合并：内置皮以内置为准，远端缺的内置皮补回来，上限 16。"""
+    if not remote:
+        return list(bundled)
+    bmap = {t.id: t for t in bundled}
+    items: list[Theme] = []
+    seen: set[str] = set()
+    for t in remote:
+        if t.id == "blink" or t.id in seen:
+            continue
+        items.append(bmap[t.id] if (t.id in _PREFER_BUNDLED and t.id in bmap) else t)
+        seen.add(t.id)
+    for t in bundled:
+        if t.id in seen:
+            continue
+        if len(items) >= 16:
+            break
+        if t.id == "auto":
+            idx = next((i for i, x in enumerate(items) if x.id == "ghost"), -1) + 1
+            items.insert(max(0, idx), t)
+        else:
+            items.append(t)
+        seen.add(t.id)
+    return items[:16]
+
+
 def load_local_catalog() -> None:
     bundled = _load_json_file(_bundled_path())
     cached = _load_json_file(_cache_path())
-    bmap = {t.id: t for t in bundled}
-    # 这些皮会随版本改配色/自适应，优先用内置覆盖旧缓存
-    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"}
-    if cached:
-        items: list[Theme] = []
-        seen: set[str] = set()
-        for t in cached:
-            if t.id == "blink":
-                continue
-            if t.id in prefer_bundled and t.id in bmap:
-                items.append(bmap[t.id])
-            else:
-                items.append(t)
-            seen.add(t.id)
-        for t in bundled:
-            if t.id in seen:
-                continue
-            if t.id == "auto":
-                idx = next((i for i, x in enumerate(items) if x.id == "ghost"), -1) + 1
-                items.insert(max(0, idx), t)
-            else:
-                items.append(t)
-            seen.add(t.id)
-            if len(items) >= 16:
-                break
-        items = items[:16]
-    else:
-        items = bundled or _fallback()
+    items = _merge_with_bundled(cached, bundled) if cached else (bundled or _fallback())
     _set_catalog(items, notify=False)
 
 
@@ -324,11 +329,8 @@ def _fetch_urls(repo: str, token: str) -> list[str]:
 
     owner, name = updater.parse_repo(repo)
     path = f"/repos/{owner}/{name}/raw/themes.json"
-    urls = [f"https://api.gitcode.com/api/v5{path}?ref=main"]
-    if token:
-        q = urllib.parse.urlencode({"access_token": token, "ref": "main"})
-        urls.insert(0, f"https://api.gitcode.com/api/v5{path}?{q}")
-    return urls
+    # token 走 Authorization 头，不进 URL
+    return [f"https://api.gitcode.com/api/v5{path}?ref=main"]
 
 
 def refresh_from_repo(cfg: dict, *, timeout: float = 4.0) -> bool:
@@ -357,6 +359,7 @@ def refresh_from_repo(cfg: dict, *, timeout: float = 4.0) -> bool:
             items = _parse_catalog(json.loads(raw))
             if not items:
                 continue
+            items = _merge_with_bundled(items, _load_json_file(_bundled_path()))
             _set_catalog(items)
             try:
                 _cache_path().write_text(

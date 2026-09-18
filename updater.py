@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -141,8 +142,6 @@ def fetch_latest_release(
     owner, name = parse_repo(repo)
     q = urllib.parse.urlencode({"direction": "desc", "page": 1, "per_page": 10})
     url = f"{API_BASE}/repos/{owner}/{name}/releases?{q}"
-    if token:
-        url += f"&access_token={urllib.parse.quote(token)}"
 
     data = _http_get_json(url, token=token, timeout=10.0)
     if not isinstance(data, list) or not data:
@@ -167,8 +166,6 @@ def fetch_latest_release(
         f"{API_BASE}/repos/{owner}/{name}/releases/"
         f"{urllib.parse.quote(tag)}/attach_files/{urllib.parse.quote(aname)}/download"
     )
-    if token:
-        download_url += f"?access_token={urllib.parse.quote(token)}"
 
     return ReleaseInfo(
         tag=tag,
@@ -178,6 +175,19 @@ def fetch_latest_release(
         download_url=download_url,
         asset_name=aname,
     )
+
+
+def _safe_error(e: BaseException) -> str:
+    """给 UI 看的错误：不带 URL、不带 token。"""
+    if isinstance(e, urllib.error.HTTPError):
+        return f"HTTP {e.code}"
+    if isinstance(e, urllib.error.URLError):
+        reason = getattr(e, "reason", None)
+        return f"网络错误：{reason}" if reason else "网络错误"
+    if isinstance(e, TimeoutError):
+        return "连接超时"
+    text = str(e) or e.__class__.__name__
+    return re.sub(r"https?://\S+", "<url>", text)[:160]
 
 
 def check_update(cfg: dict) -> tuple[str, ReleaseInfo | None]:
@@ -191,7 +201,7 @@ def check_update(cfg: dict) -> tuple[str, ReleaseInfo | None]:
             asset_name=(cfg.get("asset_name") or ASSET_NAME).strip() or ASSET_NAME,
         )
     except Exception as e:  # noqa: BLE001
-        return f"error:{e}", None
+        return f"error:{_safe_error(e)}", None
     if is_newer(info.version, APP_VERSION):
         return "available", info
     return "latest", info
@@ -367,13 +377,44 @@ def download_update(
         except OSError:
             pass
         raise DownloadCancelled()
-    if tmp.stat().st_size < 1024 * 100:
+    if tmp.stat().st_size < 1024 * 100 or not _looks_like_exe(tmp):
         try:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
-        raise RuntimeError("下载文件太小，可能不是有效的 exe（检查 Release 附件名）")
+        raise RuntimeError("下载内容不是有效的 exe（可能是错误页或附件名不对）")
+    expect = _sha256_from_body(info.body)
+    if expect:
+        got = _sha256_file(tmp)
+        if got.lower() != expect.lower():
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise RuntimeError("下载文件校验失败（sha256 不符），已丢弃")
     return tmp
+
+
+def _looks_like_exe(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            return f.read(2) == b"MZ"
+    except OSError:
+        return False
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _sha256_from_body(body: str) -> str:
+    """Release 说明里若有 `sha256: <64 hex>` 就拿来校验；没有则跳过。"""
+    m = re.search(r"sha256\s*[:：]\s*([0-9a-fA-F]{64})", body or "")
+    return m.group(1) if m else ""
 
 
 _MIN_EXE = 1024 * 100
@@ -491,8 +532,9 @@ def _fallback_install(source: Path, staged: Path) -> Path:
 
 
 def _replace_once(cur: Path, staged: Path, old: Path) -> None:
-    _unlink(old)
+    """cur→.old，staged→cur。重试时若 cur 已挪走，.old 就是唯一备份，不能删。"""
     if cur.exists():
+        _unlink(old)
         cur.replace(old)
     if not staged.exists():
         raise OSError("missing staged")

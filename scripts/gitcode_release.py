@@ -6,6 +6,7 @@ r"""创建 GitCode Release 并上传 WorkTimer.exe。
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -92,12 +93,24 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
+RELEASE_NOTE = "- 反馈必填联系方式；渲染提速；OTA 校验 exe 头与 sha256；token 不再进 URL"
+
+
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def main() -> None:
     tok = token()
     ver, tag = version_tag()
     exe = ensure_exe()
+    digest = sha256_of(exe)
     print(f"版本 {ver} / {tag}")
-    print("exe:", exe, exe.stat().st_size)
+    print("exe:", exe, exe.stat().st_size, "sha256:", digest)
     try:
         api(
             "POST",
@@ -106,10 +119,8 @@ def main() -> None:
             {
                 "tag_name": tag,
                 "name": f"WorkTimer {tag}",
-                "body": (
-                    f"WorkTimer {ver}\n\n"
-                    "- 国庆皮改绛红金花火并加火星动效；切皮不再播字幕，只在到点播"
-                ),
+                # 客户端 updater 会读 `sha256: <hex>` 做下载校验
+                "body": f"WorkTimer {ver}\n\n{RELEASE_NOTE}\n\nsha256: {digest}\n",
                 "prerelease": False,
                 "target_commitish": "main",
             },

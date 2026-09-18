@@ -52,17 +52,21 @@ def _issue_new_url(cfg: dict, title: str, body: str) -> str:
     return f"https://gitcode.com/{owner}/{name}/issues/new?{q}"
 
 
-def _compose_body(text: str) -> str:
+def normalize_contact(raw: str) -> str:
+    return " ".join(str(raw or "").split())[:120]
+
+
+def _compose_body(text: str, contact: str = "") -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    return (
-        f"- 版本：{APP_VERSION}\n"
-        f"- 时间：{now}\n\n"
-        f"{(text or '').strip() or '（无正文）'}\n"
-    )
+    contact = normalize_contact(contact)
+    lines = [f"- 版本：{APP_VERSION}", f"- 时间：{now}"]
+    if contact:
+        lines.append(f"- 联系：{contact}")
+    return "\n".join(lines) + f"\n\n{(text or '').strip() or '（无正文）'}\n"
 
 
 def _post_issue(owner: str, repo: str, title: str, body: str, token: str) -> str:
-    url = f"{API}/repos/{urllib.parse.quote(owner)}/issues?access_token={urllib.parse.quote(token)}"
+    url = f"{API}/repos/{urllib.parse.quote(owner)}/issues"
 
     def _send(payload: dict) -> dict:
         req = urllib.request.Request(
@@ -72,6 +76,7 @@ def _post_issue(owner: str, repo: str, title: str, body: str, token: str) -> str
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "application/json",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         )
@@ -98,8 +103,8 @@ def _post_issue(owner: str, repo: str, title: str, body: str, token: str) -> str
     return f"https://gitcode.com/{owner}/{repo}/issues"
 
 
-def submit(cfg: dict, title: str, text: str) -> tuple[str, str]:
-    """返回 (ok|browser|err, 说明或链接)。"""
+def submit(cfg: dict, title: str, text: str, contact: str = "") -> tuple[str, str]:
+    """返回 (ok|browser|err, 说明或链接)。contact 会记到 cfg 供下次自动填。"""
     today = datetime.now().strftime("%Y-%m-%d")
     if str(cfg.get("feedback_date") or "") != today:
         cfg["feedback_date"] = today
@@ -110,10 +115,14 @@ def submit(cfg: dict, title: str, text: str) -> tuple[str, str]:
         n = 0
     if n >= 8:
         return "err", "今天反馈次数已用完，明天再试"
+    contact = normalize_contact(contact)
+    if contact != str(cfg.get("feedback_contact") or ""):
+        cfg["feedback_contact"] = contact
+        store.save_config(cfg)
     title = (title or "").strip() or "用户反馈"
     if not title.startswith("[反馈]"):
         title = f"[反馈] {title}"
-    body = _compose_body(text)
+    body = _compose_body(text, contact)
     token = _token(cfg)
     if token:
         try:
@@ -129,10 +138,18 @@ def submit(cfg: dict, title: str, text: str) -> tuple[str, str]:
     return "browser", url
 
 
+def parse_contact(body: str) -> str:
+    """从 Issue 正文里取回「- 联系：」那一行。"""
+    for line in (body or "").splitlines():
+        s = line.strip()
+        if s.startswith("- 联系："):
+            return s[len("- 联系："):].strip()
+    return ""
+
+
 def list_issues(cfg: dict, token: str, *, label: str | None = LABEL, per_page: int = 50) -> list[dict]:
     owner, name = updater.parse_repo(repo_url(cfg))
     params = {
-        "access_token": token,
         "state": "all",
         "per_page": str(per_page),
         "page": "1",
@@ -144,7 +161,12 @@ def list_issues(cfg: dict, token: str, *, label: str | None = LABEL, per_page: i
     q = urllib.parse.urlencode(params)
     url = f"{API}/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(name)}/issues?{q}"
     req = urllib.request.Request(
-        url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         data = json.loads(resp.read().decode("utf-8") or "[]")
