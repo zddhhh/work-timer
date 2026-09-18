@@ -187,13 +187,14 @@ def replace_schedule(cfg: dict, item: dict) -> bool:
     if not sid:
         return False
     ensure_fields(cfg)
-    if sid == festival.MIDAUTUMN_ID:
+    locked = festival.locked_title(sid)
+    if locked:
         item["id"] = sid
-        item["title"] = festival.MIDAUTUMN_TITLE
+        item["title"] = locked
         item["kind"] = "clock"
         _, done = schedule_remaining(item, datetime.now())
         if not done:
-            cfg["midautumn_kinetic_done"] = False
+            cfg[f"{sid}_kinetic_done"] = False
     for i, s in enumerate(cfg["schedules"]):
         if isinstance(s, dict) and str(s.get("id")) == sid:
             cfg["schedules"][i] = item
@@ -221,16 +222,16 @@ def remove_schedule(cfg: dict, sid: str, *, force: bool = False) -> None:
     ensure_fields(cfg)
     if sid == OFFWORK_ID:
         return
-    if sid == festival.MIDAUTUMN_ID and not force:
+    if festival.is_locked(sid) and not force:
         return
     attachments.remove_owner("schedule", sid)
     cfg["schedules"] = [s for s in cfg["schedules"] if not (isinstance(s, dict) and str(s.get("id")) == sid)]
     cfg["pin_order"] = [p for p in cfg["pin_order"] if p != sid]
     if cfg.get("active_pin_id") == sid:
         cfg["active_pin_id"] = cfg["pin_order"][0] if cfg["pin_order"] else None
-    if sid == festival.MIDAUTUMN_ID:
-        cfg.pop("midautumn_dismissed", None)
-        cfg["midautumn_kinetic_done"] = False
+    if festival.is_locked(sid):
+        cfg.pop(f"{sid}_dismissed", None)
+        cfg[f"{sid}_kinetic_done"] = False
 
 
 def is_pinned(cfg: dict, sid: str) -> bool:
@@ -246,14 +247,14 @@ def set_pinned(cfg: dict, sid: str, pinned: bool) -> tuple[bool, str]:
         if sid not in festival.BONUS_PIN_IDS and counted_pin_count(cfg) >= MAX_PINS:
             return False, f"最多优先显示 {MAX_PINS} 项"
         cfg["pin_order"].append(sid)
-        if sid == festival.MIDAUTUMN_ID:
-            cfg["midautumn_unpinned"] = False
+        if festival.is_locked(sid):
+            cfg[f"{sid}_unpinned"] = False
         if not cfg.get("active_pin_id"):
             cfg["active_pin_id"] = sid
         return True, ""
     cfg["pin_order"] = [p for p in cfg["pin_order"] if p != sid]
-    if sid == festival.MIDAUTUMN_ID:
-        cfg["midautumn_unpinned"] = True
+    if festival.is_locked(sid):
+        cfg[f"{sid}_unpinned"] = True
     if cfg.get("active_pin_id") == sid:
         cfg["active_pin_id"] = cfg["pin_order"][0] if cfg["pin_order"] else None
     return True, ""
@@ -306,27 +307,30 @@ def pin_index(cfg: dict) -> tuple[int, int]:
         return 1, len(pins)
 
 
-def sync_festival(cfg: dict, *, now: datetime | None = None) -> bool:
-    """节期内补一条不可删除的中秋日程；默认皮换一次中秋限定；过季删日程并还原。"""
-    ensure_fields(cfg)
-    now = now or datetime.now()
+def _sync_one_festival(
+    cfg: dict,
+    now: datetime,
+    *,
+    in_season: bool,
+    past_season: bool,
+    sid: str,
+    title: str,
+    hour: int,
+    minute: int,
+    date: str,
+    theme_id: str,
+) -> bool:
+    """节期内补不可删除日程；默认皮换一次限定；过季删日程并还原。"""
     changed = False
-    sid = festival.MIDAUTUMN_ID
-
-    if festival.in_season(now):
-        if cfg.pop("midautumn_dismissed", None) is not None:
+    if in_season:
+        if cfg.pop(f"{sid}_dismissed", None) is not None:
             changed = True
         if find_schedule(cfg, sid) is None:
-            item = new_clock(
-                festival.MIDAUTUMN_TITLE,
-                festival.MIDAUTUMN_HOUR,
-                festival.MIDAUTUMN_MINUTE,
-                date=festival.MIDAUTUMN_DATE,
-            )
+            item = new_clock(title, hour, minute, date=date)
             item["id"] = sid
             cfg["schedules"].append(item)
             changed = True
-        if not cfg.get("midautumn_unpinned") and sid not in cfg["pin_order"]:
+        if not cfg.get(f"{sid}_unpinned") and sid not in cfg["pin_order"]:
             pins = cfg["pin_order"]
             if OFFWORK_ID in pins:
                 i = pins.index(OFFWORK_ID) + 1
@@ -334,23 +338,23 @@ def sync_festival(cfg: dict, *, now: datetime | None = None) -> bool:
             else:
                 cfg["pin_order"] = [sid] + pins
             changed = True
-        if not cfg.get("midautumn_theme_offered"):
-            cfg["midautumn_theme_offered"] = True
+        if not cfg.get(f"{sid}_theme_offered"):
+            cfg[f"{sid}_theme_offered"] = True
             cur = str(cfg.get("theme") or "ghost")
             if cur in festival.DEFAULT_THEME_IDS:
-                cfg["theme_before_midautumn"] = cur
-                cfg["theme"] = festival.MIDAUTUMN_THEME_ID
-                cfg["midautumn_theme_auto"] = True
+                cfg[f"theme_before_{sid}"] = cur
+                cfg["theme"] = theme_id
+                cfg[f"{sid}_theme_auto"] = True
             changed = True
         return changed
 
-    if not festival.past_season(now):
+    if not past_season:
         return changed
 
-    if cfg.get("midautumn_theme_auto") and str(cfg.get("theme") or "") == festival.MIDAUTUMN_THEME_ID:
-        prev = str(cfg.get("theme_before_midautumn") or "ghost") or "ghost"
+    if cfg.get(f"{sid}_theme_auto") and str(cfg.get("theme") or "") == theme_id:
+        prev = str(cfg.get(f"theme_before_{sid}") or "ghost") or "ghost"
         cfg["theme"] = prev
-        cfg["midautumn_theme_auto"] = False
+        cfg[f"{sid}_theme_auto"] = False
         changed = True
     if find_schedule(cfg, sid) is not None:
         remove_schedule(cfg, sid, force=True)
@@ -360,4 +364,36 @@ def sync_festival(cfg: dict, *, now: datetime | None = None) -> bool:
         if cfg.get("active_pin_id") == sid:
             cfg["active_pin_id"] = cfg["pin_order"][0] if cfg["pin_order"] else None
         changed = True
+    return changed
+
+
+def sync_festival(cfg: dict, *, now: datetime | None = None) -> bool:
+    """节期内补节日日程与一次自动换皮；过季删日程并还原。中秋结束后才轮到国庆。"""
+    ensure_fields(cfg)
+    now = now or datetime.now()
+    changed = False
+    changed |= _sync_one_festival(
+        cfg,
+        now,
+        in_season=festival.midautumn_in_season(now),
+        past_season=festival.midautumn_past_season(now),
+        sid=festival.MIDAUTUMN_ID,
+        title=festival.MIDAUTUMN_TITLE,
+        hour=festival.MIDAUTUMN_HOUR,
+        minute=festival.MIDAUTUMN_MINUTE,
+        date=festival.MIDAUTUMN_DATE,
+        theme_id=festival.MIDAUTUMN_THEME_ID,
+    )
+    changed |= _sync_one_festival(
+        cfg,
+        now,
+        in_season=festival.national_in_season(now),
+        past_season=festival.national_past_season(now),
+        sid=festival.NATIONAL_ID,
+        title=festival.NATIONAL_TITLE,
+        hour=festival.NATIONAL_HOUR,
+        minute=festival.NATIONAL_MINUTE,
+        date=festival.NATIONAL_DATE,
+        theme_id=festival.NATIONAL_THEME_ID,
+    )
     return changed

@@ -27,6 +27,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "inkgold": ("skin_inkgold.png", None),
     "warmglow": ("skin_warmglow.png", None),
     "midautumn": ("skin_midautumn.png", "skin_midautumn_glow.png"),
+    "nationalday": ("skin_nationalday.png", "skin_nationalday_glow.png"),
 }
 
 
@@ -193,7 +194,7 @@ def paste_skin(
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     freeze = stage in ("idle", "done")
     drift = 0 if freeze else _DRIFT_PX
-    if kind == "midautumn" and not freeze:
+    if kind in ("midautumn", "nationalday") and not freeze:
         drift = 8
 
     glow_kinds = {"neon", "terminal", "aurora"}
@@ -206,6 +207,9 @@ def paste_skin(
     elif kind == "midautumn":
         a0 = 0.94 if not light else 0.84
         a1 = 0.48 if not light else 0.36
+    elif kind == "nationalday":
+        a0 = 0.94 if not light else 0.84
+        a1 = 0.52 if not light else 0.38
     else:
         a0 = 0.82 if not light else 0.62
         a1 = 0.55 if not light else 0.38

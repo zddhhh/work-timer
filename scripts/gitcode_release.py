@@ -108,7 +108,7 @@ def main() -> None:
                 "name": f"WorkTimer {tag}",
                 "body": (
                     f"WorkTimer {ver}\n\n"
-                    "- 系统对时乱跳后回到点我开始；隐藏窗口改为轻点 Ctrl"
+                    "- 国庆夜空花火皮：外观可预览；9/28–10/8 自动换皮并加不可删除的国庆倒计时"
                 ),
                 "prerelease": False,
                 "target_commitish": "main",

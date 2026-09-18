@@ -18,7 +18,7 @@ import ornaments
 import store
 
 DEFAULT_THEME_ID = "ghost"
-_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn"})
+_KINDS = frozenset({"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"})
 _updated = False
 _lock = threading.Lock()
 
@@ -244,15 +244,27 @@ def _set_catalog(items: list[Theme], *, notify: bool = True) -> None:
 def list_themes() -> list[Theme]:
     with _lock:
         items = list(_catalog)
-    if not festival.in_season():
+    ma = festival.midautumn_in_season()
+    nd = festival.national_in_season()
+    if not ma and not nd:
         return items
     out: list[Theme] = []
     for t in items:
-        if t.id == festival.MIDAUTUMN_THEME_ID:
+        if ma and t.id == festival.MIDAUTUMN_THEME_ID:
             out.append(replace(t, name="中秋 · 限定"))
+        elif nd and t.id == festival.NATIONAL_THEME_ID:
+            out.append(replace(t, name="国庆 · 限定"))
         else:
             out.append(t)
-    out.sort(key=lambda t: 0 if t.id == festival.MIDAUTUMN_THEME_ID else 1)
+
+    def _rank(t: Theme) -> int:
+        if ma and t.id == festival.MIDAUTUMN_THEME_ID:
+            return 0
+        if nd and t.id == festival.NATIONAL_THEME_ID:
+            return 0
+        return 1
+
+    out.sort(key=_rank)
     return out
 
 
@@ -278,7 +290,7 @@ def load_local_catalog() -> None:
     cached = _load_json_file(_cache_path())
     bmap = {t.id: t for t in bundled}
     # 这些皮会随版本改配色/自适应，优先用内置覆盖旧缓存
-    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn"}
+    prefer_bundled = {"ghost", "auto", "midnight", "frost", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday"}
     if cached:
         items: list[Theme] = []
         seen: set[str] = set()
@@ -440,6 +452,8 @@ def paint_card(
                 base = (255, 236, 214, 96) if light_card else (28, 18, 12, 36)
             elif kind == "midautumn":
                 base = (236, 232, 255, 42) if light_card else (8, 10, 32, 30)
+            elif kind == "nationalday":
+                base = (255, 236, 232, 42) if light_card else (8, 10, 28, 30)
             else:  # glass
                 base = (252, 253, 255, 36) if light_card else (14, 16, 22, 28)
             d.rounded_rectangle(box, radius=r, fill=base)

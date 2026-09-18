@@ -9,13 +9,19 @@ STAGGER = 0.13
 CHAR_DUR = 0.72
 HOLD = 1.45
 FADE = 0.5
-PHRASES: tuple[str, ...] = (
+MIDAUTUMN_PHRASES: tuple[str, ...] = (
     "月圆人圆",
     "花好月圆",
     "但愿人长久",
     "千里共婵娟",
     "中秋快乐",
 )
+NATIONAL_PHRASES: tuple[str, ...] = (
+    "欢度国庆",
+    "金秋十月",
+    "山河无恙",
+)
+PHRASES = MIDAUTUMN_PHRASES
 
 _GLYPH_CACHE: dict[tuple, Image.Image] = {}
 

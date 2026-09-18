@@ -30,7 +30,7 @@ python main.py
 | 右键 → 设置上班时间 | 填 8:30–9:30 到岗，按 9.5 小时算下班 |
 | 右键 → 设置下班时间 | 直接填今天下班几点，按这个点倒计时 |
 | 左键拖 | 挪位置（会记住） |
-| 右键 → 外观 | 淡影（默认，浅色墙纸也会缓变适配）/ 自适应 / 玻璃 / 霜白 / 霓虹 / 终端 / 极光 / 墨金；可「刷新在线外观」 |
+| 右键 → 外观 | 淡影（默认，浅色墙纸也会缓变适配）/ 自适应 / 玻璃 / 霜白 / 霓虹 / 终端 / 极光 / 墨金 / 中秋 / 国庆；可「刷新在线外观」 |
 | 右键 → 显示方式 | 时分秒 / 分钟 / 秒 |
 | 右键 → Ctrl 隐藏窗口 | 开关，默认关；打开后轻点 Ctrl 藏起计时器，再点一次显示 |
 | 右键 → 关于 | 版本号、打开官方仓库、提交用户反馈 |
@@ -76,4 +76,4 @@ $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
 
 ## 在线换皮（不用发新版本）
 
-`1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。可用 `kind`：`ghost` / `glass` / `frost` / `neon` / `terminal` / `aurora` / `inkgold`。`adaptive` + `on_light` 可调自适应两套色；全新画法才需要发版。
+`1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。可用 `kind`：`ghost` / `glass` / `frost` / `neon` / `terminal` / `aurora` / `inkgold` / `warmglow` / `midautumn` / `nationalday`。`adaptive` + `on_light` 可调自适应两套色；全新画法才需要发版。
