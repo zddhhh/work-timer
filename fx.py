@@ -339,13 +339,131 @@ def _scanlines(bw: int, bh: int, *, light: bool = False) -> Image.Image:
     return im
 
 
+_GAUGE_CACHE: dict[tuple, Image.Image] = {}
+
+
+def _gauge_plate(bw: int, bh: int, c1: tuple[int, int, int], c2: tuple[int, int, int], *, light: bool, gain: float) -> Image.Image:
+    """静态仪表底：同心弧 + 刻度 + 淡十字准星，缓存按尺寸/色相。"""
+    key = (bw, bh, c1, c2, int(light), int(gain * 20))
+    got = _GAUGE_CACHE.get(key)
+    if got is not None:
+        return got
+    im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    cx, cy = bw * 0.52, bh * 0.48
+    # 同心弧（开口朝右上，避开左下标题区）
+    a0, a1 = -55, 125
+    for i, (rr, col, aa) in enumerate(
+        (
+            (bh * 0.58, c1, int(38 * gain)),
+            (bh * 0.42, c2, int(28 * gain)),
+            (bh * 0.28, c1, int(22 * gain)),
+        )
+    ):
+        box = (cx - rr, cy - rr, cx + rr, cy + rr)
+        w = 1 if i else max(1, int(round(bh / 70)))
+        d.arc(box, a0, a1, fill=(*col, aa), width=w)
+    # 外弧刻度
+    r_tick = bh * 0.58
+    for i in range(9):
+        t = i / 8.0
+        ang = math.radians(a0 + (a1 - a0) * t)
+        cos, sin = math.cos(ang), math.sin(ang)
+        long = i % 2 == 0
+        r0 = r_tick - (5.5 if long else 3.0)
+        r1 = r_tick + (1.5 if long else 0.5)
+        aa = int((55 if long else 32) * gain)
+        col = c1 if long else c2
+        d.line(
+            (cx + cos * r0, cy + sin * r0, cx + cos * r1, cy + sin * r1),
+            fill=(*col, aa),
+            width=1,
+        )
+    # 十字准星（短、淡，不穿过整卡）
+    span_x, span_y = bw * 0.16, bh * 0.22
+    gap = max(4.0, bh * 0.06)
+    cross_a = int(26 * gain)
+    d.line((cx - span_x, cy, cx - gap, cy), fill=(*c1, cross_a), width=1)
+    d.line((cx + gap, cy, cx + span_x, cy), fill=(*c1, cross_a), width=1)
+    d.line((cx, cy - span_y, cx, cy - gap), fill=(*c2, cross_a), width=1)
+    d.line((cx, cy + gap, cx, cy + span_y), fill=(*c2, cross_a), width=1)
+    # 中心小环
+    cr = max(2.5, bh * 0.035)
+    d.ellipse((cx - cr, cy - cr, cx + cr, cy + cr), outline=(*c1, int(40 * gain)), width=1)
+    if len(_GAUGE_CACHE) > 12:
+        _GAUGE_CACHE.clear()
+    _GAUGE_CACHE[key] = im
+    return im
+
+
+def _paint_fog(
+    layer: Image.Image,
+    phase: float,
+    c1: tuple[int, int, int],
+    c2: tuple[int, int, int],
+    *,
+    gain: float,
+    scale: float,
+    light: bool,
+) -> None:
+    """内场双色呼吸雾：周期约 2× 流光，极低透明、高斯软边。"""
+    bw, bh = layer.size
+    fog = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(fog)
+    breath = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(phase * (math.pi * 2 / 18.0)))
+    a_base = int((48 if light else 62) * gain * breath)
+    # 主色：偏左下缓慢漂移；副色：偏右上对向
+    drift = 0.5 + 0.5 * math.sin(phase * (math.pi * 2 / 22.0) + 1.2)
+    blobs = (
+        (bw * (0.28 + 0.06 * drift), bh * (0.62 - 0.05 * drift), bh * 0.55, c1, a_base),
+        (bw * (0.72 - 0.05 * drift), bh * (0.32 + 0.04 * drift), bh * 0.48, c2, int(a_base * 0.85)),
+    )
+    for bx, by, rr, col, aa in blobs:
+        if aa < 4:
+            continue
+        fd.ellipse((bx - rr, by - rr, bx + rr, by + rr), fill=(*col, aa))
+    blur = max(6.0, 10.0 * scale)
+    layer.alpha_composite(fog.filter(ImageFilter.GaussianBlur(radius=blur)))
+
+
+def _paint_gauge_needle(
+    layer: Image.Image,
+    phase: float,
+    c1: tuple[int, int, int],
+    *,
+    gain: float,
+    stage: str,
+) -> None:
+    """外弧上一颗极淡的游标光点，随 phase 缓移。"""
+    bw, bh = layer.size
+    cx, cy = bw * 0.52, bh * 0.48
+    a0, a1 = -55.0, 125.0
+    # warn 走得快一点
+    period = 5.5 if stage == "warn" else (14.0 if stage == "done" else 11.0)
+    t = (phase / period) % 1.0
+    if stage == "done":
+        t = 1.0  # 到点停在终点
+    ang = math.radians(a0 + (a1 - a0) * t)
+    r = bh * 0.58
+    px, py = cx + math.cos(ang) * r, cy + math.sin(ang) * r
+    d = ImageDraw.Draw(layer)
+    gr = max(2.2, bh * 0.028)
+    d.ellipse((px - gr, py - gr, px + gr, py + gr), fill=(*c1, int(90 * gain)))
+    d.ellipse((px - gr * 0.4, py - gr * 0.4, px + gr * 0.4, py + gr * 0.4), fill=(255, 255, 255, int(140 * gain)))
+
+
 def paint_neonflow(layer: Image.Image, phase: float, *, stage: str, radius: int, light: bool = False) -> None:
-    """霓虹 HUD：扫描线 + 角标 + 绕边流光（双头、拖尾、泛光）+ 偶发故障错位。"""
+    """霓虹 HUD：色雾 + 仪表底 + 扫描线 + 角标 + 绕边流光 + 偶发故障错位。"""
     bw, bh = layer.size
     if bw < 40 or bh < 20:
         return
     c1, c2, period, gain = _stage_palette(stage, light=light)
     scale = max(0.7, min(2.4, bh / 92.0))
+
+    # 内场：先雾、再仪表，再扫描线（网格压在上面，HUD 感更干净）
+    _paint_fog(layer, phase, c1, c2, gain=gain, scale=scale, light=light)
+    layer.alpha_composite(_gauge_plate(bw, bh, c1, c2, light=light, gain=gain))
+    _paint_gauge_needle(layer, phase, c1, gain=gain, stage=stage)
     layer.alpha_composite(_scanlines(bw, bh, light=light))
 
     d = ImageDraw.Draw(layer)

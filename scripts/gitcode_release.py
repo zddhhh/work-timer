@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 暖光皮加实：叠层与托底加厚，浅墙纸也不再透得太狠"
+RELEASE_NOTE = "- 霓虹流光内场补色雾与仪表底（同心弧/刻度/准星游标），不再只有边框有戏"
 
 
 def sha256_of(path: Path) -> str:
