@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 墨水涟漪加实；更新后（含手动换 exe）弹出完整更新说明，按正文撑开不裁字"
+RELEASE_NOTE = "- 更新说明弹窗按正文贴合尺寸，短内容不再留白带滚动条"
 
 
 def sha256_of(path: Path) -> str:

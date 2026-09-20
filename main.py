@@ -10,7 +10,7 @@ import time
 import tkinter as tk
 from datetime import datetime, timedelta
 from pathlib import Path
-from tkinter import filedialog, font as tkfont, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageChops, ImageFont, ImageTk
 
@@ -225,61 +225,70 @@ def _pack_full_text(
     parent: tk.Misc,
     sections: list[tuple[str, str]],
     *,
-    wrap_chars: int = 46,
+    wrap_px: int = 400,
     max_px: int = 420,
 ) -> None:
-    """更新说明正文：按内容撑高；超出 max_px 才出滚动条，不截断、不打省略号。"""
-    box = tk.Frame(parent, bg=_CARD_BG)
-    box.pack(fill="both", expand=True, padx=18)
-    f_head = tkfont.Font(family="Microsoft YaHei UI", size=11, weight="bold")
-    f_body = tkfont.Font(family="Microsoft YaHei UI", size=10)
-    text = tk.Text(
-        box,
-        wrap="word",
-        width=wrap_chars,
-        bg=_CARD_BG,
-        fg=_CARD_FG,
-        insertbackground=_CARD_BG,
-        relief="flat",
-        bd=0,
-        highlightthickness=0,
-        padx=0,
-        pady=0,
-        cursor="arrow",
-    )
-    text.tag_configure("ver", font=f_head, foreground=_CARD_FG, spacing1=2, spacing3=6)
-    text.tag_configure("body", font=f_body, foreground="#c8ceda", spacing3=2)
-    text.tag_configure("gap", font=f_body, foreground=_CARD_BG)
+    """更新说明正文：Label 按内容自然撑高；仅当总高超过 max_px 才出滚动，窗口与文字贴合。"""
+    wrap_px = max(160, int(wrap_px))
+    max_px = max(80, int(max_px))
+    outer = tk.Frame(parent, bg=_CARD_BG)
+    # 只横向填满，不 expand 纵向——避免 Text/Frame 把卡片撑出大片空白
+    outer.pack(fill="x", padx=18, pady=(10, 0))
+
+    inner = tk.Frame(outer, bg=_CARD_BG)
+    f_head = ("Microsoft YaHei UI", 11, "bold")
+    f_body = ("Microsoft YaHei UI", 10)
     for i, (ver, body) in enumerate(sections):
         if i:
-            text.insert("end", "\n\n", "gap")
-        text.insert("end", f"{ver}\n", "ver")
-        text.insert("end", body, "body")
-    text.configure(state="disabled")
-    text.pack(fill="both", expand=True)
-    text.update_idletasks()
-    nlines = 1
-    counted = text.count("1.0", "end-1c", "displaylines")
-    raw_lines = max(1, int(float(text.index("end-1c").split(".", 1)[0])))
-    if counted:
-        try:
-            nlines = max(1, int(counted[0]))
-        except (TypeError, ValueError, IndexError):
-            nlines = raw_lines
-    else:
-        total_chars = sum(len(v) + len(b) for v, b in sections)
-        nlines = max(raw_lines, total_chars // max(8, wrap_chars - 2) + len(sections) * 2)
-    line_px = max(16, int(f_body.metrics("linespace")))
-    need_px = nlines * line_px + 8
-    cap = max(line_px * 4, int(max_px))
-    show_px = min(need_px, cap)
-    text.configure(height=max(4, int(round(show_px / line_px))))
-    if need_px > cap + 4:
-        text.pack_forget()
-        sb = tk.Scrollbar(box, command=text.yview, width=12)
-        text.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        text.pack(side="left", fill="both", expand=True)
+            tk.Frame(inner, bg=_CARD_BG, height=12).pack(fill="x")
+        tk.Label(
+            inner,
+            text=ver,
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            font=f_head,
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        tk.Label(
+            inner,
+            text=(body or "").strip(),
+            fg="#c8ceda",
+            bg=_CARD_BG,
+            font=f_body,
+            wraplength=wrap_px,
+            justify="left",
+            anchor="nw",
+        ).pack(anchor="w", fill="x", pady=(4, 0))
+
+    inner.update_idletasks()
+    need = max(1, int(inner.winfo_reqheight()))
+    if need <= max_px:
+        inner.pack(anchor="w", fill="x")
+        return
+
+    canvas = tk.Canvas(
+        outer,
+        height=max_px,
+        bg=_CARD_BG,
+        highlightthickness=0,
+        bd=0,
+        relief="flat",
+    )
+    sb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview, width=10)
+    canvas.configure(yscrollcommand=sb.set)
+    sb.pack(side="right", fill="y", padx=(4, 0))
+    canvas.pack(side="left", fill="x", expand=True)
+
+    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _sync(_event=None) -> None:
+        canvas.itemconfigure(win_id, width=max(wrap_px, int(canvas.winfo_width()) or wrap_px))
+        canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, wrap_px, need))
+
+    inner.bind("<Configure>", _sync)
+    canvas.bind("<Configure>", _sync)
+    _sync()
 
 
 def _card_dialog(
@@ -1190,9 +1199,10 @@ class WorkTimer:
 
     def _show_whats_new(self, sections: list[tuple[str, str]]) -> None:
         near = self._dialog_near()
-        dlg = _card_dialog(self._tk_root(), near=near, width=460, height=280)
+        card_w = 420
+        dlg = _card_dialog(self._tk_root(), near=near, width=card_w, height=200)
         bar = tk.Frame(dlg, bg=_CARD_BG)
-        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        bar.pack(side="bottom", fill="x", pady=(8, 14))
         _card_btn(bar, "知道了", dlg.destroy, accent=True).pack(side="left", padx=18)
         tk.Label(
             dlg,
@@ -1200,7 +1210,7 @@ class WorkTimer:
             fg=_CARD_FG,
             bg=_CARD_BG,
             font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(pady=(16, 4), padx=18, anchor="w")
+        ).pack(pady=(14, 2), padx=18, anchor="w")
         tk.Label(
             dlg,
             text=f"已更新到 {APP_VERSION}",
@@ -1213,9 +1223,11 @@ class WorkTimer:
             work_h = int(r.bottom) - int(r.top)
         except Exception:
             work_h = 900
-        max_px = max(160, min(560, work_h - 220))
-        _pack_full_text(dlg, sections, max_px=max_px)
-        _fit_card(dlg, min_w=420, min_h=200, near=near)
+        # 标题+副标题+底栏约占 110px；正文最多吃掉剩余工作区，短文不撑空、不加滚动条
+        max_px = max(120, min(480, work_h - 200))
+        wrap_px = card_w - 36  # 与 outer padx=18*2 对齐
+        _pack_full_text(dlg, sections, wrap_px=wrap_px, max_px=max_px)
+        _fit_card(dlg, min_w=card_w, min_h=160, near=near)
         _run_card_modal(dlg, self.win)
 
     def _on_click(self, lx: int, ly: int) -> None:
