@@ -10,6 +10,10 @@ STAGGER = 0.13
 CHAR_DUR = 0.72
 HOLD = 1.45
 FADE = 0.5
+# 节日到点：先提示将至，再 3-2-1，最后祝福（避免没优先时突然蹦词）
+MIDAUTUMN_LEAD: tuple[str, ...] = ("中秋将至",)
+NATIONAL_LEAD: tuple[str, ...] = ("国庆将至",)
+COUNTDOWN: tuple[str, ...] = ("3", "2", "1")
 MIDAUTUMN_PHRASES: tuple[str, ...] = (
     "月圆人圆",
     "花好月圆",
@@ -23,8 +27,14 @@ NATIONAL_PHRASES: tuple[str, ...] = (
     "山河无恙",
 )
 OFFWORK_PHRASES: tuple[str, ...] = ("下班啦",)
+_COUNTDOWN_SET = frozenset(COUNTDOWN)
 
 _GLYPH_CACHE: OrderedDict[tuple, Image.Image] = OrderedDict()
+
+
+def festival_show_phrases(lead: tuple[str, ...], blessings: tuple[str, ...]) -> tuple[str, ...]:
+    """节日完整串：将至提示 → 321 → 祝福。"""
+    return tuple(p for p in (*lead, *COUNTDOWN, *blessings) if p)
 
 
 @dataclass
@@ -64,9 +74,19 @@ class Show:
         return last_d + 1.0
 
 
+def _timing(text: str) -> tuple[float, float, float, float]:
+    """(错峰间隔, 单字弹出, 停留, 淡出)。321 更快，将至略短于祝福。"""
+    if text in _COUNTDOWN_SET:
+        return 0.0, 0.45, 0.38, 0.2
+    if text.endswith("将至"):
+        return STAGGER, CHAR_DUR * 0.85, HOLD * 0.7, FADE
+    return STAGGER, CHAR_DUR, HOLD, FADE
+
+
 def duration(text: str) -> float:
+    st, cd, hold, fade = _timing(text)
     n = max(1, len(text))
-    return (n - 1) * STAGGER + CHAR_DUR + HOLD + FADE
+    return (n - 1) * st + cd + hold + fade
 
 
 def total_duration(phrases: tuple[str, ...]) -> float:
@@ -150,15 +170,17 @@ def paint(
 ) -> None:
     if show.skipped:
         return
-    chars = list(show.current_text(now))
+    phrase = show.current_text(now)
+    chars = list(phrase)
     n = len(chars)
     if n == 0:
         return
+    st, cd, hold, fade_dur = _timing(phrase)
     elapsed = show.phrase_elapsed(now)
-    end_in = (n - 1) * STAGGER + CHAR_DUR
+    end_in = (n - 1) * st + cd
     fade = 1.0
-    if elapsed > end_in + HOLD:
-        fade = max(0.0, 1.0 - (elapsed - end_in - HOLD) / FADE)
+    if elapsed > end_in + hold:
+        fade = max(0.0, 1.0 - (elapsed - end_in - hold) / max(1e-6, fade_dur))
     if fade <= 0.01:
         return
 
@@ -168,7 +190,7 @@ def paint(
     total = sum(advances) + gap * (n - 1)
     x0 = (w - total) / 2.0
     cy = h * 0.52
-    drop = h * 0.28
+    drop = h * (0.22 if phrase in _COUNTDOWN_SET else 0.28)
 
     slots: list[float] = []
     x = x0
@@ -177,11 +199,13 @@ def paint(
         x += adv + gap
 
     for i, ch in enumerate(chars):
-        local = (elapsed - i * STAGGER) / CHAR_DUR
+        local = (elapsed - i * st) / max(1e-6, cd)
         if local <= 0.0:
             continue
         t = min(1.0, local)
-        scale = 0.18 + 0.92 * _ease_out_back(t)
+        # 321 略放大，更像倒计时锤点
+        back = 1.35 if phrase in _COUNTDOWN_SET else 1.75
+        scale = (0.28 if phrase in _COUNTDOWN_SET else 0.18) + 0.92 * _ease_out_back(t, back)
         oy = (1.0 - _ease_out_cubic(t)) * drop
         a = fade * _ease_out_quad(min(1.0, t * 1.35))
         if a <= 0.01:

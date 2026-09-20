@@ -1071,7 +1071,7 @@ class WorkTimer:
             sid=festival.MIDAUTUMN_ID,
             theme_id=festival.MIDAUTUMN_THEME_ID,
             done_key="midautumn_kinetic_done",
-            phrases=kinetic.MIDAUTUMN_PHRASES,
+            phrases=kinetic.festival_show_phrases(kinetic.MIDAUTUMN_LEAD, kinetic.MIDAUTUMN_PHRASES),
         ):
             return
         self._try_start_fest_kinetic(
@@ -1080,7 +1080,7 @@ class WorkTimer:
             sid=festival.NATIONAL_ID,
             theme_id=festival.NATIONAL_THEME_ID,
             done_key="nationalday_kinetic_done",
-            phrases=kinetic.NATIONAL_PHRASES,
+            phrases=kinetic.festival_show_phrases(kinetic.NATIONAL_LEAD, kinetic.NATIONAL_PHRASES),
         )
 
     def _load_size(self) -> tuple[int, int]:

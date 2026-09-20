@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 更新说明弹窗按正文贴合尺寸，短内容不再留白带滚动条"
+RELEASE_NOTE = "- 节日到点先「将至」再 3-2-1 后播祝福，没优先也不再突然蹦词"
 
 
 def sha256_of(path: Path) -> str:

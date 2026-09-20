@@ -407,6 +407,28 @@ class FxTests(unittest.TestCase):
             self.assertTrue(0 <= x <= 248 and 0 <= y <= 92)
 
 
+class KineticTests(unittest.TestCase):
+    def test_festival_sequence_has_lead_and_countdown(self):
+        import kinetic
+
+        mid = kinetic.festival_show_phrases(kinetic.MIDAUTUMN_LEAD, kinetic.MIDAUTUMN_PHRASES)
+        self.assertEqual(mid[:4], ("中秋将至", "3", "2", "1"))
+        self.assertIn("中秋快乐", mid)
+        nat = kinetic.festival_show_phrases(kinetic.NATIONAL_LEAD, kinetic.NATIONAL_PHRASES)
+        self.assertEqual(nat[:4], ("国庆将至", "3", "2", "1"))
+        # 321 明显短于祝福句，避免倒数拖沓
+        self.assertLess(kinetic.duration("3"), kinetic.duration("月圆人圆") * 0.55)
+        self.assertLess(kinetic.duration("中秋将至"), kinetic.duration("但愿人长久"))
+        # paint 冒烟：走完将至与 321 不崩
+        from PIL import Image, ImageFont
+
+        show = kinetic.Show(mid, 0.0)
+        img = Image.new("RGBA", (248, 92), (0, 0, 0, 255))
+        font = ImageFont.load_default()
+        for t in (0.2, kinetic.duration("中秋将至") + 0.1, kinetic.duration("中秋将至") + 1.2):
+            kinetic.paint(img, show, font, (255, 255, 255, 255), t)
+
+
 class ChangelogTests(unittest.TestCase):
     def test_parse_stops_at_non_version_heading(self):
         import changelog
