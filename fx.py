@@ -525,125 +525,163 @@ def paint_neonflow(layer: Image.Image, phase: float, *, stage: str, radius: int,
 # ---------------------------------------------------------------- 墨水涟漪
 
 def _ink_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
-    """(主墨色, 副墨色, 涟漪周期秒, 增益)。"""
+    """(主墨色, 副墨色, 涟漪周期秒, 增益)。浅底深墨、深底浅墨晕，才能在半透卡片上看出来。"""
     if light:
         if stage == "warn":
-            return (140, 72, 36), (110, 50, 40), 4.2, 0.9
+            return (92, 38, 18), (70, 28, 20), 3.6, 1.0
         if stage == "done":
-            return (40, 70, 90), (50, 80, 70), 20.0, 0.55
+            return (28, 48, 58), (36, 52, 46), 22.0, 0.85
         if stage == "idle":
-            return (50, 70, 90), (70, 60, 80), 18.0, 0.45
-        return (30, 70, 100), (50, 60, 90), 9.5, 0.75
+            return (36, 40, 48), (48, 44, 52), 16.0, 0.7
+        return (22, 24, 28), (48, 42, 36), 6.4, 1.0
     if stage == "warn":
-        return (210, 120, 60), (180, 70, 50), 4.2, 1.0
+        return (255, 186, 120), (232, 140, 88), 3.6, 1.0
     if stage == "done":
-        return (90, 140, 160), (70, 120, 110), 20.0, 0.7
+        return (186, 214, 220), (150, 190, 176), 22.0, 0.85
     if stage == "idle":
-        return (70, 110, 140), (90, 90, 120), 18.0, 0.5
-    return (60, 140, 180), (80, 100, 150), 9.5, 0.95
+        return (176, 186, 198), (156, 160, 176), 16.0, 0.7
+    return (214, 222, 230), (168, 176, 186), 6.4, 1.0
 
 
 _PAPER_CACHE: dict[tuple, Image.Image] = {}
 
 
 def _paper_grain(bw: int, bh: int, *, light: bool) -> Image.Image:
-    """极淡宣纸噪点，按尺寸缓存。"""
+    """宣纸：纤维丝 + 密点，按尺寸缓存。"""
     key = (bw, bh, int(light))
     got = _PAPER_CACHE.get(key)
     if got is not None:
         return got
     im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
     px = im.load()
-    # 稀疏伪随机点，不用每帧重算
     seed = (bw * 73856093) ^ (bh * 19349663)
-    for i in range(max(40, (bw * bh) // 90)):
+    n_dots = max(180, (bw * bh) // 18)
+    for _i in range(n_dots):
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
         x = seed % bw
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
         y = seed % bh
-        a = 10 + (seed >> 16) % (14 if light else 18)
+        a = 22 + (seed >> 16) % (28 if light else 36)
         if light:
-            px[x, y] = (90, 80, 70, a)
+            px[x, y] = (86, 74, 58, a)
         else:
-            px[x, y] = (180, 200, 210, a)
+            px[x, y] = (210, 204, 188, a)
+    # 几道斜向纤维，宣纸感
+    n_fib = max(8, bw // 18)
+    for i in range(n_fib):
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        x0 = seed % bw
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        y0 = seed % bh
+        ln = 12 + (seed >> 8) % 28
+        aa = 18 + (seed >> 16) % 16
+        col = (96, 84, 68, aa) if light else (200, 196, 182, aa)
+        d.line((x0, y0, x0 + ln, y0 + ln * 0.12), fill=col, width=1)
     if len(_PAPER_CACHE) > 8:
         _PAPER_CACHE.clear()
     _PAPER_CACHE[key] = im
     return im
 
 
+def _ink_blot(
+    bw: int,
+    bh: int,
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    col: tuple[int, int, int],
+    alpha: int,
+    blur: float,
+) -> Image.Image:
+    im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    if alpha < 4 or rx < 1 or ry < 1:
+        return im
+    ImageDraw.Draw(im).ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=(*col, alpha))
+    return im.filter(ImageFilter.GaussianBlur(radius=blur))
+
+
 def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int, light: bool = False) -> None:
-    """墨水涟漪：宣纸底纹 + 多层外扩淡墨环 + 偶发落墨点。无绕边流光。"""
+    """墨水涟漪：宣纸底 + 中心墨晕 + 多层外扩墨环 + 落墨再漾开。"""
     bw, bh = layer.size
     if bw < 40 or bh < 20:
         return
     c1, c2, period, gain = _ink_palette(stage, light=light)
     scale = max(0.7, min(2.4, bh / 92.0))
-    # 圆心落在大数字一带（偏左上一点，避开右下空白）
-    cx, cy = bw * 0.38, bh * 0.48
+    cx, cy = bw * 0.42, bh * 0.50
     layer.alpha_composite(_paper_grain(bw, bh, light=light))
+
+    # 中心湿墨：慢呼吸，把数字垫在一摊墨上
+    breath = 0.78 + 0.22 * math.sin(phase * (math.pi * 2 / 7.5))
+    blot_a = int((118 if light else 96) * gain * (0.85 if stage == "idle" else 1.0))
+    layer.alpha_composite(
+        _ink_blot(
+            bw,
+            bh,
+            cx,
+            cy,
+            bh * 0.42 * breath,
+            bh * 0.30 * breath,
+            c1,
+            blot_a,
+            max(5.0, 7.5 * scale),
+        )
+    )
 
     rings = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     rd = ImageDraw.Draw(rings)
-    n_rings = 5 if stage == "warn" else (3 if stage in ("done", "idle") else 4)
-    max_r = max(bw, bh) * 0.72
+    n_rings = 6 if stage == "warn" else (3 if stage in ("done", "idle") else 5)
+    max_r = max(bw, bh) * 0.78
+    peak_a = int((200 if light else 168) * gain)
 
     if stage == "done":
-        # 静墨晕：固定几圈，不再外扩
-        for i, frac in enumerate((0.22, 0.38, 0.55)):
+        for i, frac in enumerate((0.26, 0.44, 0.62)):
             rr = max_r * frac
-            aa = int((55 - i * 12) * gain)
+            aa = int(peak_a * (0.55 - i * 0.12))
             col = c1 if i % 2 == 0 else c2
-            w = max(1, int(round((2.2 - i * 0.35) * scale)))
-            if aa > 4:
+            w = max(2, int(round((4.2 - i * 0.6) * scale)))
+            if aa > 6:
                 rd.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=(*col, aa), width=w)
-        # 中心一摊淡墨
-        blob = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-        ImageDraw.Draw(blob).ellipse(
-            (cx - bh * 0.18, cy - bh * 0.14, cx + bh * 0.18, cy + bh * 0.14),
-            fill=(*c1, int(40 * gain)),
-        )
-        layer.alpha_composite(blob.filter(ImageFilter.GaussianBlur(radius=max(4.0, 6.0 * scale))))
     else:
         for i in range(n_rings):
-            # 相位错开，环从中心长到边缘后循环
             t = ((phase / period) + i / n_rings) % 1.0
-            rr = 4.0 * scale + t * max_r
-            # 外缘淡出、出生时略亮
-            fade = math.sin(t * math.pi)  # 0→1→0
-            aa = int((70 if stage == "warn" else 52) * gain * fade * fade)
+            rr = 6.0 * scale + t * max_r
+            # 出生略亮、外缘淡出，但不要 fade²，否则环几乎看不见
+            fade = math.sin(t * math.pi) ** 0.55
+            aa = int(peak_a * fade)
             col = c1 if i % 2 == 0 else c2
-            w = max(1, int(round((2.4 - t * 1.2) * scale)))
-            if aa > 3:
+            w = max(2, int(round((5.2 - t * 2.4) * scale)))
+            if aa > 8:
                 rd.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=(*col, aa), width=w)
 
-    blur_r = max(1.2, 1.8 * scale)
-    layer.alpha_composite(rings.filter(ImageFilter.GaussianBlur(radius=blur_r)))
+    layer.alpha_composite(rings.filter(ImageFilter.GaussianBlur(radius=max(0.9, 1.35 * scale))))
 
-    # 偶发落墨：一滴落入再漾开一小圈
     if stage != "done":
-        drop_cyc = 6.5 if stage == "warn" else (14.0 if stage == "idle" else 10.0)
+        drop_cyc = 3.8 if stage == "warn" else (8.5 if stage == "idle" else 4.6)
         g = phase % drop_cyc
-        if g < 1.35:
+        if g < 1.7:
             seed = int(phase / drop_cyc) * 9973
-            # 落点在圆心附近抖动
-            jx = ((seed % 17) - 8) * 0.8 * scale
-            jy = (((seed >> 4) % 13) - 6) * 0.6 * scale
+            jx = ((seed % 17) - 8) * 1.1 * scale
+            jy = (((seed >> 4) % 13) - 6) * 0.8 * scale
             dx, dy = cx + jx, cy + jy
-            u = g / 1.35  # 0..1
+            u = g / 1.7
             drop = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
             dd = ImageDraw.Draw(drop)
-            # 墨点：先大后收
-            pr = (5.5 - 2.5 * u) * scale
-            pa = int(130 * gain * (1.0 - u * 0.55))
-            if pa > 4:
-                dd.ellipse((dx - pr, dy - pr, dx + pr, dy + pr), fill=(*c1, pa))
-            # 溅起的小涟漪
-            sr = (8.0 + u * 28.0) * scale
-            sa = int(90 * gain * (1.0 - u) * (1.0 - u))
-            if sa > 3:
-                dd.ellipse((dx - sr, dy - sr, dx + sr, dy + sr), outline=(*c2, sa), width=max(1, int(1.5 * scale)))
-            layer.alpha_composite(drop.filter(ImageFilter.GaussianBlur(radius=max(1.5, 2.2 * scale))))
+            pr = (7.5 - 3.0 * u) * scale
+            pa = int((210 if light else 180) * gain * (1.0 - u * 0.45))
+            if pa > 6:
+                dd.ellipse((dx - pr, dy - pr * 0.78, dx + pr, dy + pr * 0.78), fill=(*c1, pa))
+            sr = (10.0 + u * 46.0) * scale
+            sa = int(peak_a * (1.0 - u) ** 1.15)
+            sw = max(2, int(round((4.6 - u * 2.2) * scale)))
+            if sa > 8:
+                dd.ellipse((dx - sr, dy - sr, dx + sr, dy + sr), outline=(*c2, sa), width=sw)
+            # 第二圈稍慢、更淡
+            sr2 = (6.0 + u * 28.0) * scale
+            sa2 = int(sa * 0.55)
+            if sa2 > 6:
+                dd.ellipse((dx - sr2, dy - sr2, dx + sr2, dy + sr2), outline=(*c1, sa2), width=max(1, sw - 1))
+            layer.alpha_composite(drop.filter(ImageFilter.GaussianBlur(radius=max(1.2, 1.8 * scale))))
 
-    # 极淡内缘，压住纸纹不抢字
     _ = radius  # 圆角由 ornaments 蒙版处理；保留参数与 neonflow 签名一致

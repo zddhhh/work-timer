@@ -79,4 +79,4 @@ $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
 
 ## 在线换皮（不用发新版本）
 
-`1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。可用 `kind`：`ghost` / `glass` / `frost` / `neon` / `terminal` / `aurora` / `inkgold` / `warmglow` / `midautumn` / `nationalday` / `neonflow`。`adaptive` + `on_light` 可调自适应两套色；全新画法才需要发版。
+`1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。可用 `kind`：`ghost` / `glass` / `frost` / `neon` / `terminal` / `aurora` / `inkgold` / `warmglow` / `midautumn` / `nationalday` / `neonflow` / `inkpulse`。`adaptive` + `on_light` 可调自适应两套色；全新画法才需要发版。

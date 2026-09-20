@@ -370,6 +370,18 @@ class FxTests(unittest.TestCase):
         self.assertTrue(ornaments.has_skin("inkpulse"))
         self.assertTrue(ornaments.is_animated("inkpulse"))
 
+    def test_inkpulse_visible(self):
+        import fx
+
+        layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        fx.paint_inkpulse(layer, 2.1, stage="run", radius=14)
+        alphas = list(layer.getchannel("A").getdata())
+        self.assertGreater(max(alphas), 120)
+        self.assertGreater(sum(1 for a in alphas if a > 40), 800)
+        light = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        fx.paint_inkpulse(light, 0.4, stage="run", radius=14, light=True)
+        self.assertGreater(max(light.getchannel("A").getdata()), 100)
+
     def test_menu_sections_cover_catalog(self):
         secs = themes.menu_sections()
         flat = [t.id for grp in secs.values() for t in grp]
@@ -393,6 +405,40 @@ class FxTests(unittest.TestCase):
         for u in (0.1, 0.3, 0.5, 0.7, 0.9):
             x, y = point(u)
             self.assertTrue(0 <= x <= 248 and 0 <= y <= 92)
+
+
+class ChangelogTests(unittest.TestCase):
+    def test_parse_stops_at_non_version_heading(self):
+        import changelog
+
+        md = (
+            "# GitCode 自动更新\n\n"
+            "## 1.1.5\n\n"
+            "墨水加实。\n\n"
+            "## 1.1.4\n\n"
+            "新皮。\n\n"
+            "## 1. 你这边发包\n\n"
+            "不要进弹窗。\n"
+        )
+        notes = changelog.parse_notes(md)
+        self.assertEqual([v for v, _ in notes], ["1.1.5", "1.1.4"])
+        self.assertIn("墨水加实", notes[0][1])
+        got = changelog.notes_after("1.1.4", "1.1.5", text=md)
+        self.assertEqual(got, [("1.1.5", "墨水加实。")])
+        jump = changelog.notes_after("1.1.3", "1.1.5", text=md)
+        self.assertEqual([v for v, _ in jump], ["1.1.5", "1.1.4"])
+
+    def test_pending_file_roundtrip(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = store.user_data_dir
+            store.user_data_dir = lambda: Path(d)
+            try:
+                self.assertEqual(store.consume_pending_whats_new(), "")
+                store.write_pending_whats_new("1.1.4")
+                self.assertEqual(store.consume_pending_whats_new(), "1.1.4")
+                self.assertEqual(store.consume_pending_whats_new(), "")
+            finally:
+                store.user_data_dir = old
 
 
 class FlexTimeTests(unittest.TestCase):

@@ -630,6 +630,10 @@ def apply_update_and_restart(new_exe: Path) -> None:
     cur = current_exe_path()
     if cur is None:
         raise RuntimeError("源码运行模式不能热更新，请重新打包 exe")
+    try:
+        store.write_pending_whats_new(APP_VERSION)
+    except OSError:
+        pass
     if store.should_relocate_exe(cur):
         dest = store.install_exe_path()
         dest.parent.mkdir(parents=True, exist_ok=True)

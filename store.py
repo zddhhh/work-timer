@@ -105,6 +105,7 @@ def load_config() -> dict:
         "active_pin_id": "offwork",
         "auto_rotate_pins": False,
         "rotate_sec": 5,
+        "last_run_version": "",
     }
     bundled = app_dir() / "update_defaults.json"
     if bundled.exists():
@@ -200,3 +201,36 @@ def append_log(message: str) -> None:
 
 def log_exception(where: str, exc: BaseException) -> None:
     append_log(f"{where}: {exc}\n{traceback.format_exc()}")
+
+
+def pending_whats_new_path() -> Path:
+    return user_data_dir() / "pending_whats_new.json"
+
+
+def write_pending_whats_new(from_version: str) -> None:
+    """OTA 重启前记下旧版本，新进程用来弹更新说明。"""
+    ver = str(from_version or "").strip()
+    if not ver:
+        return
+    pending_whats_new_path().write_text(
+        json.dumps({"from": ver}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def consume_pending_whats_new() -> str:
+    path = pending_whats_new_path()
+    if not path.is_file():
+        return ""
+    ver = ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            ver = str(data.get("from") or "").strip()
+    except (OSError, json.JSONDecodeError):
+        ver = ""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return ver

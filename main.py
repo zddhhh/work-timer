@@ -10,13 +10,14 @@ import time
 import tkinter as tk
 from datetime import datetime, timedelta
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from PIL import Image, ImageChops, ImageFont, ImageTk
 
 import attachments
 import autostart
 import backdrop
+import changelog
 import desktop_shortcut
 import festival
 import feedback
@@ -218,6 +219,67 @@ def _pack_err_line(parent: tk.Misc, err: tk.StringVar, *, wrap: int = 400) -> tk
         anchor="w",
     ).pack(fill="both", expand=True, padx=0, pady=2)
     return row
+
+
+def _pack_full_text(
+    parent: tk.Misc,
+    sections: list[tuple[str, str]],
+    *,
+    wrap_chars: int = 46,
+    max_px: int = 420,
+) -> None:
+    """更新说明正文：按内容撑高；超出 max_px 才出滚动条，不截断、不打省略号。"""
+    box = tk.Frame(parent, bg=_CARD_BG)
+    box.pack(fill="both", expand=True, padx=18)
+    f_head = tkfont.Font(family="Microsoft YaHei UI", size=11, weight="bold")
+    f_body = tkfont.Font(family="Microsoft YaHei UI", size=10)
+    text = tk.Text(
+        box,
+        wrap="word",
+        width=wrap_chars,
+        bg=_CARD_BG,
+        fg=_CARD_FG,
+        insertbackground=_CARD_BG,
+        relief="flat",
+        bd=0,
+        highlightthickness=0,
+        padx=0,
+        pady=0,
+        cursor="arrow",
+    )
+    text.tag_configure("ver", font=f_head, foreground=_CARD_FG, spacing1=2, spacing3=6)
+    text.tag_configure("body", font=f_body, foreground="#c8ceda", spacing3=2)
+    text.tag_configure("gap", font=f_body, foreground=_CARD_BG)
+    for i, (ver, body) in enumerate(sections):
+        if i:
+            text.insert("end", "\n\n", "gap")
+        text.insert("end", f"{ver}\n", "ver")
+        text.insert("end", body, "body")
+    text.configure(state="disabled")
+    text.pack(fill="both", expand=True)
+    text.update_idletasks()
+    nlines = 1
+    counted = text.count("1.0", "end-1c", "displaylines")
+    raw_lines = max(1, int(float(text.index("end-1c").split(".", 1)[0])))
+    if counted:
+        try:
+            nlines = max(1, int(counted[0]))
+        except (TypeError, ValueError, IndexError):
+            nlines = raw_lines
+    else:
+        total_chars = sum(len(v) + len(b) for v, b in sections)
+        nlines = max(raw_lines, total_chars // max(8, wrap_chars - 2) + len(sections) * 2)
+    line_px = max(16, int(f_body.metrics("linespace")))
+    need_px = nlines * line_px + 8
+    cap = max(line_px * 4, int(max_px))
+    show_px = min(need_px, cap)
+    text.configure(height=max(4, int(round(show_px / line_px))))
+    if need_px > cap + 4:
+        text.pack_forget()
+        sb = tk.Scrollbar(box, command=text.yview, width=12)
+        text.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
 
 
 def _card_dialog(
@@ -1102,6 +1164,50 @@ class WorkTimer:
                 pass
 
         threading.Thread(target=_run, daemon=True, name="silent-update").start()
+
+    def _maybe_show_whats_new(self) -> None:
+        from_ver = store.consume_pending_whats_new() or str(self.cfg.get("last_run_version") or "").strip()
+        sections: list[tuple[str, str]] = []
+        if from_ver and updater.is_newer(APP_VERSION, from_ver):
+            try:
+                sections = changelog.notes_after(from_ver, APP_VERSION)
+            except Exception as e:  # noqa: BLE001
+                store.log_exception("changelog", e)
+        if str(self.cfg.get("last_run_version") or "") != APP_VERSION:
+            self.cfg["last_run_version"] = APP_VERSION
+            store.save_config(self.cfg, now=True)
+        if sections:
+            self._show_whats_new(sections)
+
+    def _show_whats_new(self, sections: list[tuple[str, str]]) -> None:
+        near = self._dialog_near()
+        dlg = _card_dialog(self._tk_root(), near=near, width=460, height=280)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        _card_btn(bar, "知道了", dlg.destroy, accent=True).pack(side="left", padx=18)
+        tk.Label(
+            dlg,
+            text="更新内容",
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 4), padx=18, anchor="w")
+        tk.Label(
+            dlg,
+            text=f"已更新到 {APP_VERSION}",
+            fg=_CARD_MUTED,
+            bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 9),
+        ).pack(padx=18, anchor="w")
+        try:
+            r = layered_win.monitor_work_at(self.win.x + self._win_w // 2, self.win.y + self._win_h // 2)
+            work_h = int(r.bottom) - int(r.top)
+        except Exception:
+            work_h = 900
+        max_px = max(160, min(560, work_h - 220))
+        _pack_full_text(dlg, sections, max_px=max_px)
+        _fit_card(dlg, min_w=420, min_h=200, near=near)
+        _run_card_modal(dlg, self.win)
 
     def _on_click(self, lx: int, ly: int) -> None:
         if self._esc_hidden:
@@ -2366,9 +2472,12 @@ class WorkTimer:
             if env is not None:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
             if ornaments.has_skin(theme.kind):
-                period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
-                sweeping = (phase % period) < 1.95
-                fps = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
+                if theme.kind in ("neonflow", "inkpulse"):
+                    fps = 30 if stage == "warn" else (16 if stage in ("idle", "done") else 28)
+                else:
+                    period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
+                    sweeping = (phase % period) < 1.95
+                    fps = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
                 key = f"{key}-a{int(phase * fps)}"
             elif theme.kind != "ghost":
                 key = f"{key}-p{int(phase * 6)}"
@@ -2451,6 +2560,7 @@ class WorkTimer:
 
     def run(self) -> None:
         self._paint()
+        self._maybe_show_whats_new()
         last_save = time.monotonic()
         was_dragging = False
         was_resizing = False

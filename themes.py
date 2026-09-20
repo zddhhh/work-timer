@@ -492,7 +492,7 @@ def paint_card(
             elif kind == "neonflow":
                 base = (244, 250, 255, 165) if skin_light else (6, 8, 14, 135)
             elif kind == "inkpulse":
-                base = (248, 246, 242, 175) if skin_light else (10, 14, 20, 145)
+                base = (250, 244, 230, 210) if skin_light else (16, 14, 12, 175)
             else:  # glass
                 base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
             d.rounded_rectangle(box, radius=r, fill=base)
@@ -535,10 +535,10 @@ def paint_card(
         img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.5, h / 28))))
         d = ImageDraw.Draw(img)
     elif kind == "inkpulse" and big:
-        # 淡墨晕：比霓虹弱一档，像字渗进宣纸
+        # 字渗进宣纸：比霓虹弱，但要能看出一圈湿边
         bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 90))
-        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.0, h / 36))))
+        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 130))
+        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.4, h / 30))))
         d = ImageDraw.Draw(img)
     _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
     _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost, glow=stage == "done")
