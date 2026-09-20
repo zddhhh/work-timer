@@ -1166,13 +1166,22 @@ class WorkTimer:
         threading.Thread(target=_run, daemon=True, name="silent-update").start()
 
     def _maybe_show_whats_new(self) -> None:
-        from_ver = store.consume_pending_whats_new() or str(self.cfg.get("last_run_version") or "").strip()
+        pending = store.consume_pending_whats_new()
+        last = str(self.cfg.get("last_run_version") or "").strip()
+        from_ver = pending or last
         sections: list[tuple[str, str]] = []
-        if from_ver and updater.is_newer(APP_VERSION, from_ver):
-            try:
+        try:
+            if from_ver and updater.is_newer(APP_VERSION, from_ver):
                 sections = changelog.notes_after(from_ver, APP_VERSION)
-            except Exception as e:  # noqa: BLE001
-                store.log_exception("changelog", e)
+            elif not last:
+                # 手动换 exe / 本机从没记过版本：只展示当前这一版，避免把历史全倒出来
+                sections = [
+                    (v, b)
+                    for v, b in changelog.parse_notes(changelog.load_markdown())
+                    if v == APP_VERSION
+                ]
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("changelog", e)
         if str(self.cfg.get("last_run_version") or "") != APP_VERSION:
             self.cfg["last_run_version"] = APP_VERSION
             store.save_config(self.cfg, now=True)

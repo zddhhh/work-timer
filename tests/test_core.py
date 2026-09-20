@@ -428,6 +428,13 @@ class ChangelogTests(unittest.TestCase):
         jump = changelog.notes_after("1.1.3", "1.1.5", text=md)
         self.assertEqual([v for v, _ in jump], ["1.1.5", "1.1.4"])
 
+    def test_bundled_notes_include_current_version(self):
+        import changelog
+        from version import APP_VERSION
+
+        found = [v for v, b in changelog.parse_notes(changelog.load_markdown()) if v == APP_VERSION]
+        self.assertEqual(found, [APP_VERSION])
+
     def test_pending_file_roundtrip(self):
         with tempfile.TemporaryDirectory() as d:
             old = store.user_data_dir
