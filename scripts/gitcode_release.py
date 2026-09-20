@@ -93,10 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = (
-    "- 墨水涟漪改成一幅一角山水：宣纸、远山、水面留白，一滴墨落水漾开扁环，右上盖朱印\n"
-    "- 节日日程不再被重置：改过的中秋/国庆日期与时间会记住，只有去年残留才滚到今年"
-)
+RELEASE_NOTE = "- 墨水涟漪的落墨点移到大数字右边，下落和涟漪不再被倒计时挡住"
 
 
 def sha256_of(path: Path) -> str:

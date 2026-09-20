@@ -772,8 +772,9 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
     if cyc > 0.0:
         g = phase % cyc
         seed = int(phase / cyc) * 9973
-        # 落点选山脚前那片开阔水面：落在山影里就白漾了
-        dx = bw * (0.45 + ((seed >> 3) % 17) / 100.0)
+        # 落点必须躲开左边的大数字：128:00:00 在窄窗上右缘能吃到 0.65 bw，
+        # 右边留出朱印的位置（印在 0.90 bw 往右）
+        dx = bw * (0.70 + ((seed >> 3) % 14) / 100.0)
         fall = 0.34
         if g < fall:
             # 一滴墨从上边缘加速落下
