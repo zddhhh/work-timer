@@ -492,12 +492,19 @@ def paint_card(
             elif kind == "neonflow":
                 base = (244, 250, 255, 165) if skin_light else (6, 8, 14, 135)
             elif kind == "inkpulse":
-                base = (250, 244, 230, 210) if skin_light else (16, 14, 12, 175)
+                # 宣纸永远浅底深墨，深色墙纸只是把纸再透一点
+                base = (252, 246, 232, 228) if wallpaper_light else (246, 238, 218, 168)
             else:  # glass
                 base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
             d.rounded_rectangle(box, radius=r, fill=base)
             ornaments.paste_skin(
-                img, box, kind, light=skin_light, stage=stage, env_rgb=env_rgb, radius=r
+                img,
+                box,
+                kind,
+                light=True if kind == "inkpulse" else skin_light,
+                stage=stage,
+                env_rgb=env_rgb,
+                radius=r,
             )
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
@@ -535,10 +542,11 @@ def paint_card(
         img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.5, h / 28))))
         d = ImageDraw.Draw(img)
     elif kind == "inkpulse" and big:
-        # 字渗进宣纸：比霓虹弱，但要能看出一圈湿边
+        # 字本身像写在纸上洇开，不要霓虹光晕
+        ink = (32, 28, 24, 80)
         bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 130))
-        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.4, h / 30))))
+        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=ink)
+        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(1.6, h / 42))))
         d = ImageDraw.Draw(img)
     _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
     _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost, glow=stage == "done")

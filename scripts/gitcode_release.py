@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 节日到点先「将至」再 3-2-1 后播祝福，没优先也不再突然蹦词"
+RELEASE_NOTE = "- 墨水涟漪重做：宣纸浅底、字左墨右，落墨歪环不再是声呐圈"
 
 
 def sha256_of(path: Path) -> str:
