@@ -35,6 +35,19 @@ def counted_pin_count(cfg: dict) -> int:
     return sum(1 for sid in cfg["pin_order"] if sid not in festival.BONUS_PIN_IDS)
 
 
+def _year_of(raw: object) -> int | None:
+    try:
+        return int(str(raw or "")[:4])
+    except ValueError:
+        return None
+
+
+def _is_stale_year(cur_date: object, target_date: str) -> bool:
+    """节日项是不是「去年残留」。同年内的差异算用户自己改的，不动。"""
+    cur_y, tgt_y = _year_of(cur_date), _year_of(target_date)
+    return cur_y is not None and tgt_y is not None and cur_y < tgt_y
+
+
 def ensure_fields(cfg: dict) -> None:
     if not isinstance(cfg.get("schedules"), list):
         cfg["schedules"] = []
@@ -333,10 +346,9 @@ def _sync_one_festival(
             item["id"] = sid
             cfg["schedules"].append(item)
             changed = True
-        elif str(cur_item.get("date") or "") != date:
-            # 去年残留的节日项：改成今年的日期
+        elif _is_stale_year(cur_item.get("date"), date):
+            # 只有去年残留才滚到今年；时间沿用用户设的那个，不跟着回落默认值
             cur_item["date"] = date
-            cur_item["hm"] = [hour, minute]
             changed = True
         if not cfg.get(f"{sid}_unpinned") and sid not in cfg["pin_order"]:
             pins = cfg["pin_order"]

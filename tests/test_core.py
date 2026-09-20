@@ -123,6 +123,27 @@ class FestivalScheduleTests(unittest.TestCase):
         schedules.sync_festival(cfg, now=datetime(2026, 9, 18))
         self.assertEqual(schedules.find_schedule(cfg, "midautumn")["date"], "2026-09-25")
 
+    def test_user_edited_festival_item_is_kept(self):
+        cfg = self._cfg()
+        schedules.sync_festival(cfg, now=datetime(2026, 9, 18))
+        item = schedules.find_schedule(cfg, "midautumn")
+        item["date"], item["hm"] = "2026-09-26", [21, 30]
+        for day in (19, 20, 21):
+            schedules.sync_festival(cfg, now=datetime(2026, 9, day))
+            item = schedules.find_schedule(cfg, "midautumn")
+            self.assertEqual(item["date"], "2026-09-26")
+            self.assertEqual(item["hm"], [21, 30])
+
+    def test_stale_item_keeps_custom_time(self):
+        cfg = self._cfg()
+        item = schedules.new_clock("中秋", 21, 30, date="2025-10-06")
+        item["id"] = "midautumn"
+        cfg["schedules"].append(item)
+        schedules.sync_festival(cfg, now=datetime(2026, 9, 18))
+        item = schedules.find_schedule(cfg, "midautumn")
+        self.assertEqual(item["date"], "2026-09-25")
+        self.assertEqual(item["hm"], [21, 30])
+
     def test_unknown_year_has_no_midautumn(self):
         self.assertFalse(festival.midautumn_in_season(datetime(2099, 9, 20)))
         self.assertTrue(festival.national_in_season(datetime(2099, 10, 1)))
@@ -381,6 +402,29 @@ class FxTests(unittest.TestCase):
         light = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
         fx.paint_inkpulse(light, 0.4, stage="run", radius=14, light=True)
         self.assertGreater(max(light.getchannel("A").getdata()), 100)
+
+    def test_ridge_ends_return_to_waterline(self):
+        """山脊两端必须收回水线，不然闭合多边形会在纸上留一块灰方板。"""
+        import fx
+
+        base, amp = 80.0, 40.0
+        pts = fx._ridge_poly(10.0, 200.0, base, amp, 1.6, fade_l=0.4, fade_r=0.25)
+        ridge = pts[:-2]
+        self.assertLess(base - ridge[0][1], amp * 0.06)
+        self.assertLess(base - ridge[-1][1], amp * 0.06)
+        self.assertGreater(base - min(p[1] for p in ridge), amp * 0.4)
+        # 不收口的那端应当留在高处（近山要跑出画外）
+        open_end = fx._ridge_poly(10.0, 200.0, base, amp, 5.3, fade_l=0.26, fade_r=0.0)[:-2]
+        self.assertGreater(base - open_end[-1][1], amp * 0.1)
+
+    def test_seal_is_carved(self):
+        """朱印得是白文：朱底上刻出透明笔画，不能是一块实心红方。"""
+        import fx
+
+        seal = fx._seal(22, (190, 52, 38), gain=1.0)
+        alphas = list(seal.getchannel("A").getdata())
+        self.assertGreater(sum(1 for a in alphas if a > 120), 120)
+        self.assertGreater(sum(1 for a in alphas if a == 0), 40)
 
     def test_menu_sections_cover_catalog(self):
         secs = themes.menu_sections()

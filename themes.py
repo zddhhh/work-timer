@@ -492,8 +492,8 @@ def paint_card(
             elif kind == "neonflow":
                 base = (244, 250, 255, 165) if skin_light else (6, 8, 14, 135)
             elif kind == "inkpulse":
-                # 宣纸永远浅底深墨，深色墙纸只是把纸再透一点
-                base = (252, 246, 232, 228) if wallpaper_light else (246, 238, 218, 168)
+                # 宣纸永远浅底深墨。透太狠纸就发灰，山水立刻变脏
+                base = (252, 246, 232, 232) if wallpaper_light else (250, 242, 222, 214)
             else:  # glass
                 base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
             d.rounded_rectangle(box, radius=r, fill=base)
@@ -501,7 +501,7 @@ def paint_card(
                 img,
                 box,
                 kind,
-                light=True if kind == "inkpulse" else skin_light,
+                light=wallpaper_light if kind == "inkpulse" else skin_light,
                 stage=stage,
                 env_rgb=env_rgb,
                 radius=r,
