@@ -32,7 +32,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "nationalday": ("skin_nationalday.png", "skin_nationalday_glow.png"),
 }
 # 不用生图、逐帧程序化绘制的皮
-_PROC_KINDS = frozenset({"neonflow"})
+_PROC_KINDS = frozenset({"neonflow", "inkpulse"})
 
 
 def asset_path(name: str) -> Path:
@@ -248,6 +248,8 @@ def paste_skin(
         layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         if kind == "neonflow":
             fx.paint_neonflow(layer, phase, stage=stage, radius=int(radius), light=light)
+        elif kind == "inkpulse":
+            fx.paint_inkpulse(layer, phase, stage=stage, radius=int(radius), light=light)
         img.alpha_composite(_round_mask(layer, radius), (x0, y0))
         return True
 

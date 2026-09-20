@@ -19,7 +19,7 @@ import store
 
 DEFAULT_THEME_ID = "ghost"
 _KINDS = frozenset(
-    {"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow"}
+    {"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow", "inkpulse"}
 )
 # 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
 _REMOVED_IDS = frozenset({"auto", "sky", "blink"})
@@ -314,7 +314,7 @@ def consume_updated() -> bool:
 
 # 这些皮会随版本改配色/自适应，优先用内置覆盖缓存或在线版本
 _PREFER_BUNDLED = frozenset(
-    {"ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow"}
+    {"ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow", "inkpulse"}
 )
 
 
@@ -491,6 +491,8 @@ def paint_card(
                 base = (56, 8, 12, 140) if skin_light else (40, 6, 10, 50)
             elif kind == "neonflow":
                 base = (244, 250, 255, 165) if skin_light else (6, 8, 14, 135)
+            elif kind == "inkpulse":
+                base = (248, 246, 242, 175) if skin_light else (10, 14, 20, 145)
             else:  # glass
                 base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
             d.rounded_rectangle(box, radius=r, fill=base)
@@ -531,6 +533,12 @@ def paint_card(
         bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
         ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 170))
         img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.5, h / 28))))
+        d = ImageDraw.Draw(img)
+    elif kind == "inkpulse" and big:
+        # 淡墨晕：比霓虹弱一档，像字渗进宣纸
+        bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 90))
+        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.0, h / 36))))
         d = ImageDraw.Draw(img)
     _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
     _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost, glow=stage == "done")

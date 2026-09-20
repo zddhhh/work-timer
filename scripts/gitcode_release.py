@@ -93,7 +93,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 霓虹流光内场补色雾与仪表底（同心弧/刻度/准星游标），不再只有边框有戏"
+RELEASE_NOTE = "- 新特效皮「墨水涟漪」：宣纸底纹 + 落墨涟漪外扩，临近下班偏赭加密，到点静墨晕"
 
 
 def sha256_of(path: Path) -> str:

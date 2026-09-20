@@ -360,13 +360,15 @@ class FxTests(unittest.TestCase):
         import fx
 
         layer = Image.new("RGBA", (248, 92), (160, 20, 24, 255))
-        for ph in (0.0, 0.7, 3.3):
+        for ph in (0.0, 0.7, 3.3, 10.5):
             for st in ("run", "warn", "done", "idle"):
                 fx.paint_national(layer, ph, stage=st, light=(st == "idle"))
                 fx.paint_neonflow(layer, ph, stage=st, radius=14)
+                fx.paint_inkpulse(layer, ph, stage=st, radius=14)
         self.assertEqual(layer.size, (248, 92))
         self.assertTrue(ornaments.has_skin("neonflow"))
-        self.assertTrue(ornaments.is_animated("neonflow"))
+        self.assertTrue(ornaments.has_skin("inkpulse"))
+        self.assertTrue(ornaments.is_animated("inkpulse"))
 
     def test_menu_sections_cover_catalog(self):
         secs = themes.menu_sections()
@@ -377,6 +379,8 @@ class FxTests(unittest.TestCase):
         self.assertIn("ghost", [t.id for t in secs["classic"]])
         self.assertTrue(all(len(t.name) <= 2 for t in secs["classic"]))
         self.assertIn("neonflow", [t.id for t in secs["fancy"]])
+        self.assertIn("inkpulse", [t.id for t in secs["fancy"]])
+        self.assertTrue(all(len(t.name) >= 3 for t in secs["fancy"]))
 
     def test_perimeter_closed(self):
         import fx
