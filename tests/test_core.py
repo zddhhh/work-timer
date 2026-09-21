@@ -441,7 +441,7 @@ class FxTests(unittest.TestCase):
         import fx
 
         mid = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
-        fx.paint_wolf_bite(mid, 0.72, stage="run")
+        fx.paint_wolf_bite(mid, 0.88, stage="run")
         self.assertGreater(sum(1 for a in mid.getchannel("A").getdata() if a > 60), 400)
         for t in (-0.1, fx.WOLF_SEC + 0.08):
             blank = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
@@ -458,8 +458,20 @@ class FxTests(unittest.TestCase):
         peak = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
         calm = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
         fx.paint_thunder_click(peak, 0.35, 120, 46, radius=14, stage="run")
-        fx.paint_thunder_click(calm, 2.20, 120, 46, radius=14, stage="run")
+        fx.paint_thunder_click(calm, 3.00, 120, 46, radius=14, stage="run")
         self.assertGreater(sum(peak.convert("L").getdata()), sum(calm.convert("L").getdata()))
+
+    def test_click_strike_brighter_than_ambient(self):
+        """点击狠雷要比常态落雷亮一截。"""
+        import fx
+
+        bw, bh = 248, 92
+        click = Image.new("RGBA", (bw, bh), (8, 9, 18, 255))
+        fx.paint_thunder_click(click, 0.32, 120, 46, radius=14, stage="run")
+        ambient = Image.new("RGBA", (bw, bh), (8, 9, 18, 255))
+        _a, _c, period, _g = fx._thunder_palette("run")
+        fx.paint_thunder(ambient, period * 2 + 0.12, stage="run", radius=14)
+        self.assertGreater(sum(click.convert("L").getdata()), sum(ambient.convert("L").getdata()) * 1.15)
 
     def test_inkpulse_visible(self):
         import fx

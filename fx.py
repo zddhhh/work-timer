@@ -857,13 +857,13 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
 _STORM_CACHE: dict[tuple, Image.Image] = {}
 _WOLF_CACHE: dict[tuple, Image.Image] = {}
 
-BITE_SEC = 2.85  # 点一下：蓄力→劈到底边→沿边传导一圈→狼钻出→咬一口→退回
-WOLF_AT = 1.48  # 余电将灭时狼才从边上钻出来
+BITE_SEC = 3.55  # 点一下：蓄力→狠雷→劈底→沿边传导→狼钻出→咬一口→退回
+WOLF_AT = 2.05  # 余电快灭尽时狼才从边上钻出来
 CHARGE_END = 0.30
-STRIKE_START = 0.20
-STRIKE_END = 0.62
-CONDUCT_START = 0.52
-CONDUCT_END = 1.52
+STRIKE_START = 0.18
+STRIKE_END = 0.72
+CONDUCT_START = 0.55
+CONDUCT_END = 1.82
 
 
 def _thunder_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
@@ -1133,15 +1133,71 @@ def _strike_env(t: float) -> float:
     if t < STRIKE_START:
         return 0.0
     g = t - STRIKE_START
-    if g < 0.04:
-        return 0.55 * g / 0.04
-    if g < 0.08:
-        return 0.10
-    if g < 0.16:
+    if g < 0.035:
+        return 0.60 * g / 0.035
+    if g < 0.075:
+        return 0.08
+    if g < 0.22:
         return 1.0
     if t < STRIKE_END:
-        return max(0.0, 1.0 - (t - STRIKE_START - 0.16) / (STRIKE_END - STRIKE_START - 0.16)) * 0.92
+        return max(0.0, 1.0 - (t - STRIKE_START - 0.22) / (STRIKE_END - STRIKE_START - 0.22)) * 0.95
     return 0.0
+
+
+def _paint_fierce_strike(
+    bd: ImageDraw.ImageDraw,
+    gd: ImageDraw.ImageDraw,
+    cd: ImageDraw.ImageDraw,
+    *,
+    cx: float,
+    cy: float,
+    hx: float,
+    hy: float,
+    bw: int,
+    bh: int,
+    arc: tuple[int, int, int],
+    env: float,
+    gain: float,
+    scale: float,
+    seed: int,
+) -> None:
+    """点击专属狠雷：比常态落雷更粗更亮——天雷砸落点 + 落点劈底 + 多股分叉。"""
+    fg = gain * 1.72
+    thick = 1.85
+    nxt = _rnd(seed)
+
+    sky_x = cx + (nxt(17) - 8) * scale * 0.35
+    sky = _bolt_pts(seed, sky_x, -5.0, cx, cy, depth=6, jitter=0.34)
+    _draw_bolt(bd, gd, cd, sky, arc, env=env, gain=fg, scale=scale, thick=thick)
+
+    ground = _bolt_pts(seed + 41, cx, cy, hx, hy, depth=6, jitter=0.30)
+    _draw_bolt(bd, gd, cd, ground, arc, env=env, gain=fg * 1.12, scale=scale, thick=thick * 1.08)
+
+    for b, base in enumerate((sky, ground, sky)):
+        ridge = base[:-2] if len(base) > 4 else base
+        i = int(len(ridge) * (0.22 + 0.24 * b))
+        bx, by = ridge[min(i, len(ridge) - 1)]
+        ang = math.radians(-58 + nxt(116)) + (math.pi if b == 2 else 0.0)
+        ln = bh * (0.26 + nxt(26) / 100.0)
+        fork = _bolt_pts(
+            seed + 977 * (b + 1),
+            bx,
+            by,
+            bx + math.cos(ang) * ln,
+            by + abs(math.sin(ang)) * ln,
+            depth=4,
+            jitter=0.38,
+        )
+        _draw_bolt(bd, gd, cd, fork, arc, env=env * 0.84, gain=fg, scale=scale, thick=0.72)
+
+    gr = bh * 0.19
+    bd.ellipse((cx - gr, cy - gr * 0.75, cx + gr, cy + gr * 0.75), fill=(*arc, int(155 * env * fg)))
+    cd.ellipse(
+        (cx - gr * 0.35, cy - gr * 0.3, cx + gr * 0.35, cy + gr * 0.3),
+        fill=(255, 255, 255, int(240 * env)),
+    )
+    gr2 = bh * 0.34
+    bd.ellipse((hx - gr2, hy - gr2 * 0.58, hx + gr2, hy + gr2 * 0.58), fill=(*arc, int(135 * env * fg)))
 
 
 def _conduct_progress(t: float) -> tuple[float, float]:
@@ -1223,10 +1279,10 @@ def paint_strike_conduct(
 
     if env > 0.02:
         seed = 8800 + int(cx) * 3 + int(cy)
-        bolt = _bolt_pts(seed, cx, cy, hx, hy, depth=5, jitter=0.24)
-        _draw_bolt(bd, gd, cd, bolt, arc, env=env, gain=gain * 1.22, scale=scale, thick=1.25)
-        gr = bh * 0.26
-        bd.ellipse((hx - gr, hy - gr * 0.55, hx + gr, hy + gr * 0.55), fill=(*arc, int(110 * env * gain)))
+        _paint_fierce_strike(
+            bd, gd, cd, cx=cx, cy=cy, hx=hx, hy=hy, bw=bw, bh=bh,
+            arc=arc, env=env, gain=gain, scale=scale, seed=seed,
+        )
 
     if cenv > 0.02 and spread > 0.01:
         _total, point = _perimeter(bw, bh, float(radius), 2.0)
@@ -1258,12 +1314,13 @@ def paint_strike_conduct(
                 fill=(255, 255, 255, int(245 * cenv * gain)),
             )
 
-    layer.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(3.5, 7.0 * scale))))
-    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(1.8, 2.6 * scale))))
+    blur_k = 1.35 if env > 0.5 else 1.0
+    layer.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(4.5, 9.5 * scale * blur_k))))
+    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(2.0, 3.2 * scale * blur_k))))
     layer.alpha_composite(core)
-    flash = max(_charge_env(t) * 0.35, env, cenv * 0.8)
+    flash = max(_charge_env(t) * 0.35, env * 1.15, cenv * 0.8)
     if flash > 0.03:
-        top = int(175 * flash * gain)
+        top = int((210 if env > 0.5 else 175) * flash * gain)
         ramp = Image.linear_gradient("L").resize((bw, bh)).point(lambda v: int((255 - v) * top / 255))
         veil = Image.new("RGBA", (bw, bh), (*arc, 0))
         veil.putalpha(ramp)
@@ -1392,34 +1449,34 @@ def paint_wolf_bite(layer: Image.Image, t: float, *, stage: str = "run", light: 
         return
     u = max(0.0, t) / WOLF_SEC
 
-    # 0~0.28 电光凝形，0.28~0.52 扑入，0.52~0.65 咬合，0.65~0.78 咬住，0.78~1 慢慢退回
-    if u < 0.28:
-        k = u / 0.28
+    # 0~0.38 电光凝形，0.38~0.62 扑入，0.62~0.74 咬合，0.74~0.86 咬住，0.86~1 慢慢退回
+    if u < 0.38:
+        k = u / 0.38
         travel = 0.0
-        jaw = int(30 * k)
-        alpha = int(35 + 220 * k)
+        jaw = int(28 * k)
+        alpha = int(28 + 227 * (k ** 1.15))
         electric = True
-    elif u < 0.52:
-        k = (u - 0.28) / 0.24
-        travel = 1.0 - (1.0 - k) ** 2.6
+    elif u < 0.62:
+        k = (u - 0.38) / 0.24
+        travel = 1.0 - (1.0 - k) ** 2.8
         jaw = 34
         alpha = 255
-        electric = k < 0.38
-    elif u < 0.65:
+        electric = k < 0.32
+    elif u < 0.74:
         travel = 1.0
-        jaw = int(34 * (1.0 - (u - 0.52) / 0.13))
+        jaw = int(34 * (1.0 - (u - 0.62) / 0.12))
         alpha = 255
         electric = False
-    elif u < 0.78:
+    elif u < 0.86:
         travel = 1.0
         jaw = 2
         alpha = 255
         electric = False
     else:
-        k = (u - 0.78) / 0.22
-        travel = 1.0 - k ** 1.35
+        k = (u - 0.86) / 0.14
+        travel = 1.0 - k ** 1.25
         jaw = int(8 + 26 * k)
-        alpha = int(255 * (1.0 - k * 0.38))
+        alpha = int(255 * (1.0 - k * 0.35))
         electric = False
 
     x_out, x_in = bw * 1.04, bw - size * 1.82
@@ -1440,8 +1497,8 @@ def paint_wolf_bite(layer: Image.Image, t: float, *, stage: str = "run", light: 
         layer.alpha_composite(glow)
     layer.alpha_composite(head)
 
-    if 0.50 < u < 0.72:
-        k = (u - 0.50) / 0.22
+    if 0.58 < u < 0.80:
+        k = (u - 0.58) / 0.22
         bite_x, bite_y = x + size * 0.15, y + size * 0.51
         halo = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
