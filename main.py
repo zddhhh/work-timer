@@ -1312,6 +1312,8 @@ class WorkTimer:
                 bw=max(1, self._win_w - 9),
                 bh=max(1, self._win_h - 9),
                 radius=rr,
+                phase=now,
+                light=(self._surface == "light"),
             )
             self._last_key = ""
 

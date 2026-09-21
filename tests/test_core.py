@@ -528,14 +528,14 @@ class FxTests(unittest.TestCase):
         import fx
 
         layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-        fx.paint_neon_fire_shot(layer, 0.12, 124, 44, 200, 50, stage="run")
+        fx.paint_neon_fire_shot(layer, 0.12, 124, 44, 200, 50, col=(0, 232, 255), stage="run")
         self.assertGreater(max(layer.getchannel("A").getdata()), 30)
         ammo = fx.create_neon_ammo()
         t0 = 1000.0
-        self.assertTrue(fx.neon_try_fire(ammo, t0, 180, 50, bw=240, bh=84, radius=14))
+        self.assertTrue(fx.neon_try_fire(ammo, t0, 180, 50, bw=240, bh=84, radius=14, phase=t0))
         self.assertEqual(len(ammo.shots), 1)
         self.assertLess(ammo.present[ammo.shots[0][1]], 0.1)
-        fx.neon_tick(ammo, t0 + fx.NEON_GATHER_SEC + fx.NEON_FIRE_SEC + 0.4)
+        fx.neon_tick(ammo, t0 + fx.NEON_FIRE_SEC + 0.4)
         self.assertGreater(ammo.present[ammo.shots[0][1]], 0.2)
 
     def test_inkpulse_visible(self):

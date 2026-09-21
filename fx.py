@@ -284,17 +284,16 @@ def _stage_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, 
     return (0, 232, 255), (255, 60, 200), 9.0, 1.0
 
 
-# ---- 霓虹四弹：边框驻留 → 汇中 → 射击 → 沿边补回
+# ---- 霓虹四弹：四色绕边流光 → 点击缺一颗、中心射出同色弹 → 沿边补回
 
 NEON_BULLETS = 4
-NEON_GATHER_SEC = 0.26
-NEON_FIRE_SEC = 0.32
-NEON_REPLENISH_SEC = 1.22
-NEON_SHOT_SEC = NEON_GATHER_SEC + NEON_FIRE_SEC + NEON_REPLENISH_SEC
+NEON_FIRE_SEC = 0.34
+NEON_REPLENISH_SEC = 1.18
+NEON_SHOT_SEC = NEON_FIRE_SEC + NEON_REPLENISH_SEC
 NEON_CLICK_SEC = NEON_SHOT_SEC
 NEON_RECOIL_SEC = 0.14
 NEON_CLICK_COOLDOWN = 0.16
-NEON_HOME_U = tuple(0.10 + i * 0.22 + _hash01(i + 11, 53) * 0.045 for i in range(NEON_BULLETS))
+NEON_SLOT_OFFSET = tuple(i * 0.25 + _hash01(i + 11, 53) * 0.065 for i in range(NEON_BULLETS))
 
 
 class NeonAmmo:
@@ -320,38 +319,33 @@ def _perim_lerp(u0: float, u1: float, t: float) -> float:
     return (u0 + d * t) % 1.0
 
 
-def _slot_gathering(ammo: NeonAmmo, slot: int, now: float) -> bool:
-    for s, sl, _tx, _ty in ammo.shots:
-        if sl != slot:
-            continue
-        if 0.0 <= now - s < NEON_GATHER_SEC:
-            return True
-    return False
+def _neon_bullet_colors(
+    c1: tuple[int, int, int], c2: tuple[int, int, int], *, light: bool
+) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+    if light:
+        return c1, c2, (255, 138, 48), (168, 92, 255)
+    return c1, c2, (255, 228, 96), (196, 72, 255)
+
+
+def _slot_u(head: float, slot: int) -> float:
+    return (head + NEON_SLOT_OFFSET[slot]) % 1.0
 
 
 def _slot_firing(ammo: NeonAmmo, slot: int, now: float) -> bool:
     for s, sl, _tx, _ty in ammo.shots:
         if sl != slot:
             continue
-        age = now - s
-        if NEON_GATHER_SEC <= age < NEON_GATHER_SEC + NEON_FIRE_SEC:
+        if 0.0 <= now - s < NEON_FIRE_SEC:
             return True
     return False
-
-
-def _shot_for_slot(ammo: NeonAmmo, slot: int, now: float) -> tuple[float, int, float, float] | None:
-    for s, sl, tx, ty in ammo.shots:
-        if sl == slot and now - s < NEON_SHOT_SEC:
-            return (s, sl, tx, ty)
-    return None
 
 
 def neon_tick(ammo: NeonAmmo, now: float) -> None:
     """按时间推进补弹进度并清理过期射击。"""
     for s, slot, _tx, _ty in ammo.shots:
         age = now - s
-        if age > NEON_GATHER_SEC + NEON_FIRE_SEC:
-            rep = min(1.0, (age - NEON_GATHER_SEC - NEON_FIRE_SEC) / NEON_REPLENISH_SEC)
+        if age > NEON_FIRE_SEC:
+            rep = min(1.0, (age - NEON_FIRE_SEC) / NEON_REPLENISH_SEC)
             ammo.present[slot] = max(ammo.present[slot], rep)
     ammo.shots = [(s, sl, tx, ty) for s, sl, tx, ty in ammo.shots if now - s < NEON_SHOT_SEC]
 
@@ -365,22 +359,27 @@ def neon_try_fire(
     bw: int,
     bh: int,
     radius: int,
+    phase: float,
+    stage: str = "run",
+    light: bool = False,
 ) -> bool:
-    """选一颗可用子弹：汇中 → 射向落点。无弹或冷却中则忽略。"""
+    """选一颗绕边流光：边框即时缺位，中心立刻射出同色弹。无弹或冷却中则忽略。"""
     if now - ammo.last_click < NEON_CLICK_COOLDOWN:
         return False
     neon_tick(ammo, now)
     ready: list[int] = []
     for i in range(NEON_BULLETS):
-        if ammo.present[i] >= 0.97 and not _slot_gathering(ammo, i, now) and not _slot_firing(ammo, i, now):
+        if ammo.present[i] >= 0.97 and not _slot_firing(ammo, i, now):
             ready.append(i)
     if not ready:
         return False
     _total, point = _perimeter(bw, bh, float(radius), 1.5)
+    _c1, _c2, period, _gain = _stage_palette(stage, light=light)
+    head = (phase / period) % 1.0
     best = ready[0]
     best_d = 1e18
     for i in ready:
-        hx, hy = point(NEON_HOME_U[i])
+        hx, hy = point(_slot_u(head, i))
         d = (hx - tx) ** 2 + (hy - ty) ** 2
         if d < best_d:
             best_d, best = d, i
@@ -402,33 +401,40 @@ def neon_recoil(now: float, ammo: NeonAmmo) -> tuple[float, float]:
     dx = dy = 0.0
     for s, _sl, _tx, _ty in ammo.shots:
         age = now - s
-        if NEON_GATHER_SEC <= age < NEON_GATHER_SEC + NEON_RECOIL_SEC + 0.06:
-            k = 1.0 - (age - NEON_GATHER_SEC) / (NEON_RECOIL_SEC + 0.06)
+        if age < NEON_RECOIL_SEC + 0.06:
+            k = 1.0 - age / (NEON_RECOIL_SEC + 0.06)
             dx += math.sin(s * 17.3) * 2.4 * k
             dy -= 3.2 * k
     return dx, dy
 
 
-def _draw_neon_bullet(
+def _draw_neon_comet(
     gd: ImageDraw.ImageDraw,
     kd: ImageDraw.ImageDraw,
-    x: float,
-    y: float,
+    point,
+    head_u: float,
     col: tuple[int, int, int],
     *,
+    spacing: float,
+    n_tail: int,
     gain: float,
     scale: float,
     alpha: float = 1.0,
 ) -> None:
     if alpha < 0.04:
         return
-    gr = max(3.5, 6.5 * scale) * alpha
-    cr = max(1.8, 3.2 * scale) * alpha
-    ga = int(150 * gain * alpha)
-    ka = int(255 * gain * alpha)
-    if ga > 3:
-        gd.ellipse((x - gr, y - gr, x + gr, y + gr), fill=(*col, ga))
-    kd.ellipse((x - cr, y - cr, x + cr, y + cr), fill=(255, 255, 255, ka))
+    for k in range(n_tail):
+        u = head_u - k * spacing
+        f = (1.0 - k / n_tail) * alpha
+        px, py = point(u)
+        ga = int(150 * gain * f * f)
+        gr = (3.2 + 4.5 * f) * scale
+        if ga > 3:
+            gd.ellipse((px - gr, py - gr, px + gr, py + gr), fill=(*col, ga))
+        cr = (0.7 + 1.5 * f) * scale
+        ka = int(255 * gain * (0.35 + 0.65 * f))
+        kc = (255, 255, 255) if k == 0 else col
+        kd.ellipse((px - cr, py - cr, px + cr, py + cr), fill=(*kc, ka))
 
 
 def _paint_neon_border_bullets(
@@ -437,47 +443,42 @@ def _paint_neon_border_bullets(
     now: float,
     phase: float,
     point,
-    c1: tuple[int, int, int],
-    c2: tuple[int, int, int],
+    colors: tuple[tuple[int, int, int], ...],
     *,
     gain: float,
     scale: float,
     stage: str,
+    period: float,
 ) -> None:
     bw, bh = layer.size
-    cx, cy = bw * 0.52, bh * 0.48
     glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     gd, kd = ImageDraw.Draw(glow), ImageDraw.Draw(core)
-    wobble = math.sin(phase * 2.1) * 0.004
+    head = (phase / period) % 1.0
+    n_tail = 22
+    spacing = (0.11 if stage != "warn" else 0.14) / n_tail
 
     for i in range(NEON_BULLETS):
-        col = c1 if i % 2 == 0 else c2
-        home_u = (NEON_HOME_U[i] + wobble) % 1.0
-        shot = _shot_for_slot(ammo, i, now)
-        if shot is not None:
-            s, _sl, tx, ty = shot
-            age = now - s
-            if age < NEON_GATHER_SEC:
-                u = _ease_out(age / NEON_GATHER_SEC)
-                bx, by = point(home_u)
-                px = bx + (cx - bx) * u
-                py = by + (cy - by) * u
-                _draw_neon_bullet(gd, kd, px, py, col, gain=gain, scale=scale, alpha=0.92)
-                if u > 0.12:
-                    gd.line((bx, by, px, py), fill=(*col, int(90 * gain * u)), width=max(1, int(round(2.2 * scale))))
-                continue
-            if age < NEON_GATHER_SEC + NEON_FIRE_SEC:
-                continue  # 射击阶段在 overlay 画，边框位空着
-        if ammo.present[i] < 0.97:
-            start_u = (home_u - 0.22) % 1.0
-            u = _perim_lerp(start_u, home_u, _ease_out(ammo.present[i]))
-            px, py = point(u)
-            _draw_neon_bullet(gd, kd, px, py, col, gain=gain, scale=scale * 0.88, alpha=0.75 + 0.25 * ammo.present[i])
+        col = colors[i]
+        hu = _slot_u(head, i)
+        if _slot_firing(ammo, i, now):
             continue
-        px, py = point(home_u)
-        pulse = 0.82 + 0.18 * math.sin(phase * 3.4 + i * 1.3)
-        _draw_neon_bullet(gd, kd, px, py, col, gain=gain, scale=scale, alpha=pulse)
+        if ammo.present[i] < 0.97:
+            goal = hu
+            start_u = (goal - 0.24) % 1.0
+            cu = _perim_lerp(start_u, goal, _ease_out(ammo.present[i]))
+            rep_a = 0.55 + 0.45 * ammo.present[i]
+            _draw_neon_comet(
+                gd, kd, point, cu, col,
+                spacing=spacing * 1.15, n_tail=max(8, n_tail // 2),
+                gain=gain, scale=scale * 0.9, alpha=rep_a,
+            )
+            continue
+        pulse = 0.88 + 0.12 * math.sin(phase * 3.4 + i * 1.3)
+        _draw_neon_comet(
+            gd, kd, point, hu, col,
+            spacing=spacing, n_tail=n_tail, gain=gain, scale=scale, alpha=pulse,
+        )
 
     layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(2.0, 3.0 * scale))))
     layer.alpha_composite(core)
@@ -690,27 +691,21 @@ def paint_neonflow(
         d.line((cx, cy, cx + sx * ln, cy), fill=col, width=wdt)
         d.line((cx, cy, cx, cy + sy * ln), fill=col, width=wdt)
 
-    # 边框：淡环境光带 + 四颗子弹（点击后汇中射击、再沿边补回）
-    total, point = _perimeter(bw, bh, float(radius), 1.5)
-    rim = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    rd = ImageDraw.Draw(rim)
-    head = (phase / period) % 1.0
-    for k in range(12):
-        u = head - k * 0.018
-        f = 1.0 - k / 12.0
-        px, py = point(u)
-        col = c1 if k % 2 == 0 else c2
-        rd.ellipse(
-            (px - 2.5 * scale * f, py - 2.5 * scale * f, px + 2.5 * scale * f, py + 2.5 * scale * f),
-            fill=(*col, int(42 * gain * f * f)),
-        )
-    layer.alpha_composite(rim.filter(ImageFilter.GaussianBlur(radius=max(1.8, 2.4 * scale))))
+    # 边框四颗五色绕边流光；射击时缺一颗，中心射出同色弹后再沿边补回
+    _total, point = _perimeter(bw, bh, float(radius), 1.5)
+    colors = _neon_bullet_colors(c1, c2, light=light)
     if ammo is not None:
         neon_tick(ammo, ammo_now)
-        _paint_neon_border_bullets(layer, ammo, ammo_now, phase, point, c1, c2, gain=gain, scale=scale, stage=stage)
+        _paint_neon_border_bullets(
+            layer, ammo, ammo_now, phase, point, colors,
+            gain=gain, scale=scale, stage=stage, period=period,
+        )
     else:
         idle = create_neon_ammo()
-        _paint_neon_border_bullets(layer, idle, phase, phase, point, c1, c2, gain=gain, scale=scale, stage=stage)
+        _paint_neon_border_bullets(
+            layer, idle, phase, phase, point, colors,
+            gain=gain, scale=scale, stage=stage, period=period,
+        )
 
     # 故障：偶发横带错位；窗口很短，避免像整段动画被重置
     cyc = 7.3 if stage != "warn" else 3.1
@@ -1225,14 +1220,16 @@ def paint_neon_fire_shot(
     tx: float,
     ty: float,
     *,
+    col: tuple[int, int, int],
     stage: str = "run",
     light: bool = False,
 ) -> None:
-    """从中心射向落点的流光（t 为射击阶段内时间 0~NEON_FIRE_SEC）。"""
+    """从中心射向落点的同色流光（t 为射击阶段内时间 0~NEON_FIRE_SEC）。"""
     if t < 0.0 or t > NEON_FIRE_SEC:
         return
     bw, bh = layer.size
-    c1, c2, _period, gain = _stage_palette(stage, light=light)
+    _c1, c2, _period, gain = _stage_palette(stage, light=light)
+    c1 = col
     scale = max(0.7, min(2.4, bh / 92.0))
     prog = min(1.0, t / (NEON_FIRE_SEC * 0.88))
     ease = 1.0 - (1.0 - prog) ** 2.2
@@ -1272,13 +1269,18 @@ def paint_neon_active_shots(
     stage: str = "run",
     light: bool = False,
 ) -> None:
-    """绘制射击阶段的光束（汇中后在 overlay 层）。"""
+    """绘制从中心射出的同色光束（overlay 层）。"""
     bw, bh = layer.size
     ox, oy = bw * 0.52, bh * 0.48
-    for s, _sl, tx, ty in ammo.shots:
+    c1, c2, _period, gain = _stage_palette(stage, light=light)
+    colors = _neon_bullet_colors(c1, c2, light=light)
+    for s, sl, tx, ty in ammo.shots:
         age = now - s
-        if NEON_GATHER_SEC <= age < NEON_GATHER_SEC + NEON_FIRE_SEC:
-            paint_neon_fire_shot(layer, age - NEON_GATHER_SEC, ox, oy, tx, ty, stage=stage, light=light)
+        if age < NEON_FIRE_SEC:
+            paint_neon_fire_shot(
+                layer, age, ox, oy, tx, ty,
+                col=colors[sl], stage=stage, light=light,
+            )
 
 
 # ---------------------------------------------------------------- 霹雳狂潮
