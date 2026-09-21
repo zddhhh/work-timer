@@ -2675,15 +2675,16 @@ class WorkTimer:
             if env is not None:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
             if ornaments.has_skin(theme.kind):
+                anim_stage = ornaments.skin_anim_stage(theme.kind)
                 if theme.kind == "thunder":
                     # 落雷那半秒要满帧，平时只有雨在下
-                    fps = ornaments.thunder_fps(stage, phase)
+                    fps = ornaments.thunder_fps(anim_stage, phase)
                 elif theme.kind in ("neonflow", "inkpulse"):
-                    fps = 30 if stage == "warn" else (16 if stage in ("idle", "done") else 28)
+                    fps = 30 if anim_stage == "warn" else (16 if anim_stage in ("idle", "done") else 28)
                 else:
-                    period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
+                    period = 11.0 if anim_stage == "warn" else (20.0 if anim_stage == "done" else 15.5)
                     sweeping = (phase % period) < 1.95
-                    fps = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
+                    fps = 30 if sweeping else (12 if anim_stage in ("idle", "done") else 24)
                 key = f"{key}-a{int(phase * fps)}"
             elif theme.kind != "ghost":
                 key = f"{key}-p{int(phase * 6)}"

@@ -1756,7 +1756,8 @@ def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, 
     bw, bh = layer.size
     if bw < 40 or bh < 20:
         return
-    arc, cloud, period, gain = _thunder_palette(stage, light=light)
+    # 背景层固定预警红粉雷云（更真实）；点击特效仍可按 stage 变色
+    arc, cloud, period, gain = _thunder_palette("warn", light=light)
     scale = max(0.7, min(2.4, bh / 92.0))
     env = _flash_env(phase % period)
     # 两次落雷之间来一记远处闷雷：只照亮云，不下电
@@ -1777,7 +1778,7 @@ def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, 
         layer,
         phase,
         arc,
-        n=(46 if stage == "warn" else (18 if stage == "idle" else 34)),
+        n=46,
         gain=gain * (1.0 + 1.5 * env),
         scale=scale,
     )
@@ -1795,7 +1796,7 @@ def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, 
     _paint_edge_crawl(
         bd, gd, cd, point, phase, arc,
         gain=gain, scale=scale, n_runners=n_amb, seed=cycle_seed + 3,
-        env=0.42 if stage != "idle" else 0.28, alpha_k=0.55,
+        env=0.42, alpha_k=0.55,
     )
     if env > 0.06:
         n_flash = 5 + nxt_c(4)
@@ -1805,7 +1806,7 @@ def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, 
             env=env, alpha_k=1.15,
         )
 
-    if env > (0.35 if stage == "idle" else 0.01):
+    if env > 0.01:
         seed = cycle_seed
         nxt = nxt_c
         # 主雷落点：左右上缘随机，仍尽量避开左侧大数字区
