@@ -420,36 +420,8 @@ class FxTests(unittest.TestCase):
         self.assertEqual(fx.thunder_fps("run", period * 2 + 0.12), 60)
         self.assertLess(fx.thunder_fps("run", period * 2 + 1.5), 30)
 
-    def test_wolf_jaw_opens_downward(self):
-        """下颌绕关节转的方向极易搞反：张口时下巴必须往下走，不能把嘴掀上天。"""
-        import fx
-
-        def chin_y(jaw):
-            head = fx._wolf_head(120, jaw, (176, 228, 255), gain=1.0)
-            a = head.getchannel("A")
-            # 只看吻部那一段（局部 x 10~50），颈背会一直顶到画布底
-            ys = [y for y in range(head.height) for x in range(12, 60) if a.getpixel((x, y)) > 100]
-            return max(ys), min(ys)
-
-        closed_low, closed_top = chin_y(0)
-        open_low, open_top = chin_y(32)
-        self.assertGreater(open_low, closed_low + 4)
-        self.assertLessEqual(closed_top, open_top + 2)  # 上颌不该跟着动
-
-    def test_wolf_bite_window(self):
-        """狼段只在 WOLF_SEC 内画，越界必须什么都不留。"""
-        import fx
-
-        mid = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
-        fx.paint_wolf_bite(mid, 0.88, stage="run")
-        self.assertGreater(sum(1 for a in mid.getchannel("A").getdata() if a > 60), 400)
-        for t in (-0.1, fx.WOLF_SEC + 0.08):
-            blank = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
-            fx.paint_wolf_bite(blank, t, stage="run")
-            self.assertEqual(max(blank.getchannel("A").getdata()), 0, t)
-
     def test_click_strike_reaches_border(self):
-        """点一下：落点→边框要有亮线，不能只有狼没有雷。"""
+        """点一下：落点→边框要有亮线传导。"""
         import fx
 
         layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
@@ -458,7 +430,7 @@ class FxTests(unittest.TestCase):
         peak = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
         calm = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
         fx.paint_thunder_click(peak, 0.35, 120, 46, radius=14, stage="run")
-        fx.paint_thunder_click(calm, 3.00, 120, 46, radius=14, stage="run")
+        fx.paint_thunder_click(calm, 2.60, 120, 46, radius=14, stage="run")
         self.assertGreater(sum(peak.convert("L").getdata()), sum(calm.convert("L").getdata()))
 
     def test_click_strike_brighter_than_ambient(self):

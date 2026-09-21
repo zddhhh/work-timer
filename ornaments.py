@@ -244,7 +244,7 @@ def paint_bite(
     cx: int | None = None,
     cy: int | None = None,
 ) -> None:
-    """点一下：劈雷→沿边传导→狼从余电里钻出来。画在文字之上，吃圆角蒙版。"""
+    """点一下：劈雷→沿边电涌绕一圈。画在文字之上，吃圆角蒙版。"""
     x0, y0, x1, y1 = box
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))

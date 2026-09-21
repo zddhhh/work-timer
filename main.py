@@ -1268,11 +1268,11 @@ class WorkTimer:
                 self._last_pin_rotate = time.monotonic()
 
     def _maybe_bite(self, lx: int, ly: int) -> None:
-        """雷霆皮点一下：先劈到边框、电光沿边传导，快灭时狼从电里钻出来。"""
+        """雷霆皮点一下：蓄力→狠雷劈底→沿边电涌绕一圈。"""
         if self._theme().kind != "thunder":
             return
         now = time.monotonic()
-        if now < self._bite_until:  # 上一口还没咬完，别打断
+        if now < self._bite_until:  # 上一记雷还没跑完，别打断
             return
         self._bite_start = now
         self._bite_until = now + ornaments.BITE_SEC
