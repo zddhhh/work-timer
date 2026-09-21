@@ -857,19 +857,20 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
 _STORM_CACHE: dict[tuple, Image.Image] = {}
 _WOLF_CACHE: dict[tuple, Image.Image] = {}
 
-BITE_SEC = 1.05  # 点一下的互动时长，main 里用它定重绘窗口
+BITE_SEC = 1.55  # 点一下：劈雷→沿边传导→狼钻出→咬一口→退回
+WOLF_AT = 0.52  # 余电快灭时狼才从边上钻出来
 
 
 def _thunder_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
     """(电弧色, 雷云色, 落雷周期秒, 增益)"""
     gain = 0.86 if light else 1.0
     if stage == "warn":
-        return (255, 128, 214), (92, 34, 82), 2.5, gain
+        return (255, 128, 214), (92, 34, 82), 1.7, gain
     if stage == "done":
-        return (130, 255, 205), (30, 72, 66), 7.5, gain * 0.8
+        return (130, 255, 205), (30, 72, 66), 5.5, gain * 0.8
     if stage == "idle":
-        return (158, 194, 255), (40, 48, 78), 9.0, gain * 0.62
-    return (176, 228, 255), (48, 60, 96), 4.6, gain
+        return (158, 194, 255), (40, 48, 78), 6.5, gain * 0.66
+    return (176, 228, 255), (48, 60, 96), 2.9, gain
 
 
 def _storm(bw: int, bh: int, cloud: tuple[int, int, int], *, gain: float) -> Image.Image:
@@ -1005,7 +1006,15 @@ def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, 
         lit.putalpha(drift.getchannel("A").point(lambda v: int(v * 0.85 * lit_k)))
         layer.alpha_composite(lit)
 
-    _rain(layer, phase, arc, n=(34 if stage == "warn" else (14 if stage == "idle" else 24)), gain=gain, scale=scale)
+    # 雷一亮，雨丝跟着被照亮——这一下比单纯加白纱更像暴雨
+    _rain(
+        layer,
+        phase,
+        arc,
+        n=(46 if stage == "warn" else (18 if stage == "idle" else 34)),
+        gain=gain * (1.0 + 1.5 * env),
+        scale=scale,
+    )
 
     bloom_im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     glow_im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
@@ -1070,7 +1079,7 @@ def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, 
             layer.alpha_composite(flash)
 
 
-# ---- 点一下：恶狼扑出来咬一口 ----
+# ---- 点一下：劈到边框 → 沿边传导 → 狼从余电里钻出来 ----
 
 def thunder_fps(stage: str, phase: float) -> int:
     """落雷那半秒要 60Hz 才看得出虚闪—主放电的节奏；其余时间只有边缘电弧在爬，十几帧够了。"""
@@ -1080,12 +1089,135 @@ def thunder_fps(stage: str, phase: float) -> int:
     return 14 if stage in ("idle", "done") else 18
 
 
-def _wolf_head(size: int, jaw: int, arc: tuple[int, int, int], *, gain: float) -> Image.Image:
-    """侧面狼头剪影，朝左。jaw 是下颌张开度数（按档缓存）。
+def _perim_u_at(bw: int, bh: int, r: float, x: float, y: float) -> tuple[float, float, float]:
+    """点击处离边框最近的一点：返回 (周长参数 u, px, py)。"""
+    _total, point = _perimeter(bw, bh, r, 2.0)
+    best_u, best_d, best_p = 0.0, 1e18, (0.0, 0.0)
+    for i in range(72):
+        u = i / 72.0
+        px, py = point(u)
+        d = (px - x) ** 2 + (py - y) ** 2
+        if d < best_d:
+            best_d, best_u, best_p = d, u, (px, py)
+    return best_u, best_p[0], best_p[1]
 
-    画布 (2·size)×size 对应 200×100 的局部坐标：头在左边 4~100，颈背拖到
-    右边缘，这样贴到卡上时身子始终连着卡片外，不会变成一颗飘着的头。
-    小尺寸认不出细节，形靠三样东西：立耳、脑门到吻的折角、张口的獠牙。"""
+
+def _conduct_env(t: float) -> float:
+    """沿边传导：先猛亮，再拖尾，最后只剩一点余烬。"""
+    if t < 0.04:
+        return t / 0.04
+    if t < 0.14:
+        return 1.0
+    if t < 0.38:
+        return max(0.0, 1.0 - (t - 0.14) / 0.24) ** 0.85
+    return max(0.0, 0.22 - (t - 0.38) / 0.22)
+
+
+def _strike_env(t: float) -> float:
+    if t < 0.03:
+        return 0.55
+    if t < 0.06:
+        return 0.10
+    if t < 0.12:
+        return 1.0
+    if t < 0.22:
+        return max(0.0, 1.0 - (t - 0.12) / 0.10) * 0.9
+    return 0.0
+
+
+def paint_strike_conduct(
+    layer: Image.Image,
+    t: float,
+    cx: float,
+    cy: float,
+    *,
+    radius: int,
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    """点击触发：从落点劈到边框，再沿圆角矩形边框传导一段电光。"""
+    bw, bh = layer.size
+    if bw < 40 or bh < 20 or t < 0.0 or t > 0.58:
+        return
+    arc, _cloud, _period, gain = _thunder_palette(stage, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    hit_u, hx, hy = _perim_u_at(bw, bh, float(radius), cx, cy)
+    env = _strike_env(t)
+    cenv = _conduct_env(max(0.0, t - 0.10))
+
+    bloom = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    bd, gd, cd = ImageDraw.Draw(bloom), ImageDraw.Draw(glow), ImageDraw.Draw(core)
+
+    if env > 0.02:
+        seed = 8800 + int(hit_u * 1000)
+        bolt = _bolt_pts(seed, cx, cy, hx, hy, depth=4, jitter=0.22)
+        _draw_bolt(bd, gd, cd, bolt, arc, env=env, gain=gain * 1.15, scale=scale, thick=1.15)
+        gr = bh * 0.22
+        bd.ellipse((hx - gr, hy - gr * 0.55, hx + gr, hy + gr * 0.55), fill=(*arc, int(95 * env * gain)))
+
+    if cenv > 0.02:
+        _total, point = _perimeter(bw, bh, float(radius), 2.0)
+        spread = min(0.62, 0.08 + (t - 0.10) * 1.35)
+        n_seg = max(14, int(spread * 48))
+        for k in range(2):
+            pts: list[tuple[float, float]] = []
+            for i in range(n_seg + 1):
+                u = (hit_u + k * 0.11 + (i / n_seg) * spread) % 1.0
+                px, py = point(u)
+                ax, ay = point((u + 0.003) % 1.0)
+                tx, ty = ax - px, ay - py
+                ln = math.hypot(tx, ty) or 1.0
+                fade = (1.0 - i / max(1, n_seg)) ** 0.55
+                amp = ((int(t * 34) + i * 5 + k * 17) % 7 - 3) * 0.85 * scale * fade
+                pts.append((px - ty / ln * amp, py + tx / ln * amp))
+            e = cenv * (0.92 if k == 0 else 0.62)
+            bd.line(pts, fill=(*arc, int(78 * gain * e)), width=max(3, int(round(6.5 * scale))), joint="curve")
+            gd.line(pts, fill=(*arc, int(175 * gain * e)), width=max(2, int(round(2.8 * scale))), joint="curve")
+            cd.line(pts, fill=(244, 252, 255, int(220 * gain * e)), width=1, joint="curve")
+        # 传导前沿再亮一圈
+        head_u = (hit_u + spread) % 1.0
+        hx2, hy2 = point(head_u)
+        hr = max(2.5, 4.5 * scale)
+        gd.ellipse((hx2 - hr, hy2 - hr, hx2 + hr, hy2 + hr), fill=(*arc, int(200 * cenv * gain)))
+        cd.ellipse((hx2 - hr * 0.45, hy2 - hr * 0.45, hx2 + hr * 0.45, hy2 + hr * 0.45), fill=(255, 255, 255, int(240 * cenv * gain)))
+
+    layer.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(3.5, 6.5 * scale))))
+    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(1.6, 2.4 * scale))))
+    layer.alpha_composite(core)
+    flash = max(env, cenv * 0.85)
+    if flash > 0.03:
+        top = int(165 * flash * gain)
+        ramp = Image.linear_gradient("L").resize((bw, bh)).point(lambda v: int((255 - v) * top / 255))
+        veil = Image.new("RGBA", (bw, bh), (*arc, 0))
+        veil.putalpha(ramp)
+        layer.alpha_composite(veil)
+
+
+def paint_thunder_click(
+    layer: Image.Image,
+    t: float,
+    cx: float,
+    cy: float,
+    *,
+    radius: int,
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    """整段点击互动：先劈雷传导，余电将灭时狼才钻出来。"""
+    if t < 0.0 or t > BITE_SEC:
+        return
+    paint_strike_conduct(layer, t, cx, cy, radius=radius, stage=stage, light=light)
+    if t >= WOLF_AT - 0.04:
+        paint_wolf_bite(layer, t - WOLF_AT, stage=stage, light=light)
+
+
+def _wolf_head(size: int, jaw: int, arc: tuple[int, int, int], *, gain: float) -> Image.Image:
+    """侧面狼头，朝左。jaw 是下颌张开度数（按档缓存）。
+
+    画布 (2·size)×size：头在左、颈背拖到右外，贴卡时身子连着卡片外。
+    背深腹浅、吻部折角、口内暗红，小尺寸也比纯剪影多几分「狼相」。"""
     key = (size, jaw, arc, int(gain * 20))
     got = _WOLF_CACHE.get(key)
     if got is not None:
@@ -1098,41 +1230,50 @@ def _wolf_head(size: int, jaw: int, arc: tuple[int, int, int], *, gain: float) -
     def P(pts):
         return [(x * u, y * u) for x, y in pts]
 
-    body = (21, 24, 36, 250)
-    rim = (*arc, int(225 * gain))
-    tooth = (242, 248, 254, 252)
-    hinge = (72.0, 53.0)
+    dark = (16, 18, 28, 252)
+    mid = (28, 32, 46, 250)
+    cheek = (38, 42, 58, 248)
+    rim = (*arc, int(228 * gain))
+    tooth = (248, 252, 255, 255)
+    mouth_in = (72, 28, 32, 210)
+    hinge = (73.0, 53.0)
 
     def ear(pts):
-        d.polygon(P(pts), fill=body)
+        d.polygon(P(pts), fill=mid)
         d.line(P(pts + (pts[0],)), fill=rim, width=lw, joint="curve")
 
-    # 鬃背：一撮撮斜倒向后，幅度参差且压得很平。齿高一点就成了剑龙脊
     back: list[tuple[float, float]] = []
-    bx, by = 90.0, 33.0
-    for i in range(12):
+    bx, by = 92.0, 34.0
+    for i in range(10):
         back.append((bx, by))
-        back.append((bx + 3.0, by - (2.6 + (i * 7 % 5) * 0.5)))
-        bx, by = bx + 8.4, by + 1.6
-    back.append((200.0, 53.0))
+        back.append((bx + 2.8, by - (2.2 + (i * 5 % 4) * 0.45)))
+        bx, by = bx + 9.6, by + 1.7
+    back.append((200.0, 52.0))
 
-    # 头骨 + 上颌 + 颈背连到画布右边缘
     top = [
-        (3, 43), (10, 36), (22, 31), (34, 27), (44, 25),  # 吻背，到额段折角
-        (52, 22), (64, 20), (78, 24), (90, 33),  # 脑门、颅顶、后脑
+        (2, 44), (8, 37), (18, 32), (30, 28), (42, 25),
+        (54, 21), (66, 18), (78, 22), (90, 32),
     ] + back
-    lip = [(hinge[0], hinge[1] + 1), (52, 51), (32, 50), (10, 47)]
-    d.polygon(P(top + [(200, 100), (72, 100), (66, 74)] + lip), fill=body)
+    lip = [(hinge[0], hinge[1] + 1), (54, 51), (34, 50), (12, 47), (8, 44)]
+    d.polygon(P(top + [(200, 100), (74, 100), (68, 76)] + lip), fill=dark)
+    # 颊部浅一层，头才立体
+    cheek_pts = [(18, 32), (30, 28), (42, 25), (54, 21), (66, 18), (78, 22), (68, 76), (34, 50), (12, 47)]
+    d.polygon(P(cheek_pts), fill=cheek)
     d.line(P(top), fill=rim, width=lw, joint="curve")
-    d.line(P(lip), fill=(*arc, int(150 * gain)), width=max(1, lw - 1), joint="curve")
-    # 只留一只近耳：两只并排在小尺寸下会连成一个王冠，认不出是狼
-    ear(((59, 22), (69, 2), (82, 26)))
+    d.line(P(lip), fill=(*arc, int(140 * gain)), width=max(1, lw - 1), joint="curve")
+    # 吻脊
+    d.line(P([(8, 37), (18, 32), (30, 28), (42, 25)]), fill=(*arc, int(90 * gain)), width=1, joint="curve")
+    ear(((61, 21), (70, 1), (84, 24)))
 
-    # 上排獠牙：门牙后那对犬齿最长
-    for fx0, fw, fl in ((9, 5.0, 14), (21, 4.2, 9), (33, 3.4, 6), (45, 3.0, 5)):
+    # 颈毛：短笔触，别画成剑龙
+    for i in range(8):
+        sx = 96 + i * 11
+        sy = 34 + i * 1.5
+        d.line(P(((sx, sy), (sx + 4, sy - 3), (sx + 7, sy + 1))), fill=(*arc, int(70 * gain)), width=1)
+
+    for fx0, fw, fl in ((10, 4.8, 15), (22, 4.0, 10), (34, 3.4, 7), (46, 3.0, 5)):
         d.polygon(P(((fx0, 48), (fx0 + fw, 48.5), (fx0 + fw * 0.5, 48 + fl))), fill=tooth)
 
-    # 下颌绕关节往下转（负角：前端 x 比关节小，正角会把嘴掀到天上）
     rad = math.radians(-jaw)
     cos, sin = math.cos(rad), math.sin(rad)
 
@@ -1140,76 +1281,106 @@ def _wolf_head(size: int, jaw: int, arc: tuple[int, int, int], *, gain: float) -
         dx, dy = p[0] - hinge[0], p[1] - hinge[1]
         return (hinge[0] + dx * cos - dy * sin, hinge[1] + dx * sin + dy * cos)
 
-    jaw_top = [(70, 54), (52, 55), (30, 53), (10, 50)]
-    lower = jaw_top + [(12, 59), (32, 64), (56, 65), (70, 61)]
-    d.polygon(P([rot(p) for p in lower]), fill=body)
-    # 只描下颌的下缘和下巴：整圈描边会变成嘴下面浮着一条小船
+    jaw_top = [(71, 54), (54, 55), (32, 53), (12, 50)]
+    lower = jaw_top + [(14, 60), (34, 65), (58, 66), (72, 62)]
+    d.polygon(P([rot(p) for p in lower]), fill=mid)
+    if jaw > 8:
+        inner = [(rot(p)[0], rot(p)[1]) for p in jaw_top] + [(rot(p)[0], rot(p)[1]) for p in reversed(jaw_top[:2])]
+        d.polygon(P(inner), fill=mouth_in)
     d.line(P([rot(p) for p in lower[3:]]), fill=rim, width=max(1, lw - 1), joint="curve")
-    for fx0, fw, fl in ((14, 4.6, 12), (26, 3.8, 8), (38, 3.2, 6)):
+    for fx0, fw, fl in ((15, 4.4, 13), (27, 3.6, 9), (39, 3.0, 6)):
         tri = ((fx0, 53), (fx0 + fw, 53.5), (fx0 + fw * 0.5, 53 - fl))
         d.polygon(P([rot(p) for p in tri]), fill=tooth)
 
-    # 眼：一枚朝前挑的尖角，尖头对着鼻子就是凶相；眉骨再压一道
-    ex, ey = 55.0, 31.0
-    d.polygon(P(((ex - 6, ey + 2.2), (ex + 4, ey - 1.6), (ex + 4.6, ey + 2.4))), fill=(*arc, 255))
-    d.line(P(((ex - 7, ey - 2), (ex + 6, ey - 4.5))), fill=rim, width=max(1, lw - 1))
-    return _cache_put(_WOLF_CACHE, key, im, cap=24)
+    # 眼 + 眉骨：细长斜眼，尖头朝吻
+    ex, ey = 56.0, 30.0
+    d.polygon(P(((ex - 7, ey + 2), (ex + 5, ey - 2), (ex + 5.5, ey + 2.5))), fill=(12, 14, 20, 255))
+    d.polygon(P(((ex - 4, ey + 0.5), (ex + 3, ey - 1.2), (ex + 3.2, ey + 1.2))), fill=(*arc, 255))
+    d.ellipse(((ex - 0.3) * u, (ey - 0.4) * u, (ex + 1.2) * u, (ey + 1.0) * u), fill=(255, 255, 255, 255))
+    d.line(P(((ex - 8, ey - 3), (ex + 7, ey - 5.5))), fill=rim, width=max(1, lw - 1))
+    # 鼻尖
+    d.ellipse(((8.5) * u, (44.5) * u, (12.5) * u, (47.5) * u), fill=(22, 24, 34, 230))
+    return _cache_put(_WOLF_CACHE, key, im, cap=28)
+
+
+WOLF_SEC = BITE_SEC - WOLF_AT  # 狼段时长，供 paint_wolf_bite 归一化
 
 
 def paint_wolf_bite(layer: Image.Image, t: float, *, stage: str = "run", light: bool = False) -> None:
-    """点一下：恶狼从右边扑进来，张口—咬合—带着电火花退回去。t 从 0 起算秒。"""
+    """余电将灭时从右边钻出：先电光轮廓凝实，再扑入—咬合—退回。t 从 WOLF_AT 起算。"""
     bw, bh = layer.size
-    if bw < 40 or bh < 20 or t < 0.0 or t > BITE_SEC:
+    if bw < 40 or bh < 20 or t < -0.04 or t > WOLF_SEC + 0.05:
         return
     arc, _cloud, _period, gain = _thunder_palette(stage, light=light)
-    size = int(bh * 1.06)
+    size = int(bh * 1.12)
     if size < 24:
         return
-    u = t / BITE_SEC
+    u = max(0.0, t) / WOLF_SEC
 
-    # 0~0.30 扑入（减速到位），0.30~0.42 咬合，0.42~0.58 咬住，0.58~1 退回
-    if u < 0.30:
-        k = u / 0.30
-        travel = 1.0 - (1.0 - k) ** 2.2
+    # 0~0.18 电光里凝形，0.18~0.38 扑入，0.38~0.48 咬合，0.48~0.58 咬住，0.58~1 退回
+    if u < 0.18:
+        k = u / 0.18
+        travel = 0.0
+        jaw = int(28 * k)
+        alpha = int(40 + 215 * k)
+        electric = True
+    elif u < 0.38:
+        k = (u - 0.18) / 0.20
+        travel = 1.0 - (1.0 - k) ** 2.4
         jaw = 34
-    elif u < 0.42:
+        alpha = 255
+        electric = k < 0.35
+    elif u < 0.48:
         travel = 1.0
-        jaw = int(34 * (1.0 - (u - 0.30) / 0.12))
+        jaw = int(34 * (1.0 - (u - 0.38) / 0.10))
+        alpha = 255
+        electric = False
     elif u < 0.58:
         travel = 1.0
         jaw = 2
+        alpha = 255
+        electric = False
     else:
         k = (u - 0.58) / 0.42
         travel = 1.0 - k * k
-        jaw = int(6 + 22 * k)
+        jaw = int(6 + 24 * k)
+        alpha = int(255 * (1.0 - k * 0.35))
+        electric = False
 
-    # 从右边缘外扑进来咬住大数字；身子那半张画布始终压在卡片右边
-    x_out, x_in = bw * 1.02, bw - size * 1.85
+    x_out, x_in = bw * 1.04, bw - size * 1.82
     x = x_out + (x_in - x_out) * travel
-    y = bh * 0.5 - size * 0.5 + bh * 0.07 * (1.0 - travel)
-    jaw_q = max(0, min(36, int(round(jaw / 4.0)) * 4))  # 按 4 度一档，缓存才有意义
-    # paste 容得下负坐标（alpha_composite 不行），狼头才能有一半挂在卡片外
+    y = bh * 0.5 - size * 0.48 + bh * 0.08 * (1.0 - travel)
+    jaw_q = max(0, min(36, int(round(jaw / 4.0)) * 4))
+    head_im = _wolf_head(size, jaw_q, arc, gain=gain)
+    if alpha < 255:
+        head_im = head_im.copy()
+        a = head_im.getchannel("A").point(lambda v: int(v * alpha / 255))
+        head_im.putalpha(a)
     head = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    head.paste(_wolf_head(size, jaw_q, arc, gain=gain), (int(x), int(y)))
+    head.paste(head_im, (int(x), int(y)))
+    if electric:
+        glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        glow.paste(head_im, (int(x), int(y)))
+        glow = glow.filter(ImageFilter.GaussianBlur(radius=max(2.0, bh / 28)))
+        layer.alpha_composite(glow)
     layer.alpha_composite(head)
 
-    # 咬合瞬间：白闪 + 牙口处炸几点电火花
-    if 0.36 < u < 0.52:
-        k = (u - 0.36) / 0.16
-        bite_x, bite_y = x + size * 0.16, y + size * 0.52
+    if 0.44 < u < 0.58:
+        k = (u - 0.44) / 0.14
+        bite_x, bite_y = x + size * 0.15, y + size * 0.51
         halo = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         hd, cd = ImageDraw.Draw(halo), ImageDraw.Draw(core)
         nxt = _rnd(7717)
-        for _i in range(10):
+        for _i in range(12):
             ang = math.radians(nxt(360))
-            dist = (6 + nxt(16)) * (0.3 + k * 2.0)
+            dist = (8 + nxt(18)) * (0.4 + k * 2.2)
             px, py = bite_x + math.cos(ang) * dist, bite_y + math.sin(ang) * dist
-            pr = max(0.9, (2.8 - k * 1.9) * (bh / 92.0))
-            hd.ellipse((px - pr * 2.2, py - pr * 2.2, px + pr * 2.2, py + pr * 2.2), fill=(*arc, int(150 * (1.0 - k))))
-            cd.ellipse((px - pr, py - pr, px + pr, py + pr), fill=(250, 254, 255, int(250 * (1.0 - k))))
-        layer.alpha_composite(halo.filter(ImageFilter.GaussianBlur(radius=max(1.5, bh / 36))))
+            pr = max(1.0, (3.2 - k * 2.0) * (bh / 92.0))
+            hd.ellipse((px - pr * 2.4, py - pr * 2.4, px + pr * 2.4, py + pr * 2.4), fill=(*arc, int(170 * (1.0 - k))))
+            cd.ellipse((px - pr, py - pr, px + pr, py + pr), fill=(255, 255, 255, int(255 * (1.0 - k))))
+        layer.alpha_composite(halo.filter(ImageFilter.GaussianBlur(radius=max(1.8, bh / 32))))
         layer.alpha_composite(core)
-        veil = int(54 * (1.0 - k) * gain)
+        veil = int(62 * (1.0 - k) * gain)
         if veil > 2:
             layer.alpha_composite(Image.new("RGBA", (bw, bh), (255, 255, 255, veil)))

@@ -241,12 +241,22 @@ def paint_bite(
     stage: str = "run",
     light: bool = False,
     radius: int = 0,
+    cx: int | None = None,
+    cy: int | None = None,
 ) -> None:
-    """点一下扑出来的恶狼。画在文字之上，同样吃圆角蒙版，免得糊出卡片边。"""
+    """点一下：劈雷→沿边传导→狼从余电里钻出来。画在文字之上，吃圆角蒙版。"""
     x0, y0, x1, y1 = box
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    fx.paint_wolf_bite(layer, t, stage=stage, light=light)
+    fx.paint_thunder_click(
+        layer,
+        t,
+        cx if cx is not None else bw // 2,
+        cy if cy is not None else bh // 2,
+        stage=stage,
+        light=light,
+        radius=int(radius),
+    )
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
 
 

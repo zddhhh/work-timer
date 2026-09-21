@@ -228,21 +228,24 @@ def _pack_full_text(
     wrap_px: int = 400,
     max_px: int = 420,
 ) -> None:
-    """更新说明正文：Label 按内容自然撑高；仅当总高超过 max_px 才出滚动，窗口与文字贴合。"""
+    """更新说明正文：先量高度再决定直铺还是滚动。
+
+    正文 Frame 不能挂在 Canvas 上当 parent——那样 create_window 之前 winfo_reqheight
+    量不准，canvas 高度又按 max_px 撑开，用户就看到「只有标题、下面一大片空白」。
+    """
     wrap_px = max(160, int(wrap_px))
     max_px = max(80, int(max_px))
-    outer = tk.Frame(parent, bg=_CARD_BG)
-    # 只横向填满，不 expand 纵向——避免 Text/Frame 把卡片撑出大片空白
-    outer.pack(fill="x", padx=18, pady=(10, 0))
+    slot = tk.Frame(parent, bg=_CARD_BG)
+    slot.pack(fill="x", padx=18, pady=(10, 0))
 
-    inner = tk.Frame(outer, bg=_CARD_BG)
+    content = tk.Frame(slot, bg=_CARD_BG)
     f_head = ("Microsoft YaHei UI", 11, "bold")
     f_body = ("Microsoft YaHei UI", 10)
     for i, (ver, body) in enumerate(sections):
         if i:
-            tk.Frame(inner, bg=_CARD_BG, height=12).pack(fill="x")
+            tk.Frame(content, bg=_CARD_BG, height=12).pack(fill="x")
         tk.Label(
-            inner,
+            content,
             text=ver,
             fg=_CARD_FG,
             bg=_CARD_BG,
@@ -250,43 +253,50 @@ def _pack_full_text(
             anchor="w",
             justify="left",
         ).pack(anchor="w", fill="x")
-        tk.Label(
-            inner,
-            text=(body or "").strip(),
-            fg="#c8ceda",
-            bg=_CARD_BG,
-            font=f_body,
-            wraplength=wrap_px,
-            justify="left",
-            anchor="nw",
-        ).pack(anchor="w", fill="x", pady=(4, 0))
+        txt = (body or "").strip()
+        if txt:
+            tk.Label(
+                content,
+                text=txt,
+                fg="#c8ceda",
+                bg=_CARD_BG,
+                font=f_body,
+                wraplength=wrap_px,
+                justify="left",
+                anchor="nw",
+            ).pack(anchor="w", fill="x", pady=(4, 0))
 
-    inner.update_idletasks()
-    need = max(1, int(inner.winfo_reqheight()))
+    content.update_idletasks()
+    need = max(1, int(content.winfo_reqheight()))
     if need <= max_px:
-        inner.pack(anchor="w", fill="x")
+        content.pack(anchor="nw", fill="x")
         return
 
+    outer = tk.Frame(slot, bg=_CARD_BG)
+    outer.pack(fill="x")
     canvas = tk.Canvas(
-        outer,
-        height=max_px,
-        bg=_CARD_BG,
-        highlightthickness=0,
-        bd=0,
-        relief="flat",
+        outer, bg=_CARD_BG, highlightthickness=0, bd=0, relief="flat", width=wrap_px, height=max_px
     )
     sb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview, width=10)
     canvas.configure(yscrollcommand=sb.set)
     sb.pack(side="right", fill="y", padx=(4, 0))
     canvas.pack(side="left", fill="x", expand=True)
+    step = max(1, int(need / 24))
 
-    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+    def _wheel(event) -> None:
+        canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    canvas.configure(yscrollincrement=step)
+    canvas.bind_all("<MouseWheel>", _wheel, add="+")
+    canvas.bind("<Destroy>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+
+    win_id = canvas.create_window((0, 0), window=content, anchor="nw", width=wrap_px)
 
     def _sync(_event=None) -> None:
         canvas.itemconfigure(win_id, width=max(wrap_px, int(canvas.winfo_width()) or wrap_px))
         canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, wrap_px, need))
 
-    inner.bind("<Configure>", _sync)
+    content.bind("<Configure>", _sync)
     canvas.bind("<Configure>", _sync)
     _sync()
 
@@ -811,6 +821,8 @@ class WorkTimer:
         self._celebrate_until = 0.0
         self._bite_start = 0.0
         self._bite_until = 0.0
+        self._bite_x = 0
+        self._bite_y = 0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -1230,7 +1242,7 @@ class WorkTimer:
         max_px = max(120, min(480, work_h - 200))
         wrap_px = card_w - 36  # 与 outer padx=18*2 对齐
         _pack_full_text(dlg, sections, wrap_px=wrap_px, max_px=max_px)
-        _fit_card(dlg, min_w=card_w, min_h=160, near=near)
+        _fit_card(dlg, min_w=card_w, min_h=120, near=near)
         _run_card_modal(dlg, self.win)
 
     def _on_click(self, lx: int, ly: int) -> None:
@@ -1241,7 +1253,7 @@ class WorkTimer:
             self._kinetic = None
             self._last_key = ""
             return
-        self._maybe_bite()
+        self._maybe_bite(lx, ly)
         schedules.ensure_fields(self.cfg)
         aid = schedules.active_id(self.cfg)
         # 下班项空闲「点我开始」始终进设置，不要被多日程轮换抢走
@@ -1255,8 +1267,8 @@ class WorkTimer:
                 self._last_key = ""
                 self._last_pin_rotate = time.monotonic()
 
-    def _maybe_bite(self) -> None:
-        """雷霆皮点一下，扑一只狼出来咬一口。别的皮没这动作，点击照旧。"""
+    def _maybe_bite(self, lx: int, ly: int) -> None:
+        """雷霆皮点一下：先劈到边框、电光沿边传导，快灭时狼从电里钻出来。"""
         if self._theme().kind != "thunder":
             return
         now = time.monotonic()
@@ -1264,6 +1276,7 @@ class WorkTimer:
             return
         self._bite_start = now
         self._bite_until = now + ornaments.BITE_SEC
+        self._bite_x, self._bite_y = int(lx), int(ly)
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("ctrl_hide"))
@@ -2562,7 +2575,7 @@ class WorkTimer:
                 key = f"{key}-c{int(phase * 30)}"
             biting = phase < self._bite_until
             if biting:
-                key = f"{key}-w{int(phase * 40)}"
+                key = f"{key}-w{int(phase * 60)}"
 
             if key == self._last_key:
                 return
@@ -2627,6 +2640,8 @@ class WorkTimer:
                     stage=stage,
                     light=(surface == "light"),
                     radius=min(theme.radius, max(8, h // 5)),
+                    cx=self._bite_x - 4,
+                    cy=self._bite_y - 4,
                 )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)

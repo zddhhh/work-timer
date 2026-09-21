@@ -437,16 +437,29 @@ class FxTests(unittest.TestCase):
         self.assertLessEqual(closed_top, open_top + 2)  # 上颌不该跟着动
 
     def test_wolf_bite_window(self):
-        """咬合只在 0~BITE_SEC 内画，越界必须什么都不留。"""
+        """狼段只在 WOLF_SEC 内画，越界必须什么都不留。"""
         import fx
 
         mid = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
-        fx.paint_wolf_bite(mid, fx.BITE_SEC * 0.4, stage="run")
+        fx.paint_wolf_bite(mid, 0.35, stage="run")
         self.assertGreater(sum(1 for a in mid.getchannel("A").getdata() if a > 60), 400)
-        for t in (-0.1, fx.BITE_SEC + 0.01):
+        for t in (-0.1, fx.WOLF_SEC + 0.08):
             blank = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
             fx.paint_wolf_bite(blank, t, stage="run")
             self.assertEqual(max(blank.getchannel("A").getdata()), 0, t)
+
+    def test_click_strike_reaches_border(self):
+        """点一下：落点→边框要有亮线，不能只有狼没有雷。"""
+        import fx
+
+        layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        fx.paint_thunder_click(layer, 0.16, 120, 46, radius=14, stage="run")
+        self.assertGreater(max(layer.getchannel("A").getdata()), 80)
+        peak = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        calm = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        fx.paint_thunder_click(peak, 0.14, 120, 46, radius=14, stage="run")
+        fx.paint_thunder_click(calm, 0.55, 120, 46, radius=14, stage="run")
+        self.assertGreater(sum(peak.convert("L").getdata()), sum(calm.convert("L").getdata()))
 
     def test_inkpulse_visible(self):
         import fx

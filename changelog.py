@@ -72,7 +72,8 @@ def parse_notes(text: str) -> list[tuple[str, str]]:
             buf = []
             continue
         if cur:
-            buf.append(line)
+            # 弹窗是纯 Label，没法渲染强调；** 原样露出来只会碍眼
+            buf.append(line.replace("**", ""))
     if cur:
         body = "\n".join(buf).strip()
         if body:
