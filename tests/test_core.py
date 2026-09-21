@@ -463,18 +463,39 @@ class FxTests(unittest.TestCase):
         self.assertEqual(th.name, "霹雳狂潮")
         self.assertIn("thunder", [t.id for t in themes.menu_sections()["fancy"]])
 
+    def test_skin_settings_thunder_quote_default_empty(self):
+        import skin_settings
+
+        cfg = {}
+        self.assertEqual(skin_settings.thunder_quote(cfg), "")
+        skin_settings.set_thunder_quote(cfg, "  我命由我不由天  \n")
+        self.assertEqual(skin_settings.thunder_quote(cfg), "我命由我不由天")
+        skin_settings.set_thunder_quote(cfg, "")
+        self.assertEqual(skin_settings.thunder_quote(cfg), "")
+
+    def test_thunder_hit_without_quote_no_glyph_step(self):
+        import fx
+
+        hits, nxt = fx.register_thunder_hit([], 100.0, 120, 46, 0, quote="")
+        self.assertIsNone(nxt)
+        self.assertEqual(len(hits), 1)
+        layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        fx.paint_thunder_glyph(layer, (4, 4, 244, 88), 0.35, 0, anchor_x=180, anchor_y=46, quote="")
+        self.assertEqual(max(layer.getchannel("A").getdata()), 255)
+
     def test_thunder_same_spot_merges(self):
         """同处狂点应合并刷新，不能叠满屏。"""
         import fx
 
         t0 = 100.0
-        hits, nxt = fx.register_thunder_hit([], t0, 120, 46, 0)
+        quote = "我命由我不由天"
+        hits, nxt = fx.register_thunder_hit([], t0, 120, 46, 0, quote=quote)
         self.assertEqual(nxt, 1)
-        hits, nxt = fx.register_thunder_hit(hits, t0 + 0.05, 122, 47, nxt)
+        hits, nxt = fx.register_thunder_hit(hits, t0 + 0.05, 122, 47, nxt, quote=quote)
         self.assertIsNone(nxt)
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0][0], t0)
-        hits, nxt = fx.register_thunder_hit(hits, t0 + 0.22, 121, 45, 1)
+        hits, nxt = fx.register_thunder_hit(hits, t0 + 0.22, 121, 45, 1, quote=quote)
         self.assertEqual(len(hits), 1)
         self.assertAlmostEqual(hits[0][0], t0 + 0.22)
         self.assertGreater(hits[0][3], 1.0)
@@ -484,21 +505,22 @@ class FxTests(unittest.TestCase):
         import fx
 
         t0 = 100.0
-        hits, nxt = fx.register_thunder_hit([], t0, 50, 46, 0)
-        hits, nxt2 = fx.register_thunder_hit(hits, t0 + 0.01, 200, 46, nxt)
+        quote = "我命由我不由天"
+        hits, nxt = fx.register_thunder_hit([], t0, 50, 46, 0, quote=quote)
+        hits, nxt2 = fx.register_thunder_hit(hits, t0 + 0.01, 200, 46, nxt, quote=quote)
         self.assertEqual(len(hits), 2)
         self.assertEqual(nxt2, 2)
 
     def test_thunder_glyph_single_char(self):
         import fx
 
-        self.assertEqual(fx.THUNDER_QUOTE, "我命由我不由天")
+        quote = fx.THUNDER_QUOTE_DEFAULT
         layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
         box = (4, 4, 244, 88)
-        fx.paint_thunder_glyph(layer, box, 0.35, 0, anchor_x=180, anchor_y=46, stage="run")
+        fx.paint_thunder_glyph(layer, box, 0.35, 0, anchor_x=180, anchor_y=46, stage="run", quote=quote)
         a0 = max(layer.getchannel("A").getdata())
         blank = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-        fx.paint_thunder_glyph(blank, box, 3.0, 0, anchor_x=180, anchor_y=46, stage="run")
+        fx.paint_thunder_glyph(blank, box, 3.0, 0, anchor_x=180, anchor_y=46, stage="run", quote=quote)
         self.assertGreater(a0, 24)
         self.assertEqual(max(blank.getchannel("A").getdata()), 255)  # 过期帧不画
 
@@ -510,7 +532,9 @@ class FxTests(unittest.TestCase):
 
         def centroid(ax):
             layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
-            fx.paint_thunder_glyph(layer, box, 0.35, 0, anchor_x=ax, anchor_y=46, stage="run")
+            fx.paint_thunder_glyph(
+                layer, box, 0.35, 0, anchor_x=ax, anchor_y=46, stage="run", quote=fx.THUNDER_QUOTE_DEFAULT,
+            )
             a = layer.getchannel("A")
             xs = [x for y in range(layer.height) for x in range(layer.width) if a.getpixel((x, y)) > 40]
             return sum(xs) / len(xs)
@@ -523,6 +547,21 @@ class FxTests(unittest.TestCase):
         layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
         fx.paint_ink_click(layer, 0.55, 180, 46, stage="run")
         self.assertGreater(max(layer.getchannel("A").getdata()), 40)
+
+    def test_neon_planets_spawn_and_hit(self):
+        import fx
+
+        field = fx.create_neon_planets()
+        ammo = fx.create_neon_ammo()
+        bw, bh = 240, 84
+        t0 = 2000.0
+        fx.neon_planets_resize(field, bw, bh, t0)
+        self.assertGreaterEqual(len(field.planets), fx.NEON_PLANET_MIN)
+        px, py, pr = fx._neon_planet_pos(field.planets[0], t0, bw, bh)  # noqa: SLF001
+        fx.neon_try_fire(ammo, t0, px, py, bw=bw, bh=bh, radius=14, phase=t0)
+        fx.neon_planets_tick(field, ammo, t0 + fx.NEON_FIRE_SEC * 0.86, bw, bh, t0, colors_n=4)
+        self.assertGreater(len(field.explosions), 0)
+        self.assertLess(len(field.planets), fx.NEON_PLANET_MIN + 1)
 
     def test_neon_bullet_shot_cycle(self):
         import fx

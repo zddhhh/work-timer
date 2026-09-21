@@ -106,6 +106,7 @@ def load_config() -> dict:
         "auto_rotate_pins": False,
         "rotate_sec": 5,
         "last_run_version": "",
+        "skin_settings": {"thunder": {"quote": ""}},
     }
     bundled = app_dir() / "update_defaults.json"
     if bundled.exists():
@@ -132,6 +133,9 @@ def load_config() -> dict:
         if "ctrl_hide" not in data and "esc_disguise" in data:
             merged["ctrl_hide"] = bool(data.get("esc_disguise"))
         merged.pop("esc_disguise", None)
+        import skin_settings
+
+        merged["skin_settings"] = skin_settings.merge(merged.get("skin_settings"))
         return merged
     except json.JSONDecodeError:
         return dict(defaults)

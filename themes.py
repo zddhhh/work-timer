@@ -460,8 +460,10 @@ def paint_card(
     env_rgb: tuple[int, int, int] | None = None,
     surface: str = "dark",
     thunder_glyphs: list[tuple[float, int, int, int]] | None = None,
+    thunder_quote: str = "",
     neon_ammo=None,
     neon_now: float = 0.0,
+    neon_planets=None,
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (4, 4, w - 5, h - 5)
@@ -519,6 +521,7 @@ def paint_card(
                 radius=r,
                 neon_ammo=neon_ammo if kind == "neonflow" else None,
                 neon_now=neon_now,
+                neon_planets=neon_planets if kind == "neonflow" else None,
             )
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
@@ -546,6 +549,7 @@ def paint_card(
                         anchor_y=float(gy),
                         stage=stage,
                         light=wallpaper_light,
+                        quote=thunder_quote,
                     )
         else:
             d.rounded_rectangle((8, 10, w - 3, h - 2), radius=r + 1, fill=(0, 0, 0, 40))

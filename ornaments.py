@@ -237,10 +237,14 @@ INK_CLICK_SEC = fx.INK_CLICK_SEC
 register_ink_hit = fx.register_ink_hit
 NEON_CLICK_SEC = fx.NEON_CLICK_SEC
 create_neon_ammo = fx.create_neon_ammo
+create_neon_planets = fx.create_neon_planets
 neon_try_fire = fx.neon_try_fire
 neon_ammo_signature = fx.neon_ammo_signature
+neon_planets_signature = fx.neon_planets_signature
+neon_planets_animating = fx.neon_planets_animating
 neon_recoil = fx.neon_recoil
 NeonAmmo = fx.NeonAmmo
+NeonPlanets = fx.NeonPlanets
 
 
 def paint_bite(
@@ -297,6 +301,7 @@ def paint_neon_overlay(
     box: tuple[int, int, int, int],
     *,
     ammo: fx.NeonAmmo,
+    planets: fx.NeonPlanets | None,
     now: float,
     phase: float,
     mouse_xy: tuple[float, float] | None,
@@ -304,10 +309,12 @@ def paint_neon_overlay(
     light: bool = False,
     radius: int = 0,
 ) -> None:
-    """霓虹流光：准星 + 汇中后射出的光束。"""
+    """霓虹流光：爆炸 + 准星 + 射出的光束。"""
     x0, y0, x1, y1 = box
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    if planets is not None and planets.explosions:
+        fx.paint_neon_explosions(layer, planets, now, stage=stage, light=light)
     if mouse_xy is not None:
         fx.paint_neon_reticle(layer, mouse_xy[0], mouse_xy[1], phase, stage=stage, light=light)
     fx.paint_neon_active_shots(layer, ammo, now, stage=stage, light=light)
@@ -324,12 +331,13 @@ def paint_thunder_glyph(
     anchor_y: float | None = None,
     stage: str = "run",
     light: bool = False,
+    quote: str = "",
 ) -> None:
     """霹雳狂潮单字水墨底纹，锚在点击处、画在倒计时数字下层。"""
     fx.paint_thunder_glyph(
         img, box, t, quote_idx,
         anchor_x=anchor_x, anchor_y=anchor_y,
-        stage=stage, light=light,
+        stage=stage, light=light, quote=quote,
     )
 
 
@@ -344,6 +352,7 @@ def paste_skin(
     radius: int = 0,
     neon_ammo: fx.NeonAmmo | None = None,
     neon_now: float = 0.0,
+    neon_planets: fx.NeonPlanets | None = None,
 ) -> bool:
     """把对应皮肤的生图贴进圆角卡片（含四个圆角弧）；程序化皮直接按帧画。"""
     x0, y0, x1, y1 = box
@@ -361,6 +370,7 @@ def paste_skin(
                 light=light,
                 ammo=neon_ammo,
                 ammo_now=neon_now if neon_ammo is not None else phase,
+                planets=neon_planets,
             )
         elif kind == "inkpulse":
             fx.paint_inkpulse(layer, phase, stage=stage, radius=int(radius), light=light)

@@ -303,7 +303,7 @@ class NeonAmmo:
 
     def __init__(self) -> None:
         self.present = [1.0] * NEON_BULLETS
-        self.shots: list[tuple[float, int, float, float]] = []  # start, slot, tx, ty
+        self.shots: list[tuple[float, int, float, float, bool]] = []  # start, slot, tx, ty, hit_done
         self.last_click = 0.0
         self._pick = 0
 
@@ -332,7 +332,7 @@ def _slot_u(head: float, slot: int) -> float:
 
 
 def _slot_firing(ammo: NeonAmmo, slot: int, now: float) -> bool:
-    for s, sl, _tx, _ty in ammo.shots:
+    for s, sl, _tx, _ty, _done in ammo.shots:
         if sl != slot:
             continue
         if 0.0 <= now - s < NEON_FIRE_SEC:
@@ -342,12 +342,14 @@ def _slot_firing(ammo: NeonAmmo, slot: int, now: float) -> bool:
 
 def neon_tick(ammo: NeonAmmo, now: float) -> None:
     """按时间推进补弹进度并清理过期射击。"""
-    for s, slot, _tx, _ty in ammo.shots:
+    for s, slot, _tx, _ty, _done in ammo.shots:
         age = now - s
         if age > NEON_FIRE_SEC:
             rep = min(1.0, (age - NEON_FIRE_SEC) / NEON_REPLENISH_SEC)
             ammo.present[slot] = max(ammo.present[slot], rep)
-    ammo.shots = [(s, sl, tx, ty) for s, sl, tx, ty in ammo.shots if now - s < NEON_SHOT_SEC]
+    ammo.shots = [
+        (s, sl, tx, ty, done) for s, sl, tx, ty, done in ammo.shots if now - s < NEON_SHOT_SEC
+    ]
 
 
 def neon_try_fire(
@@ -384,7 +386,7 @@ def neon_try_fire(
         if d < best_d:
             best_d, best = d, i
     ammo.present[best] = 0.0
-    ammo.shots.append((now, best, tx, ty))
+    ammo.shots.append((now, best, tx, ty, False))
     ammo.last_click = now
     ammo._pick = (best + 1) % NEON_BULLETS
     return True
@@ -393,19 +395,275 @@ def neon_try_fire(
 def neon_ammo_signature(ammo: NeonAmmo, now: float) -> str:
     neon_tick(ammo, now)
     pres = ",".join(str(int(p * 24)) for p in ammo.present)
-    shots = ",".join(f"{sl}:{int((now - s) * 48)}" for s, sl, _x, _y in ammo.shots)
+    shots = ",".join(f"{sl}:{int((now - s) * 48)}" for s, sl, _x, _y, _d in ammo.shots)
     return f"{pres}|{shots}"
 
 
 def neon_recoil(now: float, ammo: NeonAmmo) -> tuple[float, float]:
     dx = dy = 0.0
-    for s, _sl, _tx, _ty in ammo.shots:
+    for s, _sl, _tx, _ty, _done in ammo.shots:
         age = now - s
         if age < NEON_RECOIL_SEC + 0.06:
             k = 1.0 - age / (NEON_RECOIL_SEC + 0.06)
             dx += math.sin(s * 17.3) * 2.4 * k
             dy -= 3.2 * k
     return dx, dy
+
+
+# ---- 霓虹星球：漂浮小行星，命中爆炸，不足时自动补刷
+
+NEON_PLANET_MIN = 3
+NEON_PLANET_MAX = 7
+NEON_PLANET_SPAWN_GAP = 1.65
+NEON_EXPLODE_SEC = 0.62
+NEON_PLANET_HIT_PAD = 11.0
+
+
+class NeonPlanets:
+    """卡片内漂浮的霓虹小星球。"""
+
+    __slots__ = ("planets", "explosions", "last_spawn", "_nid", "_bw", "_bh")
+
+    def __init__(self) -> None:
+        self.planets: list[tuple[int, float, float, float, int, float]] = []
+        # id, bx, by, br, color_i, drift_off
+        self.explosions: list[tuple[float, float, float, float, int]] = []
+        # start, x, y, br, color_i
+        self.last_spawn = 0.0
+        self._nid = 1
+        self._bw = 0
+        self._bh = 0
+
+
+def create_neon_planets() -> NeonPlanets:
+    return NeonPlanets()
+
+
+def _neon_planet_target(bw: int, bh: int) -> int:
+    area = max(1, bw * bh)
+    base = NEON_PLANET_MIN + area // 14000
+    return max(NEON_PLANET_MIN, min(NEON_PLANET_MAX, base))
+
+
+def _neon_planet_pos(
+    planet: tuple[int, float, float, float, int, float],
+    phase: float,
+    bw: int,
+    bh: int,
+) -> tuple[float, float, float]:
+    _pid, bx, by, br, _ci, off = planet
+    scale = max(0.7, min(2.4, bh / 92.0))
+    dx = math.sin(phase * 0.38 + off) * 5.5 * scale
+    dy = math.cos(phase * 0.31 + off * 1.17) * 4.2 * scale
+    return bx + dx, by + dy, br * scale
+
+
+def _neon_spawn_planet(
+    field: NeonPlanets,
+    bw: int,
+    bh: int,
+    *,
+    colors_n: int,
+) -> bool:
+    margin = max(12.0, bh * 0.12)
+    cx_avoid, cy_avoid = bw * 0.52, bh * 0.44
+    avoid_w, avoid_h = bw * 0.34, bh * 0.38
+    pid = field._nid
+    field._nid += 1
+    scale = max(0.7, min(2.4, bh / 92.0))
+    for attempt in range(28):
+        h1 = _hash01(pid * 19 + attempt, field._bw + field._bh)
+        h2 = _hash01(pid * 37 + attempt, field._bw * 3 + field._bh)
+        x = margin + h1 * (bw - 2 * margin)
+        y = margin + h2 * (bh - 2 * margin)
+        if abs(x - cx_avoid) < avoid_w * 0.5 and abs(y - cy_avoid) < avoid_h * 0.5:
+            continue
+        br = (4.8 + _hash01(pid, 91) * 4.2) * scale
+        ok = True
+        for other in field.planets:
+            ox, oy, orad = _neon_planet_pos(other, 0.0, bw, bh)
+            if (x - ox) ** 2 + (y - oy) ** 2 < (br + orad + 14.0) ** 2:
+                ok = False
+                break
+        if not ok:
+            continue
+        ci = int(_hash01(pid, 53) * colors_n) % colors_n
+        drift = _hash01(pid, 71) * math.pi * 2.0
+        field.planets.append((pid, x, y, br / scale, ci, drift))
+        return True
+    return False
+
+
+def _neon_refill_planets(field: NeonPlanets, bw: int, bh: int, now: float, colors_n: int) -> None:
+    target = _neon_planet_target(bw, bh)
+    while len(field.planets) < target:
+        if not _neon_spawn_planet(field, bw, bh, colors_n=colors_n):
+            break
+        field.last_spawn = now
+
+
+def neon_planets_resize(field: NeonPlanets, bw: int, bh: int, now: float, colors_n: int = 4) -> None:
+    if field._bw == bw and field._bh == bh:
+        return
+    if field._bw > 0 and field._bh > 0 and field.planets:
+        sx, sy = bw / field._bw, bh / field._bh
+        scaled: list[tuple[int, float, float, float, int, float]] = []
+        for pid, bx, by, br, ci, off in field.planets:
+            scaled.append((pid, bx * sx, by * sy, br * (sx + sy) * 0.5, ci, off))
+        field.planets = scaled
+    else:
+        field.planets.clear()
+        _neon_refill_planets(field, bw, bh, now, colors_n)
+    field._bw, field._bh = bw, bh
+
+
+def neon_planets_tick(
+    field: NeonPlanets,
+    ammo: NeonAmmo,
+    now: float,
+    bw: int,
+    bh: int,
+    phase: float,
+    *,
+    colors_n: int = 4,
+) -> None:
+    """推进爆炸、解析命中、数量不足时补刷星球。"""
+    neon_planets_resize(field, bw, bh, now, colors_n)
+    field.explosions = [
+        (s, x, y, br, ci) for s, x, y, br, ci in field.explosions if now - s < NEON_EXPLODE_SEC
+    ]
+    ox, oy = bw * 0.52, bh * 0.48
+    new_shots: list[tuple[float, int, float, float, bool]] = []
+    for s, sl, tx, ty, done in ammo.shots:
+        if done:
+            new_shots.append((s, sl, tx, ty, True))
+            continue
+        age = now - s
+        if age < NEON_FIRE_SEC * 0.55:
+            new_shots.append((s, sl, tx, ty, False))
+            continue
+        prog = min(1.0, age / (NEON_FIRE_SEC * 0.9))
+        ease = 1.0 - (1.0 - prog) ** 2.2
+        bx = ox + (tx - ox) * ease
+        by = oy + (ty - oy) * ease
+        hit = False
+        remain: list[tuple[int, float, float, float, int, float]] = []
+        for planet in field.planets:
+            px, py, pr = _neon_planet_pos(planet, phase, bw, bh)
+            if not hit and (bx - px) ** 2 + (by - py) ** 2 <= (pr + NEON_PLANET_HIT_PAD) ** 2:
+                field.explosions.append((now, px, py, pr, planet[4]))
+                hit = True
+                continue
+            remain.append(planet)
+        if hit:
+            field.planets = remain
+            field.last_spawn = now - NEON_PLANET_SPAWN_GAP * 0.35
+        new_shots.append((s, sl, tx, ty, hit or age >= NEON_FIRE_SEC * 0.92))
+    ammo.shots = new_shots
+
+    target = _neon_planet_target(bw, bh)
+    if len(field.planets) < target and now - field.last_spawn >= NEON_PLANET_SPAWN_GAP:
+        if _neon_spawn_planet(field, bw, bh, colors_n=colors_n):
+            field.last_spawn = now
+
+
+def neon_planets_animating(field: NeonPlanets, now: float) -> bool:
+    return bool(field.explosions)
+
+
+def neon_planets_signature(field: NeonPlanets, now: float) -> str:
+    ps = ",".join(f"{p[0]}:{int(p[1])}:{int(p[2])}" for p in field.planets)
+    ex = ",".join(f"{int((now - s) * 40)}" for s, _x, _y, _br, _ci in field.explosions)
+    return f"p{len(field.planets)}-{ps}|x{ex}"
+
+
+def paint_neon_planets(
+    layer: Image.Image,
+    field: NeonPlanets,
+    phase: float,
+    *,
+    colors: tuple[tuple[int, int, int], ...],
+    stage: str = "run",
+    light: bool = False,
+    gain: float = 1.0,
+) -> None:
+    bw, bh = layer.size
+    if bw < 40 or bh < 20 or not field.planets:
+        return
+    scale = max(0.7, min(2.4, bh / 92.0))
+    glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    gd, cd = ImageDraw.Draw(glow), ImageDraw.Draw(core)
+    for planet in field.planets:
+        px, py, pr = _neon_planet_pos(planet, phase, bw, bh)
+        col = colors[planet[4] % len(colors)]
+        pulse = 0.82 + 0.18 * math.sin(phase * 2.6 + planet[5])
+        gr = pr * (2.8 + 0.35 * pulse)
+        ga = int(72 * gain * pulse)
+        if ga > 2:
+            gd.ellipse((px - gr, py - gr, px + gr, py + gr), fill=(*col, ga))
+        ring_r = pr * (1.55 + 0.12 * math.sin(phase * 3.1 + planet[0]))
+        cd.ellipse(
+            (px - ring_r, py - ring_r, px + ring_r, py + ring_r),
+            outline=(*col, int(150 * gain * pulse)),
+            width=max(1, int(round(1.4 * scale))),
+        )
+        cd.ellipse((px - pr, py - pr, px + pr, py + pr), fill=(*col, int(200 * gain * pulse)))
+        cd.ellipse(
+            (px - pr * 0.35, py - pr * 0.35, px + pr * 0.35, py + pr * 0.35),
+            fill=(255, 255, 255, int(230 * gain)),
+        )
+        sat = pr * 1.85
+        ang = phase * 0.9 + planet[5]
+        sx = px + math.cos(ang) * sat
+        sy = py + math.sin(ang) * sat * 0.72
+        cd.ellipse((sx - 1.8 * scale, sy - 1.8 * scale, sx + 1.8 * scale, sy + 1.8 * scale), fill=(*col, int(180 * gain)))
+    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(1.6, 2.4 * scale))))
+    layer.alpha_composite(core)
+
+
+def paint_neon_explosions(
+    layer: Image.Image,
+    field: NeonPlanets,
+    now: float,
+    *,
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    bw, bh = layer.size
+    if not field.explosions:
+        return
+    c1, c2, _period, gain = _stage_palette(stage, light=light)
+    colors = _neon_bullet_colors(c1, c2, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    fx_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(fx_layer)
+    for s, x, y, br, ci in field.explosions:
+        t = (now - s) / NEON_EXPLODE_SEC
+        if t < 0.0 or t > 1.0:
+            continue
+        col = colors[ci % len(colors)]
+        fade = (1.0 - t) ** 1.35
+        ring = br * (1.0 + t * 3.8)
+        ra = int(190 * gain * fade)
+        if ra > 3:
+            d.ellipse((x - ring, y - ring, x + ring, y + ring), outline=(*col, ra), width=max(1, int(round(2.2 * scale))))
+        flash = br * (1.6 - t * 1.1)
+        fa = int(220 * gain * max(0.0, 1.0 - t * 1.8))
+        if fa > 3:
+            d.ellipse((x - flash, y - flash, x + flash, y + flash), fill=(*col, fa))
+        n_sp = 10
+        for i in range(n_sp):
+            ang = (i / n_sp) * math.pi * 2.0 + s * 0.7
+            dist = br * (0.8 + t * 4.5) + math.sin(i * 2.1 + s) * 2.0
+            spx = x + math.cos(ang) * dist
+            spy = y + math.sin(ang) * dist
+            sr = max(1.2, (2.8 - t * 2.0) * scale)
+            sa = int(200 * gain * fade * fade)
+            if sa > 4:
+                d.ellipse((spx - sr, spy - sr, spx + sr, spy + sr), fill=(255, 255, 255, sa))
+    layer.alpha_composite(fx_layer.filter(ImageFilter.GaussianBlur(radius=max(0.8, 1.4 * scale))))
+    layer.alpha_composite(fx_layer)
 
 
 def _draw_neon_comet(
@@ -666,6 +924,7 @@ def paint_neonflow(
     light: bool = False,
     ammo: NeonAmmo | None = None,
     ammo_now: float = 0.0,
+    planets: NeonPlanets | None = None,
 ) -> None:
     """霓虹 HUD：色雾 + 仪表底 + 扫描线 + 角标 + 四颗边框子弹 + 偶发故障错位。"""
     bw, bh = layer.size
@@ -691,9 +950,13 @@ def paint_neonflow(
         d.line((cx, cy, cx + sx * ln, cy), fill=col, width=wdt)
         d.line((cx, cy, cx, cy + sy * ln), fill=col, width=wdt)
 
+    colors = _neon_bullet_colors(c1, c2, light=light)
+    if planets is not None and ammo is not None:
+        neon_planets_tick(planets, ammo, ammo_now, bw, bh, phase, colors_n=len(colors))
+        paint_neon_planets(layer, planets, phase, colors=colors, stage=stage, light=light, gain=gain)
+
     # 边框四颗五色绕边流光；射击时缺一颗，中心射出同色弹后再沿边补回
     _total, point = _perimeter(bw, bh, float(radius), 1.5)
-    colors = _neon_bullet_colors(c1, c2, light=light)
     if ammo is not None:
         neon_tick(ammo, ammo_now)
         _paint_neon_border_bullets(
@@ -1274,7 +1537,7 @@ def paint_neon_active_shots(
     ox, oy = bw * 0.52, bh * 0.48
     c1, c2, _period, gain = _stage_palette(stage, light=light)
     colors = _neon_bullet_colors(c1, c2, light=light)
-    for s, sl, tx, ty in ammo.shots:
+    for s, sl, tx, ty, _done in ammo.shots:
         age = now - s
         if age < NEON_FIRE_SEC:
             paint_neon_fire_shot(
@@ -1292,7 +1555,7 @@ MAX_THUNDER_HITS = 6  # 不同落点最多同时几道
 MERGE_RADIUS = 34.0  # 同点半径内合并为一道，刷新动画而非叠满屏
 MERGE_COOLDOWN = 0.17  # 同点最快隔这么久才再吃下一记
 HIT_POWER_MAX = 2.0  # 同点连刷微增强度，有顶
-THUNDER_QUOTE = "我命由我不由天"
+THUNDER_QUOTE_DEFAULT = "我命由我不由天"  # 仅作设置页示例，默认不启用字效
 CHARGE_END = 0.30
 STRIKE_START = 0.18
 STRIKE_END = 0.72
@@ -1306,10 +1569,12 @@ def register_thunder_hit(
     x: int,
     y: int,
     quote_idx: int,
+    quote: str = "",
 ) -> tuple[list[tuple[float, int, int, float, int]], int | None]:
     """登记点击：远处可叠多道；同处连点合并刷新。返回 (hits, 下一字序号) 或忽略时 None。"""
     alive = [(s, hx, hy, p, q) for s, hx, hy, p, q in hits if now - s < CLICK_SEC]
-    nxt = (quote_idx + 1) % len(THUNDER_QUOTE)
+    q = (quote or "").strip()
+    nxt = ((quote_idx + 1) % len(q)) if q else None
     r2 = MERGE_RADIUS * MERGE_RADIUS
     for i, (s, hx, hy, p, _q) in enumerate(alive):
         if (x - hx) ** 2 + (y - hy) ** 2 <= r2:
@@ -1988,13 +2253,15 @@ def paint_thunder_glyph(
     anchor_y: float | None = None,
     stage: str = "run",
     light: bool = False,
+    quote: str = "",
 ) -> None:
     """每次只亮一个字：大号水墨电纹，锚在点击处（画在倒计时数字下层）。"""
-    if t < 0.0 or t > CLICK_SEC * 0.92 or not THUNDER_QUOTE:
+    q = (quote or "").strip()
+    if t < 0.0 or t > CLICK_SEC * 0.92 or not q:
         return
     x0, y0, x1, y1 = box
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
-    char = THUNDER_QUOTE[quote_idx % len(THUNDER_QUOTE)]
+    char = q[quote_idx % len(q)]
     arc, cloud, _period, gain = _thunder_palette(stage, light=light)
     ink = tuple(int(arc[i] * 0.62 + cloud[i] * 0.38) for i in range(3))
     core = tuple(min(255, int(arc[i] * 0.35 + 220)) for i in range(3))

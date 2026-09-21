@@ -28,6 +28,7 @@ import memos
 import ornaments
 import schedules
 import single_instance
+import skin_settings
 import store
 import themes
 import updater
@@ -823,6 +824,7 @@ class WorkTimer:
         self._thunder_quote_step = 0
         self._ink_hits: list[tuple[float, int, int, float]] = []
         self._neon_ammo = ornaments.create_neon_ammo()
+        self._neon_planets = ornaments.create_neon_planets()
         self._mouse_lx = -1
         self._mouse_ly = -1
         self._check_clock_on_boot()
@@ -1280,7 +1282,9 @@ class WorkTimer:
     def _neon_needs_frames(self, now: float) -> bool:
         if any(p < 0.98 for p in self._neon_ammo.present):
             return True
-        return bool(self._neon_ammo.shots)
+        if bool(self._neon_ammo.shots):
+            return True
+        return ornaments.neon_planets_animating(self._neon_planets, now)
 
     def _on_mouse_move(self, lx: int, ly: int) -> None:
         if self._esc_hidden or self._theme().kind != "neonflow":
@@ -1295,7 +1299,12 @@ class WorkTimer:
         now = time.monotonic()
         if kind == "thunder":
             hits, nxt = ornaments.register_thunder_hit(
-                self._thunder_hits, now, int(lx), int(ly), self._thunder_quote_step,
+                self._thunder_hits,
+                now,
+                int(lx),
+                int(ly),
+                self._thunder_quote_step,
+                quote=skin_settings.thunder_quote(self.cfg),
             )
             self._thunder_hits = hits
             if nxt is not None:
@@ -1542,6 +1551,58 @@ class WorkTimer:
 
     def _open_idle_dialog(self) -> None:
         self._open_setup_dialog()
+
+    def _open_skin_settings_dialog(self) -> None:
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=420, height=300)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        err = tk.StringVar(value="")
+        _pack_err_line(body, err, wrap=360)
+        tk.Label(
+            body, text="皮肤设置", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 4), anchor="w")
+        tk.Label(
+            body,
+            text="各特效皮肤的个性化选项；后续新皮肤也会集中在这里。",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), wraplength=360, justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+
+        th_frame = tk.Frame(body, bg="#1e2430", highlightthickness=1, highlightbackground="#2a3140")
+        th_frame.pack(fill="x", pady=(0, 8))
+        th_inner = tk.Frame(th_frame, bg="#1e2430")
+        th_inner.pack(fill="x", padx=12, pady=10)
+        tk.Label(
+            th_inner, text="霹雳狂潮", fg=_CARD_FG, bg="#1e2430", font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            th_inner,
+            text="点击台词（留空则不显示单字彩蛋，劈雷与电涌仍保留）",
+            fg=_CARD_MUTED, bg="#1e2430", font=("Microsoft YaHei UI", 9), wraplength=340, justify="left",
+        ).pack(anchor="w", pady=(4, 2))
+        quote_var = tk.StringVar(value=skin_settings.thunder_quote(self.cfg))
+        tk.Entry(
+            th_inner, textvariable=quote_var, font=("Microsoft YaHei UI", 12), bg="#222733", fg=_CARD_FG,
+            insertbackground=_CARD_FG, relief="flat",
+        ).pack(anchor="w", ipady=5, fill="x")
+        tk.Label(
+            th_inner,
+            text=f"最多 {skin_settings.THUNDER_QUOTE_MAX} 字，例如：{skin_settings.THUNDER_QUOTE_EXAMPLE}",
+            fg=_CARD_MUTED, bg="#1e2430", font=("Microsoft YaHei UI", 8), wraplength=340, justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+
+        def save() -> None:
+            new_q = skin_settings.set_thunder_quote(self.cfg, quote_var.get())
+            store.save_config(self.cfg)
+            self._thunder_quote_step = 0
+            self._last_key = ""
+            err.set("已保存" if new_q else "已保存（未启用点击字效）")
+
+        _card_btn(bar, "保存", save, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        _reveal_card(dlg, min_w=420, min_h=280, near=self._dialog_near())
+        _run_card_modal(dlg, self.win)
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
         """当前主界面项：(标题, 剩余秒, 是否到点, 是否空闲未设)。"""
@@ -2269,6 +2330,8 @@ class WorkTimer:
             self._set_auto_start(not self._auto_start_on())
         elif op == "about":
             self._open_about()
+        elif op == "skin_settings":
+            self._open_skin_settings_dialog()
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":
@@ -2625,6 +2688,7 @@ class WorkTimer:
             neon_sig = ""
             if theme.kind == "neonflow":
                 neon_sig = ornaments.neon_ammo_signature(self._neon_ammo, phase)
+                neon_sig = f"{neon_sig}|{ornaments.neon_planets_signature(self._neon_planets, phase)}"
             if thunder_hits:
                 sig = "-".join(f"{int((phase - s) * 45)}:{p:.1f}:{q}" for s, _, _, p, q in thunder_hits)
                 key = f"{key}-t{len(thunder_hits)}-{sig}"
@@ -2639,12 +2703,15 @@ class WorkTimer:
             if key == self._last_key:
                 return
 
+            thunder_quote = skin_settings.thunder_quote(self.cfg) if theme.kind == "thunder" else ""
             thunder_glyphs = None
-            if theme.kind == "thunder" and thunder_hits:
+            if theme.kind == "thunder" and thunder_hits and thunder_quote:
                 thunder_glyphs = [
                     (phase - start, qidx, bx, by)
                     for start, bx, by, _power, qidx in thunder_hits
                 ]
+            if thunder_quote:
+                key = f"{key}-tq{len(thunder_quote)}-{hash(thunder_quote) & 0xFFFF}"
 
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             if kinetic.playing(self._kinetic, phase):
@@ -2664,8 +2731,10 @@ class WorkTimer:
                     env_rgb=self._env_rgb,
                     surface=surface,
                     thunder_glyphs=thunder_glyphs,
+                    thunder_quote=thunder_quote,
                     neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
                     neon_now=phase,
+                    neon_planets=self._neon_planets if theme.kind == "neonflow" else None,
                 )
                 kinetic.paint(
                     img,
@@ -2694,8 +2763,10 @@ class WorkTimer:
                     env_rgb=self._env_rgb,
                     surface=surface,
                     thunder_glyphs=thunder_glyphs,
+                    thunder_quote=thunder_quote,
                     neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
                     neon_now=phase,
+                    neon_planets=self._neon_planets if theme.kind == "neonflow" else None,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -2738,6 +2809,7 @@ class WorkTimer:
                     img,
                     box,
                     ammo=self._neon_ammo,
+                    planets=self._neon_planets,
                     now=phase,
                     phase=phase,
                     mouse_xy=mouse_xy,
