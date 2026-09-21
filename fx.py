@@ -452,13 +452,24 @@ def _paint_gauge_needle(
     d.ellipse((px - gr * 0.4, py - gr * 0.4, px + gr * 0.4, py + gr * 0.4), fill=(255, 255, 255, int(140 * gain)))
 
 
-def paint_neonflow(layer: Image.Image, phase: float, *, stage: str, radius: int, light: bool = False) -> None:
+def paint_neonflow(
+    layer: Image.Image,
+    phase: float,
+    *,
+    stage: str,
+    radius: int,
+    light: bool = False,
+    flow_boost: float = 0.0,
+) -> None:
     """霓虹 HUD：色雾 + 仪表底 + 扫描线 + 角标 + 绕边流光 + 偶发故障错位。"""
     bw, bh = layer.size
     if bw < 40 or bh < 20:
         return
     c1, c2, period, gain = _stage_palette(stage, light=light)
     scale = max(0.7, min(2.4, bh / 92.0))
+    boost = max(0.0, min(1.0, flow_boost))
+    speed = 1.0 + boost * 2.1
+    period_eff = period / speed
 
     # 内场：先雾、再仪表，再扫描线（网格压在上面，HUD 感更干净）
     _paint_fog(layer, phase, c1, c2, gain=gain, scale=scale, light=light)
@@ -477,16 +488,23 @@ def paint_neonflow(layer: Image.Image, phase: float, *, stage: str, radius: int,
         d.line((cx, cy, cx + sx * ln, cy), fill=col, width=wdt)
         d.line((cx, cy, cx, cy + sy * ln), fill=col, width=wdt)
 
-    # 绕边流光
+    # 绕边流光：多段随机起点，点击后加速
     total, point = _perimeter(bw, bh, float(radius), 1.5)
     glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     kd = ImageDraw.Draw(core)
-    head = (phase / period) % 1.0
+    head = (phase / period_eff) % 1.0
     n_tail = 22
-    spacing = (0.11 if stage != "warn" else 0.14) / n_tail
-    heads = ((head, c1), ((head + 0.5) % 1.0, c2)) if stage != "done" else ((head, c1),)
+    spacing = ((0.11 if stage != "warn" else 0.14) / n_tail) * (1.0 - boost * 0.18)
+    seed = int(phase / 6.5) * 31337 + int(boost * 97)
+    nxt = _rnd(seed)
+    n_heads = 3 + (nxt(3) if stage != "done" else 0) + int(boost * 2.5)
+    heads: list[tuple[float, tuple[int, int, int]]] = []
+    for i in range(n_heads):
+        off = (nxt(997) / 997.0) if i else 0.0
+        hu = (head + off + i / max(1, n_heads)) % 1.0
+        heads.append((hu, c1 if i % 2 == 0 else c2))
     for hu, col in heads:
         for k in range(n_tail):
             u = hu - k * spacing
@@ -852,6 +870,263 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
     _ = radius  # 圆角由 ornaments 蒙版处理；保留参数与 neonflow 签名一致
 
 
+INK_CLICK_SEC = 2.05
+MAX_INK_HITS = 5
+INK_MERGE_RADIUS = 30.0
+INK_MERGE_COOLDOWN = 0.19
+
+
+def register_ink_hit(
+    hits: list[tuple[float, int, int, float]],
+    now: float,
+    x: int,
+    y: int,
+) -> list[tuple[float, int, int, float]]:
+    """墨水涟漪点击：落墨 + 涟漪，同点合并限频。"""
+    alive = [(s, hx, hy, p) for s, hx, hy, p in hits if now - s < INK_CLICK_SEC]
+    r2 = INK_MERGE_RADIUS * INK_MERGE_RADIUS
+    for i, (s, hx, hy, p) in enumerate(alive):
+        if (x - hx) ** 2 + (y - hy) ** 2 <= r2:
+            if now - s < INK_MERGE_COOLDOWN:
+                return alive
+            alive[i] = (now, x, y, min(2.0, p + 0.22))
+            return alive
+    if len(alive) >= MAX_INK_HITS:
+        alive.pop(0)
+    alive.append((now, x, y, 1.0))
+    return alive
+
+
+def _ink_splash_at(
+    layer: Image.Image,
+    dx: float,
+    base: float,
+    u: float,
+    *,
+    c1: tuple[int, int, int],
+    c2: tuple[int, int, int],
+    gain: float,
+    scale: float,
+    bw: int,
+    bh: int,
+    phase: float,
+    power: float,
+) -> None:
+    """单点落墨涟漪，u∈[0,1] 为动画进度。"""
+    fd = ImageDraw.Draw(layer)
+    fall = 0.34
+    pwr = min(2.0, max(1.0, power))
+    if u < fall:
+        v = u / fall
+        y = base - bh * 0.55 * (1.0 - v * v)
+        rr = (1.4 + 0.8 * v) * scale * (0.92 + 0.08 * pwr)
+        fd.ellipse((dx - rr, y - rr * 1.5, dx + rr, y + rr), fill=(*c1, int(220 * gain * pwr)))
+        fd.line((dx, y - rr * 3.2, dx, y - rr * 1.3), fill=(*c1, int(82 * gain)), width=max(1, int(scale)))
+    else:
+        v = (u - fall) / (1.0 - fall)
+        cloud_a = int(58 * gain * max(0.0, 1.0 - v * 1.1) * pwr)
+        if cloud_a > 4:
+            cloud = Image.new("RGBA", (layer.size[0], layer.size[1]), (0, 0, 0, 0))
+            _draw_closed(
+                ImageDraw.Draw(cloud),
+                _blob_pts(
+                    dx,
+                    base + (bh - base) * (0.16 + 0.32 * v),
+                    bw * 0.065 * (0.55 + v * 2.0) * pwr,
+                    (bh - base) * 0.12 * (0.55 + v * 1.3) * pwr,
+                    phase * 0.5,
+                ),
+                fill=(*c2, cloud_a),
+            )
+            layer.alpha_composite(cloud.filter(ImageFilter.GaussianBlur(radius=max(1.6, 2.4 * scale))))
+        for k, delay in enumerate((0.0, 0.12, 0.26, 0.42)):
+            vv = (v - delay) / max(0.05, 1.0 - delay)
+            if not 0.0 < vv < 1.0:
+                continue
+            fade = (1.0 - vv) ** 1.1
+            rx = 4.5 * scale + vv * bw * 0.34 * pwr
+            ry = max(1.0, rx * 0.16)
+            box = (dx - rx, base - ry, dx + rx, base + ry)
+            aa = int((148 - k * 24) * gain * fade * pwr)
+            if aa > 6:
+                w = 1 if k else max(1, int(round(1.5 * scale * (0.4 + fade))))
+                fd.arc(box, 12, 168, fill=(*c1, aa), width=w)
+                fd.arc(box, 196, 344, fill=(*c2, int(aa * 0.45)), width=1)
+        if v < 0.22:
+            fu = v / 0.22
+            for i in range(4):
+                s = (int(dx * 17 + dy_seed(dx)) + i * 104729) & 0xFFFF
+                sx = dx + ((s % 29) - 14) * 0.85 * scale * (0.4 + fu * 1.6)
+                sy = base - (3 + (s >> 5) % 6) * scale * (1.0 - fu)
+                pr = (0.9 + (s >> 9) % 2) * scale * (1.0 - fu)
+                if pr > 0.45:
+                    fd.ellipse((sx - pr, sy - pr, sx + pr, sy + pr), fill=(*c1, int(165 * gain * (1.0 - fu))))
+
+
+def dy_seed(x: float) -> int:
+    return int(x * 3.7) & 0xFFFF
+
+
+def paint_ink_click(
+    layer: Image.Image,
+    t: float,
+    cx: float,
+    cy: float,
+    *,
+    stage: str = "run",
+    light: bool = False,
+    power: float = 1.0,
+) -> None:
+    """点击落墨：墨滴飞向水面落点，再漾开涟漪。"""
+    if t < 0.0 or t > INK_CLICK_SEC:
+        return
+    bw, bh = layer.size
+    if bw < 40 or bh < 20:
+        return
+    c1, c2, _cs, gain = _ink_palette(stage, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    base = bh * _WATER_Y
+    dx = max(bw * 0.12, min(bw * 0.94, cx))
+    # 落点压到水面一带：点得高也落在水线上
+    u = min(1.0, t / (INK_CLICK_SEC * 0.92))
+    ink = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    _ink_splash_at(ink, dx, base, u, c1=c1, c2=c2, gain=gain, scale=scale, bw=bw, bh=bh, phase=t, power=power)
+    layer.alpha_composite(ink.filter(ImageFilter.GaussianBlur(radius=max(0.35, 0.5 * scale))))
+
+
+NEON_CLICK_SEC = 0.82
+NEON_BOOST_SEC = 1.55
+NEON_RECOIL_SEC = 0.14
+MAX_NEON_HITS = 5
+NEON_MERGE_RADIUS = 26.0
+NEON_MERGE_COOLDOWN = 0.16
+
+
+def register_neon_hit(
+    hits: list[tuple[float, int, int]],
+    now: float,
+    x: int,
+    y: int,
+) -> list[tuple[float, int, int]]:
+    """霓虹流光点击：登记一枪。"""
+    alive = [(s, hx, hy) for s, hx, hy in hits if now - s < NEON_CLICK_SEC]
+    r2 = NEON_MERGE_RADIUS * NEON_MERGE_RADIUS
+    for i, (s, hx, hy) in enumerate(alive):
+        if (x - hx) ** 2 + (y - hy) ** 2 <= r2:
+            if now - s < NEON_MERGE_COOLDOWN:
+                return alive
+            alive[i] = (now, x, y)
+            return alive
+    if len(alive) >= MAX_NEON_HITS:
+        alive.pop(0)
+    alive.append((now, x, y))
+    return alive
+
+
+def neon_flow_boost(hits: list[tuple[float, int, int]], now: float) -> float:
+    """最近点击带来的绕边加速 0~1。"""
+    boost = 0.0
+    for s, _x, _y in hits:
+        age = now - s
+        if age < NEON_BOOST_SEC:
+            k = 1.0 - age / NEON_BOOST_SEC
+            boost = max(boost, k * k)
+    return boost
+
+
+def neon_recoil(now: float, hit_times: list[float]) -> tuple[float, float]:
+    """后坐力绘制偏移（像素）。"""
+    dx = dy = 0.0
+    for s in hit_times:
+        age = now - s
+        if age < NEON_RECOIL_SEC:
+            k = 1.0 - age / NEON_RECOIL_SEC
+            # 轻微上抬 + 反冲
+            dx += math.sin(s * 17.3) * 2.2 * k
+            dy -= 3.0 * k
+    return dx, dy
+
+
+def paint_neon_reticle(
+    layer: Image.Image,
+    mx: float,
+    my: float,
+    phase: float,
+    *,
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    """跟随鼠标的瞄准环：比仪表十字更亮更大。"""
+    bw, bh = layer.size
+    if bw < 40 or bh < 20:
+        return
+    if mx < 0 or my < 0 or mx > bw or my > bh:
+        return
+    c1, c2, _period, gain = _stage_palette(stage, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    breath = 0.72 + 0.28 * math.sin(phase * 5.2)
+    d = ImageDraw.Draw(layer)
+    gap = max(3.0, bh * 0.055)
+    arm = max(10.0, bh * 0.19)
+    w = max(1, int(round(1.8 * scale)))
+    aa = int(175 * gain * breath)
+    for sign in (-1, 1):
+        d.line((mx + sign * gap, my, mx + sign * arm, my), fill=(*c1, aa), width=w)
+        d.line((mx, my + sign * gap, mx, my + sign * arm), fill=(*c2, aa), width=w)
+    r0 = max(5.0, bh * 0.075)
+    r1 = r0 + max(3.0, bh * 0.05)
+    d.ellipse((mx - r1, my - r1, mx + r1, my + r1), outline=(*c2, int(120 * gain * breath)), width=w)
+    d.ellipse((mx - r0, my - r0, mx + r0, my + r0), outline=(*c1, int(200 * gain * breath)), width=max(1, w - 1))
+    d.ellipse((mx - 2.2 * scale, my - 2.2 * scale, mx + 2.2 * scale, my + 2.2 * scale), fill=(255, 255, 255, int(210 * gain)))
+
+
+def paint_neon_shot(
+    layer: Image.Image,
+    t: float,
+    ox: float,
+    oy: float,
+    tx: float,
+    ty: float,
+    *,
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    """从仪表中心射向点击点的流光弹。"""
+    if t < 0.0 or t > NEON_CLICK_SEC:
+        return
+    bw, bh = layer.size
+    c1, c2, _period, gain = _stage_palette(stage, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    prog = min(1.0, t / 0.28)
+    ease = 1.0 - (1.0 - prog) ** 2.2
+    hx = ox + (tx - ox) * ease
+    hy = oy + (ty - oy) * ease
+    fade = max(0.0, 1.0 - max(0.0, t - 0.22) / 0.55)
+    glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    gd, cd = ImageDraw.Draw(glow), ImageDraw.Draw(core)
+    n_seg = 14
+    pts: list[tuple[float, float]] = []
+    for i in range(n_seg + 1):
+        k = i / n_seg
+        px = ox + (hx - ox) * k + math.sin(k * 9.0 + t * 22.0) * scale * 0.35 * (1.0 - k)
+        py = oy + (hy - oy) * k
+        pts.append((px, py))
+    for i in range(len(pts) - 1):
+        f = (1.0 - i / len(pts)) * fade
+        gd.line([pts[i], pts[i + 1]], fill=(*c2, int(150 * gain * f)), width=max(2, int(round(4.5 * scale * f))))
+        cd.line([pts[i], pts[i + 1]], fill=(255, 255, 255, int(220 * gain * f)), width=max(1, int(round(1.6 * scale * f))))
+    br = max(5.0, 10.0 * scale) * fade
+    gd.ellipse((hx - br, hy - br, hx + br, hy + br), fill=(*c1, int(120 * gain * fade)))
+    cd.ellipse((hx - br * 0.35, hy - br * 0.35, hx + br * 0.35, hy + br * 0.35), fill=(255, 255, 255, int(240 * gain * fade)))
+    if t < 0.12:
+        m = t / 0.12
+        mr = max(4.0, 8.0 * scale) * (1.0 - m * 0.4)
+        gd.ellipse((ox - mr, oy - mr, ox + mr, oy + mr), fill=(*c1, int(160 * gain * (1.0 - m))))
+    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(2.0, 3.2 * scale))))
+    layer.alpha_composite(core)
+
+
 # ---------------------------------------------------------------- 霹雳狂潮
 
 _STORM_CACHE: dict[tuple, Image.Image] = {}
@@ -989,6 +1264,44 @@ def _flash_env(g: float) -> float:
     return 0.0
 
 
+def _paint_edge_crawl(
+    bd: ImageDraw.ImageDraw,
+    gd: ImageDraw.ImageDraw,
+    cd: ImageDraw.ImageDraw,
+    point,
+    phase: float,
+    arc: tuple[int, int, int],
+    *,
+    gain: float,
+    scale: float,
+    n_runners: int,
+    seed: int,
+    env: float = 1.0,
+    alpha_k: float = 1.0,
+) -> None:
+    """沿圆角矩形边框爬行的电弧，起点/速度每周期随机。"""
+    if n_runners <= 0 or env < 0.02:
+        return
+    nxt = _rnd(seed)
+    for k in range(n_runners):
+        spd = 2.2 + nxt(50) / 18.0 + k * 0.35
+        head = (phase / spd + nxt(1000) / 1000.0) % 1.0
+        n_pt = 8 + nxt(4)
+        jig: list[tuple[float, float]] = []
+        for i in range(n_pt):
+            u = (head + i * 0.0065) % 1.0
+            px, py = point(u)
+            ax, ay = point((u + 0.002) % 1.0)
+            tx, ty = ax - px, ay - py
+            ln = math.hypot(tx, ty) or 1.0
+            amp = 0.0 if i in (0, n_pt - 1) else ((int(phase * 26) + i * 7 + k * 31 + seed) % 7 - 3) * 0.75 * scale
+            jig.append((px - ty / ln * amp, py + tx / ln * amp))
+        e = min(1.0, env * alpha_k)
+        bd.line(jig, fill=(*arc, int(62 * gain * e)), width=max(3, int(round(5.0 * scale))), joint="curve")
+        gd.line(jig, fill=(*arc, int(140 * gain * e)), width=max(2, int(round(2.2 * scale))), joint="curve")
+        cd.line(jig, fill=(236, 250, 255, int(190 * gain * e)), width=1, joint="curve")
+
+
 def _draw_bolt(
     bloom: ImageDraw.ImageDraw,
     glow: ImageDraw.ImageDraw,
@@ -1053,34 +1366,42 @@ def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, 
     core_im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     bd, gd, cd = ImageDraw.Draw(bloom_im), ImageDraw.Draw(glow_im), ImageDraw.Draw(core_im)
 
-    # 余电沿边爬：只在落雷那一下和余晖里出现。常驻的话就是几段乱窜的白虚线
+    _total, point = _perimeter(bw, bh, float(radius), 2.0)
+    cycle_seed = int(phase / period) * 7919 + 13
+    nxt_c = _rnd(cycle_seed)
+    # 常驻：每周期 4~7 道淡弧，起点随机，避免总在同几段边框上爬
+    n_amb = 4 + nxt_c(4)
+    _paint_edge_crawl(
+        bd, gd, cd, point, phase, arc,
+        gain=gain, scale=scale, n_runners=n_amb, seed=cycle_seed + 3,
+        env=0.42 if stage != "idle" else 0.28, alpha_k=0.55,
+    )
     if env > 0.06:
-        _total, point = _perimeter(bw, bh, float(radius), 2.0)
-        for k in range(2):
-            head = (phase / (3.4 + k * 1.9) + k * 0.5) % 1.0
-            n_pt = 9
-            jig: list[tuple[float, float]] = []
-            for i in range(n_pt):
-                u = (head + i * 0.006) % 1.0
-                px, py = point(u)
-                ax, ay = point((u + 0.002) % 1.0)
-                tx, ty = ax - px, ay - py
-                ln = math.hypot(tx, ty) or 1.0
-                # 沿边法线抖开才是锯齿电弧；顺切线抖只会得到一段歪线
-                amp = 0.0 if i in (0, n_pt - 1) else ((int(phase * 26) + i * 7 + k * 31) % 7 - 3) * 0.75 * scale
-                jig.append((px - ty / ln * amp, py + tx / ln * amp))
-            e = min(1.0, env * 1.2)
-            bd.line(jig, fill=(*arc, int(62 * gain * e)), width=max(3, int(round(5.0 * scale))), joint="curve")
-            gd.line(jig, fill=(*arc, int(140 * gain * e)), width=max(2, int(round(2.2 * scale))), joint="curve")
-            cd.line(jig, fill=(236, 250, 255, int(190 * gain * e)), width=1, joint="curve")
+        n_flash = 5 + nxt_c(4)
+        _paint_edge_crawl(
+            bd, gd, cd, point, phase, arc,
+            gain=gain, scale=scale, n_runners=n_flash, seed=cycle_seed + 97,
+            env=env, alpha_k=1.15,
+        )
 
     if env > (0.35 if stage == "idle" else 0.01):
-        seed = int(phase / period) * 7919 + 13
-        nxt = _rnd(seed)
-        # 主雷落在右侧，别糊住左边的大数字
-        x0 = bw * (0.50 + nxt(36) / 100.0)
+        seed = cycle_seed
+        nxt = nxt_c
+        # 主雷落点：左右上缘随机，仍尽量避开左侧大数字区
+        zone = nxt(5)
+        if zone == 0:
+            x0 = bw * (0.58 + nxt(30) / 100.0)
+            y1 = bh * (0.78 + nxt(22) / 100.0)
+        elif zone == 1:
+            x0 = bw * (0.72 + nxt(24) / 100.0)
+            y1 = bh * (0.55 + nxt(35) / 100.0)
+        elif zone == 2:
+            x0 = bw * (0.38 + nxt(28) / 100.0)
+            y1 = bh * (0.70 + nxt(26) / 100.0)
+        else:
+            x0 = bw * (0.48 + nxt(40) / 100.0)
+            y1 = bh * (0.35 + nxt(40) / 100.0)
         x1 = x0 + (nxt(240) / 1000.0 - 0.12) * bw
-        y1 = bh * (0.82 + nxt(28) / 100.0)  # 多半穿出下边缘，别在半空断掉
         main_pts = _bolt_pts(seed, x0, -2.0, x1, y1)
         _draw_bolt(bd, gd, cd, main_pts, arc, env=env, gain=gain, scale=scale)
         if y1 < bh:  # 落在卡内就砸出一团着地光
@@ -1417,7 +1738,7 @@ def paint_strike_conduct(
     strike_gain = gain * min(1.38, 0.88 + 0.22 * p)
     conduct_gain = gain * min(1.14, 0.94 + 0.08 * p)
     scale = max(0.7, min(2.4, bh / 92.0))
-    hit_u, hx, hy = _bottom_hit(bw, bh, float(radius), cx)
+    hit_u, hx, hy = _perim_u_at(bw, bh, float(radius), cx, cy)
     env = _strike_env(t)
     spread, cenv = _conduct_progress(t)
 

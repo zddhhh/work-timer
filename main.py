@@ -821,6 +821,10 @@ class WorkTimer:
         self._celebrate_until = 0.0
         self._thunder_hits: list[tuple[float, int, int, float, int]] = []  # start,x,y,power,quote_idx
         self._thunder_quote_step = 0
+        self._ink_hits: list[tuple[float, int, int, float]] = []
+        self._neon_hits: list[tuple[float, int, int]] = []
+        self._mouse_lx = -1
+        self._mouse_ly = -1
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -829,6 +833,7 @@ class WorkTimer:
 
         self.win = layered_win.LayeredPetWindow(w, h, "下班倒计时")
         self.win.set_left_click_handler(self._on_click)
+        self.win.set_mouse_move_handler(self._on_mouse_move)
         self.win.set_right_click_handler(self._request_menu)
         self._esc_hidden = False
 
@@ -1251,7 +1256,7 @@ class WorkTimer:
             self._kinetic = None
             self._last_key = ""
             return
-        self._maybe_bite(lx, ly)
+        self._maybe_skin_interact(lx, ly)
         schedules.ensure_fields(self.cfg)
         aid = schedules.active_id(self.cfg)
         # 下班项空闲「点我开始」始终进设置，不要被多日程轮换抢走
@@ -1269,17 +1274,35 @@ class WorkTimer:
         dur = ornaments.BITE_SEC
         self._thunder_hits = [(s, x, y, p, q) for s, x, y, p, q in self._thunder_hits if now - s < dur]
 
-    def _maybe_bite(self, lx: int, ly: int) -> None:
-        """霹雳狂潮：远处可叠多道；同处连点合并刷新，避免糊屏。"""
-        if self._theme().kind != "thunder":
+    def _prune_ink_hits(self, now: float) -> None:
+        self._ink_hits = [(s, x, y, p) for s, x, y, p in self._ink_hits if now - s < ornaments.INK_CLICK_SEC]
+
+    def _prune_neon_hits(self, now: float) -> None:
+        self._neon_hits = [(s, x, y) for s, x, y in self._neon_hits if now - s < ornaments.NEON_CLICK_SEC]
+
+    def _on_mouse_move(self, lx: int, ly: int) -> None:
+        if self._esc_hidden or self._theme().kind != "neonflow":
             return
+        if abs(lx - self._mouse_lx) > 2 or abs(ly - self._mouse_ly) > 2:
+            self._mouse_lx, self._mouse_ly = lx, ly
+            self._last_key = ""
+
+    def _maybe_skin_interact(self, lx: int, ly: int) -> None:
+        """特效皮点击互动：霹雳狂潮落雷 / 墨水落墨 / 霓虹射击。"""
+        kind = self._theme().kind
         now = time.monotonic()
-        hits, nxt = ornaments.register_thunder_hit(
-            self._thunder_hits, now, int(lx), int(ly), self._thunder_quote_step,
-        )
-        self._thunder_hits = hits
-        if nxt is not None:
-            self._thunder_quote_step = nxt
+        if kind == "thunder":
+            hits, nxt = ornaments.register_thunder_hit(
+                self._thunder_hits, now, int(lx), int(ly), self._thunder_quote_step,
+            )
+            self._thunder_hits = hits
+            if nxt is not None:
+                self._thunder_quote_step = nxt
+        elif kind == "inkpulse":
+            self._ink_hits = ornaments.register_ink_hit(self._ink_hits, now, int(lx), int(ly))
+        elif kind == "neonflow":
+            self._neon_hits = ornaments.register_neon_hit(self._neon_hits, now, int(lx), int(ly))
+            self._last_key = ""
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("ctrl_hide"))
@@ -2583,10 +2606,25 @@ class WorkTimer:
             if celebrating:
                 key = f"{key}-c{int(phase * 30)}"
             self._prune_thunder_hits(phase)
+            self._prune_ink_hits(phase)
+            self._prune_neon_hits(phase)
             thunder_hits = self._thunder_hits
+            ink_hits = self._ink_hits
+            neon_hits = self._neon_hits
+            neon_boost = ornaments.neon_flow_boost(neon_hits, phase) if theme.kind == "neonflow" else 0.0
             if thunder_hits:
                 sig = "-".join(f"{int((phase - s) * 45)}:{p:.1f}:{q}" for s, _, _, p, q in thunder_hits)
                 key = f"{key}-t{len(thunder_hits)}-{sig}"
+            if ink_hits:
+                sig = "-".join(f"{int((phase - s) * 40)}:{p:.1f}" for s, _, _, p in ink_hits)
+                key = f"{key}-i{len(ink_hits)}-{sig}"
+            if neon_hits:
+                sig = "-".join(str(int((phase - s) * 55)) for s, _, _ in neon_hits)
+                key = f"{key}-n{len(neon_hits)}-{sig}"
+            if theme.kind == "neonflow" and self._mouse_lx >= 0:
+                key = f"{key}-m{self._mouse_lx // 3}-{self._mouse_ly // 3}"
+            if neon_boost > 0.02:
+                key = f"{key}-b{int(neon_boost * 24)}"
 
             if key == self._last_key:
                 return
@@ -2616,6 +2654,7 @@ class WorkTimer:
                     env_rgb=self._env_rgb,
                     surface=surface,
                     thunder_glyphs=thunder_glyphs,
+                    neon_boost=neon_boost,
                 )
                 kinetic.paint(
                     img,
@@ -2644,6 +2683,7 @@ class WorkTimer:
                     env_rgb=self._env_rgb,
                     surface=surface,
                     thunder_glyphs=thunder_glyphs,
+                    neon_boost=neon_boost,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -2666,6 +2706,37 @@ class WorkTimer:
                     cy=by - 4,
                     power=power,
                 )
+            for start, bx, by, power in ink_hits:
+                ornaments.paint_ink_splash(
+                    img,
+                    box,
+                    phase - start,
+                    cx=bx - 4,
+                    cy=by - 4,
+                    stage=stage,
+                    light=(surface == "light"),
+                    radius=rr,
+                    power=power,
+                )
+            if theme.kind == "neonflow":
+                mouse_xy = None
+                if self._mouse_lx >= 0 and self._mouse_ly >= 0:
+                    mouse_xy = (float(self._mouse_lx - 4), float(self._mouse_ly - 4))
+                ornaments.paint_neon_overlay(
+                    img,
+                    box,
+                    phase=phase,
+                    mouse_xy=mouse_xy,
+                    shots=neon_hits,
+                    stage=stage,
+                    light=(surface == "light"),
+                    radius=rr,
+                )
+                rdx, rdy = ornaments.neon_recoil(phase, [s for s, _, _ in neon_hits])
+                if abs(rdx) > 0.05 or abs(rdy) > 0.05:
+                    shifted = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                    shifted.alpha_composite(img, (int(round(rdx)), int(round(rdy))))
+                    img = shifted
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
             self._last_key = key
@@ -2765,6 +2836,8 @@ class WorkTimer:
                 self._paint()
                 now = time.monotonic()
                 self._prune_thunder_hits(now)
+                self._prune_ink_hits(now)
+                self._prune_neon_hits(now)
                 if now - last_save > 1.5:
                     self._persist_pos()
                     last_save = now
@@ -2775,6 +2848,12 @@ class WorkTimer:
                     ornaments.is_animated(self._theme().kind)
                     or now < self._celebrate_until
                     or bool(self._thunder_hits)
+                    or bool(self._ink_hits)
+                    or bool(self._neon_hits)
+                    or (
+                        self._theme().kind == "neonflow"
+                        and self._mouse_lx >= 0
+                    )
                 ):
                     time.sleep(1.0 / FPS)
                 else:

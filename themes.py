@@ -460,6 +460,7 @@ def paint_card(
     env_rgb: tuple[int, int, int] | None = None,
     surface: str = "dark",
     thunder_glyphs: list[tuple[float, int, int, int]] | None = None,
+    neon_boost: float = 0.0,
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (4, 4, w - 5, h - 5)
@@ -515,6 +516,7 @@ def paint_card(
                 stage=stage,
                 env_rgb=env_rgb,
                 radius=r,
+                neon_boost=neon_boost if kind == "neonflow" else 0.0,
             )
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))

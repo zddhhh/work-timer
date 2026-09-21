@@ -517,6 +517,24 @@ class FxTests(unittest.TestCase):
 
         self.assertGreater(centroid(190), centroid(70) + 80)
 
+    def test_ink_click_visible(self):
+        import fx
+
+        layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        fx.paint_ink_click(layer, 0.55, 180, 46, stage="run")
+        self.assertGreater(max(layer.getchannel("A").getdata()), 40)
+
+    def test_neon_shot_and_boost(self):
+        import fx
+
+        layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        fx.paint_neon_shot(layer, 0.12, 124, 44, 200, 50, stage="run")
+        self.assertGreater(max(layer.getchannel("A").getdata()), 30)
+        t0 = 1000.0
+        hits = fx.register_neon_hit([], t0, 120, 46)
+        self.assertEqual(len(hits), 1)
+        self.assertGreater(fx.neon_flow_boost(hits, t0 + 0.2), 0.5)
+
     def test_inkpulse_visible(self):
         import fx
 

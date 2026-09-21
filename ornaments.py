@@ -233,6 +233,12 @@ BITE_SEC = fx.BITE_SEC
 MAX_THUNDER_HITS = fx.MAX_THUNDER_HITS
 register_thunder_hit = fx.register_thunder_hit
 thunder_fps = fx.thunder_fps
+INK_CLICK_SEC = fx.INK_CLICK_SEC
+register_ink_hit = fx.register_ink_hit
+NEON_CLICK_SEC = fx.NEON_CLICK_SEC
+register_neon_hit = fx.register_neon_hit
+neon_flow_boost = fx.neon_flow_boost
+neon_recoil = fx.neon_recoil
 
 
 def paint_bite(
@@ -264,6 +270,49 @@ def paint_bite(
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
 
 
+def paint_ink_splash(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    t: float,
+    *,
+    cx: int,
+    cy: int,
+    stage: str = "run",
+    light: bool = False,
+    radius: int = 0,
+    power: float = 1.0,
+) -> None:
+    """墨水涟漪：点击落墨。画在文字之上。"""
+    x0, y0, x1, y1 = box
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    fx.paint_ink_click(layer, t, cx, cy, stage=stage, light=light, power=power)
+    img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+
+
+def paint_neon_overlay(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    *,
+    phase: float,
+    mouse_xy: tuple[float, float] | None,
+    shots: list[tuple[float, int, int]],
+    stage: str = "run",
+    light: bool = False,
+    radius: int = 0,
+) -> None:
+    """霓虹流光：准星 + 射击轨迹。"""
+    x0, y0, x1, y1 = box
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    ox, oy = bw * 0.52, bh * 0.48
+    if mouse_xy is not None:
+        fx.paint_neon_reticle(layer, mouse_xy[0], mouse_xy[1], phase, stage=stage, light=light)
+    for start, tx, ty in shots:
+        fx.paint_neon_shot(layer, phase - start, ox, oy, float(tx), float(ty), stage=stage, light=light)
+    img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+
+
 def paint_thunder_glyph(
     img: Image.Image,
     box: tuple[int, int, int, int],
@@ -292,6 +341,7 @@ def paste_skin(
     stage: str = "run",
     env_rgb: tuple[int, int, int] | None = None,
     radius: int = 0,
+    neon_boost: float = 0.0,
 ) -> bool:
     """把对应皮肤的生图贴进圆角卡片（含四个圆角弧）；程序化皮直接按帧画。"""
     x0, y0, x1, y1 = box
@@ -301,7 +351,9 @@ def paste_skin(
     if kind in _PROC_KINDS:
         layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         if kind == "neonflow":
-            fx.paint_neonflow(layer, phase, stage=stage, radius=int(radius), light=light)
+            fx.paint_neonflow(
+                layer, phase, stage=stage, radius=int(radius), light=light, flow_boost=neon_boost,
+            )
         elif kind == "inkpulse":
             fx.paint_inkpulse(layer, phase, stage=stage, radius=int(radius), light=light)
         elif kind == "thunder":

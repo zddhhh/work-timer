@@ -324,6 +324,7 @@ class LayeredPetWindow:
         self.y = 0
         self._on_right_click: Callable[[int, int], None] | None = None
         self._on_left_click: Callable[[int, int], None] | None = None
+        self._on_mouse_move: Callable[[int, int], None] | None = None
         self._dragging = False
         self._resizing = False
         self._drag_moved = False
@@ -462,6 +463,10 @@ class LayeredPetWindow:
     def set_left_click_handler(self, fn: Callable[[int, int], None]) -> None:
         """左键单击回调，参数为窗口内坐标 (lx, ly)。"""
         self._on_left_click = fn
+
+    def set_mouse_move_handler(self, fn: Callable[[int, int], None] | None) -> None:
+        """鼠标在客户区内移动，参数为窗口内坐标 (lx, ly)。"""
+        self._on_mouse_move = fn
 
     def _on_win_event(self, _hook, event, hwnd, _obj, _child, _thread, _time) -> None:
         self._desktop_changed = True
@@ -616,11 +621,14 @@ class LayeredPetWindow:
         if msg == WM_MOUSEMOVE and not self._dragging and not self._resizing:
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
-            left, right, top, bottom = self._edge_hit(pt.x - self.x, pt.y - self.y)
+            lx, ly = int(pt.x - self.x), int(pt.y - self.y)
+            left, right, top, bottom = self._edge_hit(lx, ly)
             if any((left, right, top, bottom)):
                 self._set_edge_cursor(left, right, top, bottom)
             else:
                 user32.SetCursor(user32.LoadCursorW(None, IDC_ARROW))
+            if self._on_mouse_move and 0 <= lx < self.width and 0 <= ly < self.height:
+                self._on_mouse_move(lx, ly)
         if msg == WM_LBUTTONDOWN:
             if not self.drag_enabled:
                 return 0
