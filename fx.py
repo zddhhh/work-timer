@@ -1517,24 +1517,25 @@ def paint_thunder_glyph(
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     char = THUNDER_QUOTE[quote_idx % len(THUNDER_QUOTE)]
     arc, cloud, _period, gain = _thunder_palette(stage, light=light)
-    ink = tuple(int(arc[i] * 0.42 + cloud[i] * 0.58) for i in range(3))
+    ink = tuple(int(arc[i] * 0.62 + cloud[i] * 0.38) for i in range(3))
+    core = tuple(min(255, int(arc[i] * 0.35 + 220)) for i in range(3))
 
     if t < 0.22:
-        env = (t / 0.22) ** 1.35
+        env = (t / 0.22) ** 1.25
         flash = min(1.0, t / 0.11) ** 0.8
     elif t < 1.55:
-        env = 0.78 + 0.22 * math.sin((t - 0.22) * 1.85)
+        env = 0.90 + 0.10 * math.sin((t - 0.22) * 1.85)
         flash = 0.0
     else:
         env = max(0.0, 1.0 - (t - 1.55) / 0.65) ** 1.05
         flash = 0.0
     if t < 0.34:
-        flash = max(flash, (1.0 - t / 0.34) * 0.55)
+        flash = max(flash, (1.0 - t / 0.34) * 0.72)
     if env < 0.04:
         return
 
     font = _glyph_font(bh, bw)
-    pad = max(8, int(bh * 0.18))
+    pad = max(8, int(bh * 0.14))
     canv = Image.new("RGBA", (bw + pad * 2, bh + pad * 2), (0, 0, 0, 0))
     d = ImageDraw.Draw(canv)
     bbox = d.textbbox((0, 0), char, font=font)
@@ -1542,25 +1543,33 @@ def paint_thunder_glyph(
     nxt = _rnd(quote_idx * 991 + 17)
     ox = (canv.width - tw) // 2 - bbox[0] + (nxt(9) - 4)
     oy = (canv.height - th) // 2 - bbox[1] + (nxt(7) - 3)
-    rot = (nxt(11) - 5) * 0.65
+    rot = (nxt(11) - 5) * 0.55
+    stroke = max(2, int(bh / 28))
 
-    body_a = int(46 * env * gain)
-    glow_a = int(28 * env * gain)
-    rim_a = int((22 + 48 * flash) * env * gain)
-    if body_a < 3:
+    body_a = min(255, int(118 * env * gain))
+    glow_a = min(255, int(72 * env * gain))
+    rim_a = min(255, int((48 + 72 * flash) * env * gain))
+    if body_a < 8:
         return
 
-    for dx, dy, k in ((0, 0, 1.0), (2, 1, 0.45), (-1, 2, 0.35)):
+    for dx, dy, k in ((0, 0, 1.0), (2, 1, 0.55), (-2, 1, 0.45), (1, -1, 0.38)):
         d.text(
             (ox + dx, oy + dy),
             char,
             font=font,
             fill=(*arc, int(glow_a * k)),
-            stroke_width=max(1, int(bh / 36)),
-            stroke_fill=(*arc, int(glow_a * 0.35 * k)),
+            stroke_width=stroke,
+            stroke_fill=(*arc, int(glow_a * 0.55 * k)),
         )
-    d.text((ox, oy), char, font=font, fill=(*ink, body_a))
-    d.text((ox - 1, oy - 2), char, font=font, fill=(255, 252, 248, rim_a))
+    d.text(
+        (ox, oy),
+        char,
+        font=font,
+        fill=(*ink, body_a),
+        stroke_width=stroke,
+        stroke_fill=(12, 16, 28, min(255, int(body_a * 0.55))),
+    )
+    d.text((ox - 1, oy - 2), char, font=font, fill=(*core, rim_a))
 
     if abs(rot) > 0.2:
         canv = canv.rotate(rot, resample=Image.Resampling.BICUBIC, expand=False)
@@ -1568,13 +1577,16 @@ def paint_thunder_glyph(
     mask = Image.new("L", canv.size, 0)
     md = ImageDraw.Draw(mask)
     cx, cy = canv.width // 2, canv.height // 2
-    rx, ry = max(12, int(tw * 0.62)), max(10, int(th * 0.68))
-    md.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=min(255, int(body_a * 3.2)))
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(5.0, bh * 0.11)))
-    canv.putalpha(ImageChops.multiply(canv.getchannel("A"), mask))
+    rx, ry = max(14, int(tw * 0.72)), max(12, int(th * 0.78))
+    md.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(4.0, bh * 0.08)))
+    fade = mask.point(lambda v: min(255, int(v * (0.55 + 0.45 * env))))
+    canv.putalpha(ImageChops.multiply(canv.getchannel("A"), fade))
 
-    mist = canv.filter(ImageFilter.GaussianBlur(radius=max(2.5, bh * 0.05)))
-    lx = x0 + (bw - canv.width) // 2
+    mist = canv.filter(ImageFilter.GaussianBlur(radius=max(2.0, bh * 0.038)))
+    # 靠右放，少被左侧大数字挡住
+    lx = x0 + int(bw * 0.66) - canv.width // 2
+    lx = max(x0 + 2, min(lx, x0 + bw - canv.width - 2))
     ly = y0 + (bh - canv.height) // 2 + int(bh * 0.02)
     layer.alpha_composite(mist, (lx, ly))
     layer.alpha_composite(canv, (lx, ly))
