@@ -94,8 +94,8 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 霹雳狂潮单字台词加亮，描边更粗更好认\n"
-    "- 字移到卡片右侧，少被倒计时挡住"
+    "- 霹雳狂潮单字台词跟随点击位置显示\n"
+    "- 多处连击时各字各跟落点"
 )
 
 

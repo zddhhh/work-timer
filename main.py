@@ -2591,10 +2591,12 @@ class WorkTimer:
             if key == self._last_key:
                 return
 
-            thunder_glyph = None
+            thunder_glyphs = None
             if theme.kind == "thunder" and thunder_hits:
-                q_start, _, _, _, qidx = max(thunder_hits, key=lambda h: h[0])
-                thunder_glyph = (phase - q_start, qidx)
+                thunder_glyphs = [
+                    (phase - start, qidx, bx, by)
+                    for start, bx, by, _power, qidx in thunder_hits
+                ]
 
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             if kinetic.playing(self._kinetic, phase):
@@ -2613,7 +2615,7 @@ class WorkTimer:
                     stage=stage,
                     env_rgb=self._env_rgb,
                     surface=surface,
-                    thunder_glyph=thunder_glyph,
+                    thunder_glyphs=thunder_glyphs,
                 )
                 kinetic.paint(
                     img,
@@ -2641,7 +2643,7 @@ class WorkTimer:
                     stage=stage,
                     env_rgb=self._env_rgb,
                     surface=surface,
-                    thunder_glyph=thunder_glyph,
+                    thunder_glyphs=thunder_glyphs,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:

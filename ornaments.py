@@ -270,11 +270,17 @@ def paint_thunder_glyph(
     t: float,
     quote_idx: int,
     *,
+    anchor_x: float | None = None,
+    anchor_y: float | None = None,
     stage: str = "run",
     light: bool = False,
 ) -> None:
-    """霹雳狂潮单字水墨底纹，画在倒计时数字下层。"""
-    fx.paint_thunder_glyph(img, box, t, quote_idx, stage=stage, light=light)
+    """霹雳狂潮单字水墨底纹，锚在点击处、画在倒计时数字下层。"""
+    fx.paint_thunder_glyph(
+        img, box, t, quote_idx,
+        anchor_x=anchor_x, anchor_y=anchor_y,
+        stage=stage, light=light,
+    )
 
 
 def paste_skin(

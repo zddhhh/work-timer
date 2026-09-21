@@ -495,10 +495,10 @@ class FxTests(unittest.TestCase):
         self.assertEqual(fx.THUNDER_QUOTE, "我命由我不由天")
         layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
         box = (4, 4, 244, 88)
-        fx.paint_thunder_glyph(layer, box, 0.35, 0, stage="run")
+        fx.paint_thunder_glyph(layer, box, 0.35, 0, anchor_x=180, anchor_y=46, stage="run")
         a0 = max(layer.getchannel("A").getdata())
         blank = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-        fx.paint_thunder_glyph(blank, box, 3.0, 0, stage="run")
+        fx.paint_thunder_glyph(blank, box, 3.0, 0, anchor_x=180, anchor_y=46, stage="run")
         self.assertGreater(a0, 24)
         self.assertEqual(max(blank.getchannel("A").getdata()), 255)  # 过期帧不画
 

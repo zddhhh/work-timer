@@ -1507,10 +1507,12 @@ def paint_thunder_glyph(
     t: float,
     quote_idx: int,
     *,
+    anchor_x: float | None = None,
+    anchor_y: float | None = None,
     stage: str = "run",
     light: bool = False,
 ) -> None:
-    """每次只亮一个字：大号水墨电纹，融进雷云底里（画在倒计时数字下层）。"""
+    """每次只亮一个字：大号水墨电纹，锚在点击处（画在倒计时数字下层）。"""
     if t < 0.0 or t > CLICK_SEC * 0.92 or not THUNDER_QUOTE:
         return
     x0, y0, x1, y1 = box
@@ -1584,9 +1586,11 @@ def paint_thunder_glyph(
     canv.putalpha(ImageChops.multiply(canv.getchannel("A"), fade))
 
     mist = canv.filter(ImageFilter.GaussianBlur(radius=max(2.0, bh * 0.038)))
-    # 靠右放，少被左侧大数字挡住
-    lx = x0 + int(bw * 0.66) - canv.width // 2
-    lx = max(x0 + 2, min(lx, x0 + bw - canv.width - 2))
-    ly = y0 + (bh - canv.height) // 2 + int(bh * 0.02)
+    ax = anchor_x if anchor_x is not None else (x0 + x1) * 0.5
+    ay = anchor_y if anchor_y is not None else (y0 + y1) * 0.5
+    lx = int(ax - canv.width / 2)
+    ly = int(ay - canv.height / 2)
+    lx = max(x0 + 2, min(lx, x1 - canv.width - 2))
+    ly = max(y0 + 2, min(ly, y1 - canv.height - 2))
     layer.alpha_composite(mist, (lx, ly))
     layer.alpha_composite(canv, (lx, ly))

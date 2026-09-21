@@ -459,7 +459,7 @@ def paint_card(
     stage: str = "run",
     env_rgb: tuple[int, int, int] | None = None,
     surface: str = "dark",
-    thunder_glyph: tuple[float, int] | None = None,
+    thunder_glyphs: list[tuple[float, int, int, int]] | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (4, 4, w - 5, h - 5)
@@ -531,16 +531,18 @@ def paint_card(
                 outline=(255, 255, 255, rim_a) if pale_rim else (255, 248, 236, rim_a),
                 width=1,
             )
-            if kind == "thunder" and thunder_glyph is not None:
-                gt, gidx = thunder_glyph
-                ornaments.paint_thunder_glyph(
-                    img,
-                    box,
-                    gt,
-                    gidx,
-                    stage=stage,
-                    light=wallpaper_light,
-                )
+            if kind == "thunder" and thunder_glyphs:
+                for gt, gidx, gx, gy in thunder_glyphs:
+                    ornaments.paint_thunder_glyph(
+                        img,
+                        box,
+                        gt,
+                        gidx,
+                        anchor_x=float(gx),
+                        anchor_y=float(gy),
+                        stage=stage,
+                        light=wallpaper_light,
+                    )
         else:
             d.rounded_rectangle((8, 10, w - 3, h - 2), radius=r + 1, fill=(0, 0, 0, 40))
             # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
