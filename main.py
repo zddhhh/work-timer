@@ -822,10 +822,9 @@ class WorkTimer:
         self._thunder_hits: list[tuple[float, int, int, float, int]] = []  # start,x,y,power,quote_idx
         self._thunder_quote_step = 0
         self._ink_hits: list[tuple[float, int, int, float]] = []
-        self._neon_hits: list[tuple[float, int, int]] = []
+        self._neon_ammo = ornaments.create_neon_ammo()
         self._mouse_lx = -1
         self._mouse_ly = -1
-        self._neon_boost_smooth = 0.0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -1278,8 +1277,10 @@ class WorkTimer:
     def _prune_ink_hits(self, now: float) -> None:
         self._ink_hits = [(s, x, y, p) for s, x, y, p in self._ink_hits if now - s < ornaments.INK_CLICK_SEC]
 
-    def _prune_neon_hits(self, now: float) -> None:
-        self._neon_hits = [(s, x, y) for s, x, y in self._neon_hits if now - s < ornaments.NEON_CLICK_SEC]
+    def _neon_needs_frames(self, now: float) -> bool:
+        if any(p < 0.98 for p in self._neon_ammo.present):
+            return True
+        return bool(self._neon_ammo.shots)
 
     def _on_mouse_move(self, lx: int, ly: int) -> None:
         if self._esc_hidden or self._theme().kind != "neonflow":
@@ -1302,7 +1303,16 @@ class WorkTimer:
         elif kind == "inkpulse":
             self._ink_hits = ornaments.register_ink_hit(self._ink_hits, now, int(lx), int(ly))
         elif kind == "neonflow":
-            self._neon_hits = ornaments.register_neon_hit(self._neon_hits, now, int(lx), int(ly))
+            rr = min(self._theme().radius, max(8, self._win_h // 5))
+            ornaments.neon_try_fire(
+                self._neon_ammo,
+                now,
+                float(lx - 4),
+                float(ly - 4),
+                bw=max(1, self._win_w - 9),
+                bh=max(1, self._win_h - 9),
+                radius=rr,
+            )
             self._last_key = ""
 
     def _esc_disguise_on(self) -> bool:
@@ -2608,30 +2618,21 @@ class WorkTimer:
                 key = f"{key}-c{int(phase * 30)}"
             self._prune_thunder_hits(phase)
             self._prune_ink_hits(phase)
-            self._prune_neon_hits(phase)
             thunder_hits = self._thunder_hits
             ink_hits = self._ink_hits
-            neon_hits = self._neon_hits
+            neon_sig = ""
             if theme.kind == "neonflow":
-                target_boost = ornaments.neon_flow_boost(neon_hits, phase)
-                self._neon_boost_smooth += (target_boost - self._neon_boost_smooth) * 0.26
-                neon_boost = self._neon_boost_smooth
-            else:
-                self._neon_boost_smooth = 0.0
-                neon_boost = 0.0
+                neon_sig = ornaments.neon_ammo_signature(self._neon_ammo, phase)
             if thunder_hits:
                 sig = "-".join(f"{int((phase - s) * 45)}:{p:.1f}:{q}" for s, _, _, p, q in thunder_hits)
                 key = f"{key}-t{len(thunder_hits)}-{sig}"
             if ink_hits:
                 sig = "-".join(f"{int((phase - s) * 40)}:{p:.1f}" for s, _, _, p in ink_hits)
                 key = f"{key}-i{len(ink_hits)}-{sig}"
-            if neon_hits:
-                sig = "-".join(str(int((phase - s) * 55)) for s, _, _ in neon_hits)
-                key = f"{key}-n{len(neon_hits)}-{sig}"
+            if neon_sig:
+                key = f"{key}-n{neon_sig}"
             if theme.kind == "neonflow" and self._mouse_lx >= 0:
                 key = f"{key}-m{self._mouse_lx // 3}-{self._mouse_ly // 3}"
-            if neon_boost > 0.02:
-                key = f"{key}-b{int(neon_boost * 40)}"
 
             if key == self._last_key:
                 return
@@ -2661,7 +2662,8 @@ class WorkTimer:
                     env_rgb=self._env_rgb,
                     surface=surface,
                     thunder_glyphs=thunder_glyphs,
-                    neon_boost=neon_boost,
+                    neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
+                    neon_now=phase,
                 )
                 kinetic.paint(
                     img,
@@ -2690,7 +2692,8 @@ class WorkTimer:
                     env_rgb=self._env_rgb,
                     surface=surface,
                     thunder_glyphs=thunder_glyphs,
-                    neon_boost=neon_boost,
+                    neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
+                    neon_now=phase,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -2732,14 +2735,15 @@ class WorkTimer:
                 ornaments.paint_neon_overlay(
                     img,
                     box,
+                    ammo=self._neon_ammo,
+                    now=phase,
                     phase=phase,
                     mouse_xy=mouse_xy,
-                    shots=neon_hits,
                     stage=stage,
                     light=(surface == "light"),
                     radius=rr,
                 )
-                rdx, rdy = ornaments.neon_recoil(phase, [s for s, _, _ in neon_hits])
+                rdx, rdy = ornaments.neon_recoil(phase, self._neon_ammo)
                 if abs(rdx) > 0.05 or abs(rdy) > 0.05:
                     shifted = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                     shifted.alpha_composite(img, (int(round(rdx)), int(round(rdy))))
@@ -2844,7 +2848,6 @@ class WorkTimer:
                 now = time.monotonic()
                 self._prune_thunder_hits(now)
                 self._prune_ink_hits(now)
-                self._prune_neon_hits(now)
                 if now - last_save > 1.5:
                     self._persist_pos()
                     last_save = now
@@ -2856,10 +2859,9 @@ class WorkTimer:
                     or now < self._celebrate_until
                     or bool(self._thunder_hits)
                     or bool(self._ink_hits)
-                    or bool(self._neon_hits)
                     or (
                         self._theme().kind == "neonflow"
-                        and self._mouse_lx >= 0
+                        and (self._mouse_lx >= 0 or self._neon_needs_frames(now))
                     )
                 ):
                     time.sleep(1.0 / FPS)

@@ -236,9 +236,11 @@ thunder_fps = fx.thunder_fps
 INK_CLICK_SEC = fx.INK_CLICK_SEC
 register_ink_hit = fx.register_ink_hit
 NEON_CLICK_SEC = fx.NEON_CLICK_SEC
-register_neon_hit = fx.register_neon_hit
-neon_flow_boost = fx.neon_flow_boost
+create_neon_ammo = fx.create_neon_ammo
+neon_try_fire = fx.neon_try_fire
+neon_ammo_signature = fx.neon_ammo_signature
 neon_recoil = fx.neon_recoil
+NeonAmmo = fx.NeonAmmo
 
 
 def paint_bite(
@@ -294,22 +296,21 @@ def paint_neon_overlay(
     img: Image.Image,
     box: tuple[int, int, int, int],
     *,
+    ammo: fx.NeonAmmo,
+    now: float,
     phase: float,
     mouse_xy: tuple[float, float] | None,
-    shots: list[tuple[float, int, int]],
     stage: str = "run",
     light: bool = False,
     radius: int = 0,
 ) -> None:
-    """霓虹流光：准星 + 射击轨迹。"""
+    """霓虹流光：准星 + 汇中后射出的光束。"""
     x0, y0, x1, y1 = box
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    ox, oy = bw * 0.52, bh * 0.48
     if mouse_xy is not None:
         fx.paint_neon_reticle(layer, mouse_xy[0], mouse_xy[1], phase, stage=stage, light=light)
-    for start, tx, ty in shots:
-        fx.paint_neon_shot(layer, phase - start, ox, oy, float(tx), float(ty), stage=stage, light=light)
+    fx.paint_neon_active_shots(layer, ammo, now, stage=stage, light=light)
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
 
 
@@ -341,7 +342,8 @@ def paste_skin(
     stage: str = "run",
     env_rgb: tuple[int, int, int] | None = None,
     radius: int = 0,
-    neon_boost: float = 0.0,
+    neon_ammo: fx.NeonAmmo | None = None,
+    neon_now: float = 0.0,
 ) -> bool:
     """把对应皮肤的生图贴进圆角卡片（含四个圆角弧）；程序化皮直接按帧画。"""
     x0, y0, x1, y1 = box
@@ -352,7 +354,13 @@ def paste_skin(
         layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         if kind == "neonflow":
             fx.paint_neonflow(
-                layer, phase, stage=stage, radius=int(radius), light=light, flow_boost=neon_boost,
+                layer,
+                phase,
+                stage=stage,
+                radius=int(radius),
+                light=light,
+                ammo=neon_ammo,
+                ammo_now=neon_now if neon_ammo is not None else phase,
             )
         elif kind == "inkpulse":
             fx.paint_inkpulse(layer, phase, stage=stage, radius=int(radius), light=light)

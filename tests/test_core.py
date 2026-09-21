@@ -524,16 +524,19 @@ class FxTests(unittest.TestCase):
         fx.paint_ink_click(layer, 0.55, 180, 46, stage="run")
         self.assertGreater(max(layer.getchannel("A").getdata()), 40)
 
-    def test_neon_shot_and_boost(self):
+    def test_neon_bullet_shot_cycle(self):
         import fx
 
         layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-        fx.paint_neon_shot(layer, 0.12, 124, 44, 200, 50, stage="run")
+        fx.paint_neon_fire_shot(layer, 0.12, 124, 44, 200, 50, stage="run")
         self.assertGreater(max(layer.getchannel("A").getdata()), 30)
+        ammo = fx.create_neon_ammo()
         t0 = 1000.0
-        hits = fx.register_neon_hit([], t0, 120, 46)
-        self.assertEqual(len(hits), 1)
-        self.assertGreater(fx.neon_flow_boost(hits, t0 + 0.2), 0.5)
+        self.assertTrue(fx.neon_try_fire(ammo, t0, 180, 50, bw=240, bh=84, radius=14))
+        self.assertEqual(len(ammo.shots), 1)
+        self.assertLess(ammo.present[ammo.shots[0][1]], 0.1)
+        fx.neon_tick(ammo, t0 + fx.NEON_GATHER_SEC + fx.NEON_FIRE_SEC + 0.4)
+        self.assertGreater(ammo.present[ammo.shots[0][1]], 0.2)
 
     def test_inkpulse_visible(self):
         import fx
