@@ -857,12 +857,37 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
 _STORM_CACHE: dict[tuple, Image.Image] = {}
 CLICK_SEC = 2.35  # 单次点击：蓄力→狠雷→劈底→沿边电涌绕一圈→余烬
 BITE_SEC = CLICK_SEC  # main / ornaments 沿用旧名
-MAX_THUNDER_HITS = 8  # 连击叠加上限，防刷爆帧率
+MAX_THUNDER_HITS = 6  # 不同落点最多同时几道
+MERGE_RADIUS = 34.0  # 同点半径内合并为一道，刷新动画而非叠满屏
+MERGE_COOLDOWN = 0.17  # 同点最快隔这么久才再吃下一记
+HIT_POWER_MAX = 2.0  # 同点连刷微增强度，有顶
 CHARGE_END = 0.30
 STRIKE_START = 0.18
 STRIKE_END = 0.72
 CONDUCT_START = 0.52
 CONDUCT_END = 1.95
+
+
+def register_thunder_hit(
+    hits: list[tuple[float, int, int, float]],
+    now: float,
+    x: int,
+    y: int,
+) -> list[tuple[float, int, int, float]]:
+    """登记点击：远处可叠多道；同处连点合并刷新，避免频率过高糊成一团。"""
+    alive = [(s, hx, hy, p) for s, hx, hy, p in hits if now - s < CLICK_SEC]
+    r2 = MERGE_RADIUS * MERGE_RADIUS
+    for i, (s, hx, hy, p) in enumerate(alive):
+        if (x - hx) ** 2 + (y - hy) ** 2 <= r2:
+            if now - s < MERGE_COOLDOWN:
+                return alive
+            p = min(HIT_POWER_MAX, p + 0.26)
+            alive[i] = (now, hx, hy, p)
+            return alive
+    if len(alive) >= MAX_THUNDER_HITS:
+        alive.pop(0)
+    alive.append((now, x, y, 1.0))
+    return alive
 
 
 def _thunder_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
@@ -1378,18 +1403,22 @@ def paint_strike_conduct(
     radius: int,
     stage: str = "run",
     light: bool = False,
+    power: float = 1.0,
 ) -> None:
     """点击：蓄力→劈到底边→沿四边慢速传导一圈。"""
     bw, bh = layer.size
     if bw < 40 or bh < 20 or t < 0.0 or t > CONDUCT_END + 0.35:
         return
     arc, _cloud, _period, gain = _thunder_palette(stage, light=light)
+    p = min(HIT_POWER_MAX, max(1.0, power))
+    strike_gain = gain * min(1.38, 0.88 + 0.22 * p)
+    conduct_gain = gain * min(1.14, 0.94 + 0.08 * p)
     scale = max(0.7, min(2.4, bh / 92.0))
     hit_u, hx, hy = _bottom_hit(bw, bh, float(radius), cx)
     env = _strike_env(t)
     spread, cenv = _conduct_progress(t)
 
-    _paint_charge(layer, t, radius, arc, gain=gain, scale=scale)
+    _paint_charge(layer, t, radius, arc, gain=strike_gain, scale=scale)
 
     bloom = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
@@ -1402,7 +1431,7 @@ def paint_strike_conduct(
         seed = 8800 + int(cx) * 3 + int(cy)
         _paint_fierce_strike(
             bd, gd, cd, cx=cx, cy=cy, hx=hx, hy=hy, bw=bw, bh=bh,
-            arc=arc, env=env, gain=gain, scale=scale, seed=seed,
+            arc=arc, env=env, gain=strike_gain, scale=scale, seed=seed,
         )
 
     if cenv > 0.02 and spread > 0.01:
@@ -1410,7 +1439,7 @@ def paint_strike_conduct(
         _paint_surge_conduct(
             bd, gd, cd, sparks_d,
             point=point, total=total, hit_u=hit_u, spread=spread, cenv=cenv, t=t,
-            arc=arc, gain=gain, scale=scale, bw=bw, bh=bh, cx=cx, cy=cy,
+            arc=arc, gain=conduct_gain, scale=scale, bw=bw, bh=bh, cx=cx, cy=cy,
         )
 
     blur_k = 1.35 if env > 0.5 else 1.0
@@ -1418,9 +1447,9 @@ def paint_strike_conduct(
     layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(2.0, 3.2 * scale * blur_k))))
     layer.alpha_composite(sparks.filter(ImageFilter.GaussianBlur(radius=max(1.2, 2.0 * scale))))
     layer.alpha_composite(core)
-    flash = max(_charge_env(t) * 0.35, env * 1.15, cenv * 0.8)
+    flash = min(1.22, max(_charge_env(t) * 0.35, env * 1.15, cenv * 0.8) * (0.92 + 0.06 * p))
     if flash > 0.03:
-        top = int((210 if env > 0.5 else 175) * flash * gain)
+        top = int((210 if env > 0.5 else 175) * flash * strike_gain)
         ramp = Image.linear_gradient("L").resize((bw, bh)).point(lambda v: int((255 - v) * top / 255))
         veil = Image.new("RGBA", (bw, bh), (*arc, 0))
         veil.putalpha(ramp)
@@ -1436,8 +1465,9 @@ def paint_thunder_click(
     radius: int,
     stage: str = "run",
     light: bool = False,
+    power: float = 1.0,
 ) -> None:
     """整段点击互动：蓄力→狠雷劈底→沿边电涌绕一圈。"""
     if t < 0.0 or t > CLICK_SEC:
         return
-    paint_strike_conduct(layer, t, cx, cy, radius=radius, stage=stage, light=light)
+    paint_strike_conduct(layer, t, cx, cy, radius=radius, stage=stage, light=light, power=power)

@@ -819,7 +819,7 @@ class WorkTimer:
         self._done_seen: dict[str, bool] = {}
         self._celebrate_start = 0.0
         self._celebrate_until = 0.0
-        self._thunder_hits: list[tuple[float, int, int]] = []  # (start, x, y)
+        self._thunder_hits: list[tuple[float, int, int, float]] = []  # (start, x, y, power)
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -1266,17 +1266,16 @@ class WorkTimer:
 
     def _prune_thunder_hits(self, now: float) -> None:
         dur = ornaments.BITE_SEC
-        self._thunder_hits = [(s, x, y) for s, x, y in self._thunder_hits if now - s < dur]
+        self._thunder_hits = [(s, x, y, p) for s, x, y, p in self._thunder_hits if now - s < dur]
 
     def _maybe_bite(self, lx: int, ly: int) -> None:
-        """霹雳狂潮点一下叠一道雷；可连击，多道同时轰。"""
+        """霹雳狂潮：远处可叠多道；同处连点合并刷新，避免糊屏。"""
         if self._theme().kind != "thunder":
             return
         now = time.monotonic()
-        self._prune_thunder_hits(now)
-        if len(self._thunder_hits) >= ornaments.MAX_THUNDER_HITS:
-            self._thunder_hits.pop(0)
-        self._thunder_hits.append((now, int(lx), int(ly)))
+        self._thunder_hits = ornaments.register_thunder_hit(
+            self._thunder_hits, now, int(lx), int(ly),
+        )
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("ctrl_hide"))
@@ -2582,7 +2581,7 @@ class WorkTimer:
             self._prune_thunder_hits(phase)
             thunder_hits = self._thunder_hits
             if thunder_hits:
-                sig = "-".join(f"{int((phase - s) * 45)}" for s, _, _ in thunder_hits)
+                sig = "-".join(f"{int((phase - s) * 45)}:{p:.1f}" for s, _, _, p in thunder_hits)
                 key = f"{key}-t{len(thunder_hits)}-{sig}"
 
             if key == self._last_key:
@@ -2640,7 +2639,7 @@ class WorkTimer:
                 ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
             if celebrating:
                 ornaments.paint_confetti(img, w, h, phase - self._celebrate_start)
-            for start, bx, by in thunder_hits:
+            for start, bx, by, power in thunder_hits:
                 ornaments.paint_bite(
                     img,
                     (4, 4, w - 5, h - 5),
@@ -2650,6 +2649,7 @@ class WorkTimer:
                     radius=min(theme.radius, max(8, h // 5)),
                     cx=bx - 4,
                     cy=by - 4,
+                    power=power,
                 )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)

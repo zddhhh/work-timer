@@ -463,6 +463,28 @@ class FxTests(unittest.TestCase):
         self.assertEqual(th.name, "霹雳狂潮")
         self.assertIn("thunder", [t.id for t in themes.menu_sections()["fancy"]])
 
+    def test_thunder_same_spot_merges(self):
+        """同处狂点应合并刷新，不能叠满屏。"""
+        import fx
+
+        t0 = 100.0
+        hits = fx.register_thunder_hit([], t0, 120, 46)
+        hits = fx.register_thunder_hit(hits, t0 + 0.05, 122, 47)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0][0], t0)
+        hits = fx.register_thunder_hit(hits, t0 + 0.22, 121, 45)
+        self.assertEqual(len(hits), 1)
+        self.assertAlmostEqual(hits[0][0], t0 + 0.22)
+        self.assertGreater(hits[0][3], 1.0)
+
+    def test_thunder_far_apart_stacks(self):
+        import fx
+
+        t0 = 100.0
+        hits = fx.register_thunder_hit([], t0, 50, 46)
+        hits = fx.register_thunder_hit(hits, t0 + 0.01, 200, 46)
+        self.assertEqual(len(hits), 2)
+
     def test_inkpulse_visible(self):
         import fx
 

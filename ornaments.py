@@ -231,6 +231,7 @@ def _paint_embers(layer: Image.Image, phase: float, *, light: bool, stage: str, 
 
 BITE_SEC = fx.BITE_SEC
 MAX_THUNDER_HITS = fx.MAX_THUNDER_HITS
+register_thunder_hit = fx.register_thunder_hit
 thunder_fps = fx.thunder_fps
 
 
@@ -244,6 +245,7 @@ def paint_bite(
     radius: int = 0,
     cx: int | None = None,
     cy: int | None = None,
+    power: float = 1.0,
 ) -> None:
     """点一下：劈雷→沿边电涌绕一圈。画在文字之上，吃圆角蒙版。"""
     x0, y0, x1, y1 = box
@@ -257,6 +259,7 @@ def paint_bite(
         stage=stage,
         light=light,
         radius=int(radius),
+        power=power,
     )
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
 
