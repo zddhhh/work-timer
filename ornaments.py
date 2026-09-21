@@ -264,23 +264,17 @@ def paint_bite(
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
 
 
-def paint_thunder_quote(
+def paint_thunder_glyph(
     img: Image.Image,
     box: tuple[int, int, int, int],
     t: float,
     quote_idx: int,
-    font,
     *,
     stage: str = "run",
     light: bool = False,
-    radius: int = 0,
 ) -> None:
-    """霹雳狂潮点击台词，画在雷效之上。"""
-    x0, y0, x1, y1 = box
-    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
-    layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    fx.paint_thunder_quote(layer, t, quote_idx, font, stage=stage, light=light)
-    img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+    """霹雳狂潮单字水墨底纹，画在倒计时数字下层。"""
+    fx.paint_thunder_glyph(img, box, t, quote_idx, stage=stage, light=light)
 
 
 def paste_skin(

@@ -489,19 +489,18 @@ class FxTests(unittest.TestCase):
         self.assertEqual(len(hits), 2)
         self.assertEqual(nxt2, 2)
 
-    def test_thunder_quote_steps(self):
+    def test_thunder_glyph_single_char(self):
         import fx
-        from PIL import ImageFont
 
         self.assertEqual(fx.THUNDER_QUOTE, "我命由我不由天")
         layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-        font = ImageFont.load_default()
-        fx.paint_thunder_quote(layer, 0.35, 0, font, stage="run")
+        box = (4, 4, 244, 88)
+        fx.paint_thunder_glyph(layer, box, 0.35, 0, stage="run")
         a0 = max(layer.getchannel("A").getdata())
-        fx.paint_thunder_quote(layer, 0.35, 3, font, stage="run")
-        a3 = max(layer.getchannel("A").getdata())
-        self.assertGreater(a0, 10)
-        self.assertGreaterEqual(a3, a0)
+        blank = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        fx.paint_thunder_glyph(blank, box, 3.0, 0, stage="run")
+        self.assertGreater(a0, 8)
+        self.assertEqual(max(blank.getchannel("A").getdata()), 255)  # 过期帧不画
 
     def test_inkpulse_visible(self):
         import fx

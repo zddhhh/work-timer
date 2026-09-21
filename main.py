@@ -844,7 +844,6 @@ class WorkTimer:
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
-        self._font_quote = _font(max(13, min(20, int(h * 0.20))))
         self._kinetic: kinetic.Show | None = None
         self._font_kinetic = self._font_big
         self._surface = "dark"
@@ -1114,7 +1113,6 @@ class WorkTimer:
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
-        self._font_quote = _font(max(13, min(20, int(h * 0.20))))
         if self._kinetic is not None:
             self._font_kinetic = _kinetic_font(w, len(self._kinetic.text))
         self._last_key = ""
@@ -2593,6 +2591,11 @@ class WorkTimer:
             if key == self._last_key:
                 return
 
+            thunder_glyph = None
+            if theme.kind == "thunder" and thunder_hits:
+                q_start, _, _, _, qidx = max(thunder_hits, key=lambda h: h[0])
+                thunder_glyph = (phase - q_start, qidx)
+
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             if kinetic.playing(self._kinetic, phase):
                 themes.paint_card(
@@ -2610,6 +2613,7 @@ class WorkTimer:
                     stage=stage,
                     env_rgb=self._env_rgb,
                     surface=surface,
+                    thunder_glyph=thunder_glyph,
                 )
                 kinetic.paint(
                     img,
@@ -2637,6 +2641,7 @@ class WorkTimer:
                     stage=stage,
                     env_rgb=self._env_rgb,
                     surface=surface,
+                    thunder_glyph=thunder_glyph,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -2658,18 +2663,6 @@ class WorkTimer:
                     cx=bx - 4,
                     cy=by - 4,
                     power=power,
-                )
-            if thunder_hits:
-                q_start, _bx, _by, _pw, qidx = max(thunder_hits, key=lambda h: h[0])
-                ornaments.paint_thunder_quote(
-                    img,
-                    box,
-                    phase - q_start,
-                    qidx,
-                    self._font_quote,
-                    stage=stage,
-                    light=(surface == "light"),
-                    radius=rr,
                 )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)

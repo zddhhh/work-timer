@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 FLAG_RED = (222, 41, 16)
 FLAG_GOLD = (255, 222, 0)
@@ -1476,47 +1476,105 @@ def paint_thunder_click(
     paint_strike_conduct(layer, t, cx, cy, radius=radius, stage=stage, light=light, power=power)
 
 
-def paint_thunder_quote(
+_GLYPH_FONT_CACHE: dict[int, ImageFont.ImageFont] = {}
+
+
+def _glyph_font(bh: int, bw: int) -> ImageFont.ImageFont:
+    """大号书体：行楷 / 楷 / 隶，尽量有书法感。"""
+    import os
+    from pathlib import Path
+
+    size = max(40, min(int(bh * 1.12), int(bw * 0.62)))
+    got = _GLYPH_FONT_CACHE.get(size)
+    if got is not None:
+        return got
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    for name in ("STXINGKA.TTF", "simkai.ttf", "SIMLI.TTF", "STKAITI.TTF", "msyhbd.ttc", "msyh.ttc"):
+        try:
+            font = ImageFont.truetype(str(windir / name), size)
+            _GLYPH_FONT_CACHE[size] = font
+            return font
+        except OSError:
+            continue
+    font = ImageFont.load_default()
+    _GLYPH_FONT_CACHE[size] = font
+    return font
+
+
+def paint_thunder_glyph(
     layer: Image.Image,
+    box: tuple[int, int, int, int],
     t: float,
     quote_idx: int,
-    font,
     *,
     stage: str = "run",
     light: bool = False,
 ) -> None:
-    """点击后在卡面中央依次亮出「我命由我不由天」。"""
-    if t < 0.0 or t > CLICK_SEC * 0.88 or not THUNDER_QUOTE:
+    """每次只亮一个字：大号水墨电纹，融进雷云底里（画在倒计时数字下层）。"""
+    if t < 0.0 or t > CLICK_SEC * 0.92 or not THUNDER_QUOTE:
         return
-    q = quote_idx % len(THUNDER_QUOTE)
-    text = THUNDER_QUOTE[: q + 1]
-    arc, _cloud, _period, gain = _thunder_palette(stage, light=light)
-    bw, bh = layer.size
-    if t < 0.14:
-        env = t / 0.14
-        pop = 1.0 + 0.18 * (1.0 - t / 0.14)
-    elif t < 0.95:
-        env = 1.0
-        pop = 1.0
+    x0, y0, x1, y1 = box
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    char = THUNDER_QUOTE[quote_idx % len(THUNDER_QUOTE)]
+    arc, cloud, _period, gain = _thunder_palette(stage, light=light)
+    ink = tuple(int(arc[i] * 0.42 + cloud[i] * 0.58) for i in range(3))
+
+    if t < 0.22:
+        env = (t / 0.22) ** 1.35
+        flash = min(1.0, t / 0.11) ** 0.8
+    elif t < 1.55:
+        env = 0.78 + 0.22 * math.sin((t - 0.22) * 1.85)
+        flash = 0.0
     else:
-        env = max(0.0, 1.0 - (t - 0.95) / 0.55) ** 0.9
-        pop = 1.0
-    if env < 0.03:
+        env = max(0.0, 1.0 - (t - 1.55) / 0.65) ** 1.05
+        flash = 0.0
+    if t < 0.34:
+        flash = max(flash, (1.0 - t / 0.34) * 0.55)
+    if env < 0.04:
         return
-    d = ImageDraw.Draw(layer)
-    bbox = d.textbbox((0, 0), text, font=font)
+
+    font = _glyph_font(bh, bw)
+    pad = max(8, int(bh * 0.18))
+    canv = Image.new("RGBA", (bw + pad * 2, bh + pad * 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(canv)
+    bbox = d.textbbox((0, 0), char, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    cx, cy = bw * 0.5, bh * 0.44
-    x = cx - tw * 0.5 - bbox[0]
-    y = cy - th * 0.5 - bbox[1]
-    if pop != 1.0 and tw > 2:
-        # 弹出感：往中心微缩后再回到原位（用偏移近似，避免每帧重算字体）
-        shrink = (1.0 - pop) * 0.5
-        x += tw * shrink * 0.5
-        y += th * shrink * 0.5
-    glow_a = int(120 * env * gain)
-    core_a = int(255 * env * gain)
-    for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1)):
-        d.text((x + dx, y + dy), text, font=font, fill=(*arc, glow_a))
-    d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, int(90 * env)))
-    d.text((x, y), text, font=font, fill=(248, 252, 255, core_a))
+    nxt = _rnd(quote_idx * 991 + 17)
+    ox = (canv.width - tw) // 2 - bbox[0] + (nxt(9) - 4)
+    oy = (canv.height - th) // 2 - bbox[1] + (nxt(7) - 3)
+    rot = (nxt(11) - 5) * 0.65
+
+    body_a = int(46 * env * gain)
+    glow_a = int(28 * env * gain)
+    rim_a = int((22 + 48 * flash) * env * gain)
+    if body_a < 3:
+        return
+
+    for dx, dy, k in ((0, 0, 1.0), (2, 1, 0.45), (-1, 2, 0.35)):
+        d.text(
+            (ox + dx, oy + dy),
+            char,
+            font=font,
+            fill=(*arc, int(glow_a * k)),
+            stroke_width=max(1, int(bh / 36)),
+            stroke_fill=(*arc, int(glow_a * 0.35 * k)),
+        )
+    d.text((ox, oy), char, font=font, fill=(*ink, body_a))
+    d.text((ox - 1, oy - 2), char, font=font, fill=(255, 252, 248, rim_a))
+
+    if abs(rot) > 0.2:
+        canv = canv.rotate(rot, resample=Image.Resampling.BICUBIC, expand=False)
+
+    mask = Image.new("L", canv.size, 0)
+    md = ImageDraw.Draw(mask)
+    cx, cy = canv.width // 2, canv.height // 2
+    rx, ry = max(12, int(tw * 0.62)), max(10, int(th * 0.68))
+    md.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=min(255, int(body_a * 3.2)))
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(5.0, bh * 0.11)))
+    canv.putalpha(ImageChops.multiply(canv.getchannel("A"), mask))
+
+    mist = canv.filter(ImageFilter.GaussianBlur(radius=max(2.5, bh * 0.05)))
+    lx = x0 + (bw - canv.width) // 2
+    ly = y0 + (bh - canv.height) // 2 + int(bh * 0.02)
+    layer.alpha_composite(mist, (lx, ly))
+    layer.alpha_composite(canv, (lx, ly))
