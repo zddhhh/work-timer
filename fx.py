@@ -497,18 +497,18 @@ def paint_neonflow(
     head = (phase / period_eff) % 1.0
     n_tail = 22
     spacing = ((0.11 if stage != "warn" else 0.14) / n_tail) * (1.0 - boost * 0.18)
-    seed = int(phase / 6.5) * 31337 + int(boost * 97)
-    nxt = _rnd(seed)
-    n_heads = 3 + (nxt(3) if stage != "done" else 0) + int(boost * 2.5)
-    heads: list[tuple[float, tuple[int, int, int]]] = []
-    for i in range(n_heads):
-        off = (nxt(997) / 997.0) if i else 0.0
-        hu = (head + off + i / max(1, n_heads)) % 1.0
-        heads.append((hu, c1 if i % 2 == 0 else c2))
-    for hu, col in heads:
+    # 每段流光的周向偏移固定（只跟序号有关），避免每隔几秒换种子导致粒子突然跳位
+    heads: list[tuple[float, tuple[int, int, int], float]] = []
+    for i in range(4):
+        off = i * 0.25 + _hash01(i + 11, 53) * 0.065
+        heads.append(((head + off) % 1.0, c1 if i % 2 == 0 else c2, 1.0))
+    if boost > 0.04 and stage != "done":
+        off5 = 0.38 + _hash01(19, 53) * 0.06
+        heads.append(((head + off5) % 1.0, c2, boost))
+    for hu, col, head_gain in heads:
         for k in range(n_tail):
             u = hu - k * spacing
-            f = 1.0 - k / n_tail
+            f = (1.0 - k / n_tail) * head_gain
             px, py = point(u)
             ga = int(150 * gain * f * f)
             gr = (3.2 + 4.5 * f) * scale
@@ -522,10 +522,10 @@ def paint_neonflow(
     layer.alpha_composite(glow)
     layer.alpha_composite(core)
 
-    # 故障：每 ~7s 闯入 2~3 帧，几条横带错位 + 通道分离
+    # 故障：偶发横带错位；窗口很短，避免像整段动画被重置
     cyc = 7.3 if stage != "warn" else 3.1
     g = phase % cyc
-    if g < 0.09 and stage != "done":
+    if g < 0.045 and stage != "done":
         seed = int(phase / cyc) * 7919
         for i in range(3):
             s = (seed + i * 104729) & 0xFFFF
@@ -1024,13 +1024,16 @@ def register_neon_hit(
 
 
 def neon_flow_boost(hits: list[tuple[float, int, int]], now: float) -> float:
-    """最近点击带来的绕边加速 0~1。"""
+    """最近点击带来的绕边加速 0~1（渐入渐出，避免一点击就瞬时变速）。"""
     boost = 0.0
     for s, _x, _y in hits:
         age = now - s
         if age < NEON_BOOST_SEC:
             k = 1.0 - age / NEON_BOOST_SEC
-            boost = max(boost, k * k)
+            env = k * k
+            if age < 0.14:
+                env *= age / 0.14
+            boost = max(boost, env)
     return boost
 
 

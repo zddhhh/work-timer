@@ -825,6 +825,7 @@ class WorkTimer:
         self._neon_hits: list[tuple[float, int, int]] = []
         self._mouse_lx = -1
         self._mouse_ly = -1
+        self._neon_boost_smooth = 0.0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -2611,7 +2612,13 @@ class WorkTimer:
             thunder_hits = self._thunder_hits
             ink_hits = self._ink_hits
             neon_hits = self._neon_hits
-            neon_boost = ornaments.neon_flow_boost(neon_hits, phase) if theme.kind == "neonflow" else 0.0
+            if theme.kind == "neonflow":
+                target_boost = ornaments.neon_flow_boost(neon_hits, phase)
+                self._neon_boost_smooth += (target_boost - self._neon_boost_smooth) * 0.26
+                neon_boost = self._neon_boost_smooth
+            else:
+                self._neon_boost_smooth = 0.0
+                neon_boost = 0.0
             if thunder_hits:
                 sig = "-".join(f"{int((phase - s) * 45)}:{p:.1f}:{q}" for s, _, _, p, q in thunder_hits)
                 key = f"{key}-t{len(thunder_hits)}-{sig}"
@@ -2624,7 +2631,7 @@ class WorkTimer:
             if theme.kind == "neonflow" and self._mouse_lx >= 0:
                 key = f"{key}-m{self._mouse_lx // 3}-{self._mouse_ly // 3}"
             if neon_boost > 0.02:
-                key = f"{key}-b{int(neon_boost * 24)}"
+                key = f"{key}-b{int(neon_boost * 40)}"
 
             if key == self._last_key:
                 return
