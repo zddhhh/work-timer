@@ -857,8 +857,13 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
 _STORM_CACHE: dict[tuple, Image.Image] = {}
 _WOLF_CACHE: dict[tuple, Image.Image] = {}
 
-BITE_SEC = 1.55  # 点一下：劈雷→沿边传导→狼钻出→咬一口→退回
-WOLF_AT = 0.52  # 余电快灭时狼才从边上钻出来
+BITE_SEC = 2.85  # 点一下：蓄力→劈到底边→沿边传导一圈→狼钻出→咬一口→退回
+WOLF_AT = 1.48  # 余电将灭时狼才从边上钻出来
+CHARGE_END = 0.30
+STRIKE_START = 0.20
+STRIKE_END = 0.62
+CONDUCT_START = 0.52
+CONDUCT_END = 1.52
 
 
 def _thunder_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
@@ -1090,11 +1095,11 @@ def thunder_fps(stage: str, phase: float) -> int:
 
 
 def _perim_u_at(bw: int, bh: int, r: float, x: float, y: float) -> tuple[float, float, float]:
-    """点击处离边框最近的一点：返回 (周长参数 u, px, py)。"""
+    """周长上离 (x,y) 最近的一点：返回 (u, px, py)。"""
     _total, point = _perimeter(bw, bh, r, 2.0)
     best_u, best_d, best_p = 0.0, 1e18, (0.0, 0.0)
-    for i in range(72):
-        u = i / 72.0
+    for i in range(80):
+        u = i / 80.0
         px, py = point(u)
         d = (px - x) ** 2 + (py - y) ** 2
         if d < best_d:
@@ -1102,27 +1107,91 @@ def _perim_u_at(bw: int, bh: int, r: float, x: float, y: float) -> tuple[float, 
     return best_u, best_p[0], best_p[1]
 
 
-def _conduct_env(t: float) -> float:
-    """沿边传导：先猛亮，再拖尾，最后只剩一点余烬。"""
-    if t < 0.04:
-        return t / 0.04
-    if t < 0.14:
+def _bottom_hit(bw: int, bh: int, r: float, cx: float) -> tuple[float, float, float]:
+    """落点正下方砸到**底边**上的点（不是最近边框）。"""
+    inset = 2.0
+    x0, _y0, x1, y1 = inset, inset, bw - 1 - inset, bh - 1 - inset
+    rr = max(1.0, min(float(r) - inset, (x1 - x0) / 2, (y1 - inset) / 2))
+    hx = max(x0 + rr, min(x1 - rr, cx))
+    hy = y1
+    hit_u, _, _ = _perim_u_at(bw, bh, r, hx, hy)
+    return hit_u, hx, hy
+
+
+def _charge_env(t: float) -> float:
+    """卡片蓄力：边框变亮变粗，给用户一个「要劈了」的信号。"""
+    if t < 0.10:
+        return t / 0.10
+    if t < CHARGE_END:
         return 1.0
-    if t < 0.38:
-        return max(0.0, 1.0 - (t - 0.14) / 0.24) ** 0.85
-    return max(0.0, 0.22 - (t - 0.38) / 0.22)
+    if t < STRIKE_END:
+        return max(0.45, 1.0 - (t - CHARGE_END) / (STRIKE_END - CHARGE_END) * 0.4)
+    return max(0.0, 0.45 - (t - STRIKE_END) / 0.35)
 
 
 def _strike_env(t: float) -> float:
-    if t < 0.03:
-        return 0.55
-    if t < 0.06:
+    if t < STRIKE_START:
+        return 0.0
+    g = t - STRIKE_START
+    if g < 0.04:
+        return 0.55 * g / 0.04
+    if g < 0.08:
         return 0.10
-    if t < 0.12:
+    if g < 0.16:
         return 1.0
-    if t < 0.22:
-        return max(0.0, 1.0 - (t - 0.12) / 0.10) * 0.9
+    if t < STRIKE_END:
+        return max(0.0, 1.0 - (t - STRIKE_START - 0.16) / (STRIKE_END - STRIKE_START - 0.16)) * 0.92
     return 0.0
+
+
+def _conduct_progress(t: float) -> tuple[float, float]:
+    """(沿边走了多少圈 0~1, 亮度)。慢速绕满四周。"""
+    if t < CONDUCT_START:
+        return 0.0, 0.0
+    tc = t - CONDUCT_START
+    dur = CONDUCT_END - CONDUCT_START
+    spread = min(1.0, (tc / dur) ** 0.78)
+    if tc < 0.08:
+        env = tc / 0.08
+    elif tc < dur * 0.42:
+        env = 1.0
+    elif tc < dur + 0.25:
+        env = max(0.0, 1.0 - (tc - dur * 0.42) / (dur * 0.58 + 0.25)) ** 0.88
+    else:
+        env = max(0.0, 0.18 - (tc - dur - 0.25) / 0.4)
+    return spread, env
+
+
+def _paint_charge(
+    layer: Image.Image,
+    t: float,
+    radius: int,
+    arc: tuple[int, int, int],
+    *,
+    gain: float,
+    scale: float,
+) -> None:
+    cenv = _charge_env(t)
+    if cenv < 0.03:
+        return
+    bw, bh = layer.size
+    inset = 2.0
+    rr = min(radius, max(8, bh // 5))
+    box = (inset, inset, bw - 1 - inset, bh - 1 - inset)
+    w = max(1, int(round(1.0 + 4.2 * cenv * scale)))
+    glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).rounded_rectangle(
+        box, radius=rr, outline=(*arc, int(130 * cenv * gain)), width=w + 3
+    )
+    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(2.5, 3.5 * scale))))
+    ImageDraw.Draw(layer).rounded_rectangle(
+        box, radius=rr, outline=(244, 252, 255, int(220 * cenv * gain)), width=w
+    )
+    inner = Image.new("RGBA", (bw, bh), (*arc, 0))
+    mask = Image.new("L", (bw, bh), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(box, radius=rr, fill=int(95 * cenv))
+    inner.putalpha(mask)
+    layer.alpha_composite(inner)
 
 
 def paint_strike_conduct(
@@ -1135,15 +1204,17 @@ def paint_strike_conduct(
     stage: str = "run",
     light: bool = False,
 ) -> None:
-    """点击触发：从落点劈到边框，再沿圆角矩形边框传导一段电光。"""
+    """点击：蓄力→劈到底边→沿四边慢速传导一圈。"""
     bw, bh = layer.size
-    if bw < 40 or bh < 20 or t < 0.0 or t > 0.58:
+    if bw < 40 or bh < 20 or t < 0.0 or t > CONDUCT_END + 0.35:
         return
     arc, _cloud, _period, gain = _thunder_palette(stage, light=light)
     scale = max(0.7, min(2.4, bh / 92.0))
-    hit_u, hx, hy = _perim_u_at(bw, bh, float(radius), cx, cy)
+    hit_u, hx, hy = _bottom_hit(bw, bh, float(radius), cx)
     env = _strike_env(t)
-    cenv = _conduct_env(max(0.0, t - 0.10))
+    spread, cenv = _conduct_progress(t)
+
+    _paint_charge(layer, t, radius, arc, gain=gain, scale=scale)
 
     bloom = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
@@ -1151,44 +1222,48 @@ def paint_strike_conduct(
     bd, gd, cd = ImageDraw.Draw(bloom), ImageDraw.Draw(glow), ImageDraw.Draw(core)
 
     if env > 0.02:
-        seed = 8800 + int(hit_u * 1000)
-        bolt = _bolt_pts(seed, cx, cy, hx, hy, depth=4, jitter=0.22)
-        _draw_bolt(bd, gd, cd, bolt, arc, env=env, gain=gain * 1.15, scale=scale, thick=1.15)
-        gr = bh * 0.22
-        bd.ellipse((hx - gr, hy - gr * 0.55, hx + gr, hy + gr * 0.55), fill=(*arc, int(95 * env * gain)))
+        seed = 8800 + int(cx) * 3 + int(cy)
+        bolt = _bolt_pts(seed, cx, cy, hx, hy, depth=5, jitter=0.24)
+        _draw_bolt(bd, gd, cd, bolt, arc, env=env, gain=gain * 1.22, scale=scale, thick=1.25)
+        gr = bh * 0.26
+        bd.ellipse((hx - gr, hy - gr * 0.55, hx + gr, hy + gr * 0.55), fill=(*arc, int(110 * env * gain)))
 
-    if cenv > 0.02:
+    if cenv > 0.02 and spread > 0.01:
         _total, point = _perimeter(bw, bh, float(radius), 2.0)
-        spread = min(0.62, 0.08 + (t - 0.10) * 1.35)
-        n_seg = max(14, int(spread * 48))
-        for k in range(2):
+        arc_len = spread * _total
+        n_seg = max(24, int(arc_len / 2.8))
+        for direction in (1, -1):
             pts: list[tuple[float, float]] = []
+            half = spread * 0.5
             for i in range(n_seg + 1):
-                u = (hit_u + k * 0.11 + (i / n_seg) * spread) % 1.0
+                u = (hit_u + direction * (i / n_seg) * half) % 1.0
                 px, py = point(u)
-                ax, ay = point((u + 0.003) % 1.0)
+                ax, ay = point((u + 0.0025 * direction) % 1.0)
                 tx, ty = ax - px, ay - py
                 ln = math.hypot(tx, ty) or 1.0
-                fade = (1.0 - i / max(1, n_seg)) ** 0.55
-                amp = ((int(t * 34) + i * 5 + k * 17) % 7 - 3) * 0.85 * scale * fade
+                tail = 1.0 - abs(i / n_seg - 0.5) * 1.15
+                amp = ((int(t * 22) + i * 5) % 7 - 3) * 0.9 * scale * max(0.0, tail)
                 pts.append((px - ty / ln * amp, py + tx / ln * amp))
-            e = cenv * (0.92 if k == 0 else 0.62)
-            bd.line(pts, fill=(*arc, int(78 * gain * e)), width=max(3, int(round(6.5 * scale))), joint="curve")
-            gd.line(pts, fill=(*arc, int(175 * gain * e)), width=max(2, int(round(2.8 * scale))), joint="curve")
-            cd.line(pts, fill=(244, 252, 255, int(220 * gain * e)), width=1, joint="curve")
-        # 传导前沿再亮一圈
-        head_u = (hit_u + spread) % 1.0
-        hx2, hy2 = point(head_u)
-        hr = max(2.5, 4.5 * scale)
-        gd.ellipse((hx2 - hr, hy2 - hr, hx2 + hr, hy2 + hr), fill=(*arc, int(200 * cenv * gain)))
-        cd.ellipse((hx2 - hr * 0.45, hy2 - hr * 0.45, hx2 + hr * 0.45, hy2 + hr * 0.45), fill=(255, 255, 255, int(240 * cenv * gain)))
+            e = cenv * (0.95 if direction == 1 else 0.72)
+            bd.line(pts, fill=(*arc, int(82 * gain * e)), width=max(3, int(round(7.0 * scale))), joint="curve")
+            gd.line(pts, fill=(*arc, int(185 * gain * e)), width=max(2, int(round(3.0 * scale))), joint="curve")
+            cd.line(pts, fill=(244, 252, 255, int(230 * gain * e)), width=1, joint="curve")
+        for direction in (1, -1):
+            head_u = (hit_u + direction * spread * 0.5) % 1.0
+            hx2, hy2 = point(head_u)
+            hr = max(3.0, 5.0 * scale)
+            gd.ellipse((hx2 - hr, hy2 - hr, hx2 + hr, hy2 + hr), fill=(*arc, int(210 * cenv * gain)))
+            cd.ellipse(
+                (hx2 - hr * 0.45, hy2 - hr * 0.45, hx2 + hr * 0.45, hy2 + hr * 0.45),
+                fill=(255, 255, 255, int(245 * cenv * gain)),
+            )
 
-    layer.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(3.5, 6.5 * scale))))
-    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(1.6, 2.4 * scale))))
+    layer.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(3.5, 7.0 * scale))))
+    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(1.8, 2.6 * scale))))
     layer.alpha_composite(core)
-    flash = max(env, cenv * 0.85)
+    flash = max(_charge_env(t) * 0.35, env, cenv * 0.8)
     if flash > 0.03:
-        top = int(165 * flash * gain)
+        top = int(175 * flash * gain)
         ramp = Image.linear_gradient("L").resize((bw, bh)).point(lambda v: int((255 - v) * top / 255))
         veil = Image.new("RGBA", (bw, bh), (*arc, 0))
         veil.putalpha(ramp)
@@ -1317,34 +1392,34 @@ def paint_wolf_bite(layer: Image.Image, t: float, *, stage: str = "run", light: 
         return
     u = max(0.0, t) / WOLF_SEC
 
-    # 0~0.18 电光里凝形，0.18~0.38 扑入，0.38~0.48 咬合，0.48~0.58 咬住，0.58~1 退回
-    if u < 0.18:
-        k = u / 0.18
+    # 0~0.28 电光凝形，0.28~0.52 扑入，0.52~0.65 咬合，0.65~0.78 咬住，0.78~1 慢慢退回
+    if u < 0.28:
+        k = u / 0.28
         travel = 0.0
-        jaw = int(28 * k)
-        alpha = int(40 + 215 * k)
+        jaw = int(30 * k)
+        alpha = int(35 + 220 * k)
         electric = True
-    elif u < 0.38:
-        k = (u - 0.18) / 0.20
-        travel = 1.0 - (1.0 - k) ** 2.4
+    elif u < 0.52:
+        k = (u - 0.28) / 0.24
+        travel = 1.0 - (1.0 - k) ** 2.6
         jaw = 34
         alpha = 255
-        electric = k < 0.35
-    elif u < 0.48:
+        electric = k < 0.38
+    elif u < 0.65:
         travel = 1.0
-        jaw = int(34 * (1.0 - (u - 0.38) / 0.10))
+        jaw = int(34 * (1.0 - (u - 0.52) / 0.13))
         alpha = 255
         electric = False
-    elif u < 0.58:
+    elif u < 0.78:
         travel = 1.0
         jaw = 2
         alpha = 255
         electric = False
     else:
-        k = (u - 0.58) / 0.42
-        travel = 1.0 - k * k
-        jaw = int(6 + 24 * k)
-        alpha = int(255 * (1.0 - k * 0.35))
+        k = (u - 0.78) / 0.22
+        travel = 1.0 - k ** 1.35
+        jaw = int(8 + 26 * k)
+        alpha = int(255 * (1.0 - k * 0.38))
         electric = False
 
     x_out, x_in = bw * 1.04, bw - size * 1.82
@@ -1365,8 +1440,8 @@ def paint_wolf_bite(layer: Image.Image, t: float, *, stage: str = "run", light: 
         layer.alpha_composite(glow)
     layer.alpha_composite(head)
 
-    if 0.44 < u < 0.58:
-        k = (u - 0.44) / 0.14
+    if 0.50 < u < 0.72:
+        k = (u - 0.50) / 0.22
         bite_x, bite_y = x + size * 0.15, y + size * 0.51
         halo = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))

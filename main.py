@@ -2343,9 +2343,15 @@ class WorkTimer:
             state["phase"] = "download"
             state["cancel"] = False
             clear_notes()
+            try:
+                notes_box.pack_forget()
+            except Exception:
+                pass
             status.set(f"正在下载 {info.version}")
             detail.set("下载完会自动重启，设置和日程都会留着")
             set_btns([("取消", on_close, False)])
+            # 更新要点清掉了，窗口得跟着缩回去，不然底下一大片空白
+            _fit_card(dlg, min_w=300, min_h=120, near=near)
             try:
                 bar.stop()
             except Exception:
@@ -2575,7 +2581,7 @@ class WorkTimer:
                 key = f"{key}-c{int(phase * 30)}"
             biting = phase < self._bite_until
             if biting:
-                key = f"{key}-w{int(phase * 60)}"
+                key = f"{key}-w{int(phase * 45)}"
 
             if key == self._last_key:
                 return

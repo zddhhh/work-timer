@@ -441,7 +441,7 @@ class FxTests(unittest.TestCase):
         import fx
 
         mid = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
-        fx.paint_wolf_bite(mid, 0.35, stage="run")
+        fx.paint_wolf_bite(mid, 0.72, stage="run")
         self.assertGreater(sum(1 for a in mid.getchannel("A").getdata() if a > 60), 400)
         for t in (-0.1, fx.WOLF_SEC + 0.08):
             blank = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
@@ -453,12 +453,12 @@ class FxTests(unittest.TestCase):
         import fx
 
         layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-        fx.paint_thunder_click(layer, 0.16, 120, 46, radius=14, stage="run")
+        fx.paint_thunder_click(layer, 0.38, 120, 46, radius=14, stage="run")
         self.assertGreater(max(layer.getchannel("A").getdata()), 80)
         peak = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
         calm = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-        fx.paint_thunder_click(peak, 0.14, 120, 46, radius=14, stage="run")
-        fx.paint_thunder_click(calm, 0.55, 120, 46, radius=14, stage="run")
+        fx.paint_thunder_click(peak, 0.35, 120, 46, radius=14, stage="run")
+        fx.paint_thunder_click(calm, 2.20, 120, 46, radius=14, stage="run")
         self.assertGreater(sum(peak.convert("L").getdata()), sum(calm.convert("L").getdata()))
 
     def test_inkpulse_visible(self):
