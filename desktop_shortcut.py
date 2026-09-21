@@ -1,4 +1,4 @@
-"""桌面快捷方式：没有安装向导，首次落到本机时建一次。不走 PowerShell。"""
+"""桌面与开始菜单快捷方式：无安装向导，首次落到本机时各建一次。不走 PowerShell。"""
 from __future__ import annotations
 
 import ctypes
@@ -10,6 +10,7 @@ from pathlib import Path
 _LNK_NAME = "下班倒计时.lnk"
 _ICON_STAMP = "hourglass-1"
 _CSIDL_DESKTOPDIRECTORY = 0x0010
+_CSIDL_PROGRAMS = 0x0002  # 当前用户「开始菜单 → 程序」，Win 搜索会索引这里
 _CLSCTX_INPROC_SERVER = 1
 _COINIT_APARTMENTTHREADED = 0x2
 _CLSID_SHELL_LINK = "{00021401-0000-0000-C000-000000000046}"
@@ -96,18 +97,28 @@ def _create_shell_link() -> int:
     return int(punk.value)
 
 
-def _desktop_dir() -> Path | None:
+def _shell_folder(csidl: int, fallback: Path) -> Path | None:
     buf = ctypes.create_unicode_buffer(260)
     try:
-        hr = ctypes.windll.shell32.SHGetFolderPathW(None, _CSIDL_DESKTOPDIRECTORY, None, 0, buf)
+        hr = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
     except OSError:
         hr = -1
     if hr == 0 and buf.value:
         p = Path(buf.value)
         if p.is_dir():
             return p
-    fallback = Path.home() / "Desktop"
     return fallback if fallback.is_dir() else None
+
+
+def _desktop_dir() -> Path | None:
+    return _shell_folder(_CSIDL_DESKTOPDIRECTORY, Path.home() / "Desktop")
+
+
+def _start_menu_programs_dir() -> Path | None:
+    return _shell_folder(
+        _CSIDL_PROGRAMS,
+        Path.home() / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+    )
 
 
 def _current_exe() -> Path | None:
@@ -192,19 +203,19 @@ def _notify_shell() -> None:
         pass
 
 
-def ensure(cfg: dict) -> bool:
-    """首次运行建桌面快捷方式；用户删掉后不再建。目标路径或图标变了则改现有 lnk。"""
-    exe = _current_exe()
-    if exe is None:
-        return False
-    desktop = _desktop_dir()
-    if desktop is None:
-        return False
-    lnk = desktop / _LNK_NAME
-    already = bool(cfg.get("desktop_shortcut_done"))
+def _ensure_link(
+    cfg: dict,
+    lnk: Path,
+    *,
+    done_key: str,
+    icon_key: str,
+    exe: Path,
+) -> bool:
+    """首次建 lnk；用户删掉后不再建；目标或图标变了则更新现有 lnk。"""
+    already = bool(cfg.get(done_key))
     if already and not lnk.exists():
         return False
-    icon_stale = str(cfg.get("desktop_shortcut_icon") or "") != _ICON_STAMP
+    icon_stale = str(cfg.get(icon_key) or "") != _ICON_STAMP
     if lnk.exists():
         got = _read_target(lnk)
         try:
@@ -213,13 +224,73 @@ def ensure(cfg: dict) -> bool:
             same = False
         if same and not icon_stale:
             if not already:
-                cfg["desktop_shortcut_done"] = True
-                cfg["desktop_shortcut_icon"] = _ICON_STAMP
+                cfg[done_key] = True
+                cfg[icon_key] = _ICON_STAMP
                 return True
             return False
+    lnk.parent.mkdir(parents=True, exist_ok=True)
     if not _write_shortcut(lnk, exe):
         return False
+    cfg[done_key] = True
+    cfg[icon_key] = _ICON_STAMP
+    _notify_shell()
+    return True
+
+
+def ensure(cfg: dict) -> bool:
+    """桌面快捷方式。"""
+    exe = _current_exe()
+    if exe is None:
+        return False
+    desktop = _desktop_dir()
+    if desktop is None:
+        return False
+    return _ensure_link(
+        cfg,
+        desktop / _LNK_NAME,
+        done_key="desktop_shortcut_done",
+        icon_key="desktop_shortcut_icon",
+        exe=exe,
+    )
+
+
+def ensure_start_menu(cfg: dict) -> bool:
+    """开始菜单快捷方式（Win 搜索主要索引这里）。"""
+    exe = _current_exe()
+    if exe is None:
+        return False
+    programs = _start_menu_programs_dir()
+    if programs is None:
+        return False
+    return _ensure_link(
+        cfg,
+        programs / _LNK_NAME,
+        done_key="startmenu_shortcut_done",
+        icon_key="startmenu_shortcut_icon",
+        exe=exe,
+    )
+
+
+def ensure_all(cfg: dict) -> bool:
+    changed = ensure(cfg)
+    if ensure_start_menu(cfg):
+        changed = True
+    return changed
+
+
+def create_desktop_shortcut(cfg: dict) -> tuple[bool, str]:
+    """用户主动创建桌面快捷方式（误删后可从设置里重建）。"""
+    exe = _current_exe()
+    if exe is None:
+        return False, "开发模式不支持创建快捷方式。"
+    desktop = _desktop_dir()
+    if desktop is None:
+        return False, "找不到桌面文件夹。"
+    lnk = desktop / _LNK_NAME
+    lnk.parent.mkdir(parents=True, exist_ok=True)
+    if not _write_shortcut(lnk, exe):
+        return False, "创建失败，请稍后再试。"
     cfg["desktop_shortcut_done"] = True
     cfg["desktop_shortcut_icon"] = _ICON_STAMP
     _notify_shell()
-    return True
+    return True, "已在桌面创建「下班倒计时」快捷方式。"

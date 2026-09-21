@@ -776,12 +776,12 @@ class WorkTimer:
         if updater.resume_pending_update():
             updater.force_exit_for_update()
         if not single_instance.claim():
-            os._exit(0)  # 已有实例在跑，静默退出（和更新无关）
+            os._exit(0)  # 已有实例在跑：唤起窗口并提示后退出
         updater.cleanup_update_artifacts()
         updater.stamp_stable_install_version()
         self.cfg = store.load_config()
         try:
-            if desktop_shortcut.ensure(self.cfg):
+            if desktop_shortcut.ensure_all(self.cfg):
                 store.save_config(self.cfg)
         except Exception as e:  # noqa: BLE001
             store.log_exception("desktop-shortcut", e)
@@ -1337,6 +1337,18 @@ class WorkTimer:
 
     def _auto_start_on(self) -> bool:
         return bool(self.cfg.get("auto_start"))
+
+    def _create_desktop_shortcut(self) -> None:
+        ok, msg = desktop_shortcut.create_desktop_shortcut(self.cfg)
+        if ok:
+            store.save_config(self.cfg)
+        try:
+            if ok:
+                messagebox.showinfo("桌面快捷方式", msg, parent=self._tk_root())
+            else:
+                messagebox.showwarning("桌面快捷方式", msg, parent=self._tk_root())
+        except Exception:
+            pass
 
     def _set_auto_start(self, on: bool) -> None:
         on = bool(on)
@@ -2332,6 +2344,8 @@ class WorkTimer:
             self._open_about()
         elif op == "skin_settings":
             self._open_skin_settings_dialog()
+        elif op == "create_desktop_shortcut":
+            self._create_desktop_shortcut()
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":

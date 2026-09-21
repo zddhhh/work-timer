@@ -81,6 +81,7 @@ ID_FMT_MIN = 11
 ID_FMT_SEC = 12
 ID_ABOUT = 13
 ID_SKIN_SETTINGS = 14
+ID_CREATE_DESKTOP_SHORTCUT = 15
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -801,6 +802,7 @@ class LayeredPetWindow:
         )
         user32.AppendMenuW(hset, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hset, MF_STRING, ID_SKIN_SETTINGS, "皮肤设置…")
+        user32.AppendMenuW(hset, MF_STRING, ID_CREATE_DESKTOP_SHORTCUT, "创建桌面快捷方式")
 
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间…")
         user32.AppendMenuW(hmenu, MF_STRING, ID_SCHEDULES, "日程列表…")
@@ -836,6 +838,8 @@ class LayeredPetWindow:
             return "about"
         if cmd == ID_SKIN_SETTINGS:
             return "skin_settings"
+        if cmd == ID_CREATE_DESKTOP_SHORTCUT:
+            return "create_desktop_shortcut"
         if cmd == ID_SET_TIME:
             return "set_time"
         if cmd == ID_SET_OFF:

@@ -9,6 +9,8 @@ from ctypes import wintypes
 _MUTEX_NAME = "Local\\WorkTimer.SingleInstance"
 _CLASS_NAME = "WorkTimerLayeredWnd"
 _ERROR_ALREADY_EXISTS = 183
+_MB_OK = 0x00000000
+_MB_ICONINFORMATION = 0x00000040
 _SW_RESTORE = 9
 _HWND_TOPMOST = -1
 _SWP_NOSIZE = 0x0001
@@ -48,6 +50,18 @@ def _activate_existing() -> bool:
     return True
 
 
+def _notify_already_running() -> None:
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "下班倒计时已在运行，已为你切换到现有窗口。",
+            "下班倒计时",
+            _MB_OK | _MB_ICONINFORMATION,
+        )
+    except Exception:
+        pass
+
+
 def claim() -> bool:
     """True 表示本进程继续跑；False 表示已有实例并已唤起。"""
     global _mutex_handle
@@ -64,6 +78,7 @@ def claim() -> bool:
     if err == _ERROR_ALREADY_EXISTS:
         kernel32.CloseHandle(handle)
         _activate_existing()
+        _notify_already_running()
         return False
     _mutex_handle = handle
     return True
