@@ -506,8 +506,8 @@ def paint_card(
                 # 宣纸永远浅底深墨。透太狠纸就发灰，山水立刻变脏
                 base = (252, 246, 232, 232) if wallpaper_light else (250, 242, 222, 214)
             elif kind == "thunder":
-                # 雷云压在暗紫红底上；浅墙纸下托底加厚，不然闪电糊成一团白
-                base = (24, 14, 30, 178) if skin_light else (12, 8, 16, 132)
+                # 雷云得压在暗底上电弧才亮；浅墙纸下托底加厚，不然闪电糊成一团白
+                base = (14, 16, 30, 178) if skin_light else (8, 9, 18, 132)
             else:  # glass
                 base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
             d.rounded_rectangle(box, radius=r, fill=base)

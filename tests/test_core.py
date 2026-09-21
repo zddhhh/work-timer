@@ -408,17 +408,17 @@ class FxTests(unittest.TestCase):
         """主放电那一帧必须明显亮过平静帧，否则闪电等于没闪。"""
         import fx
 
-        _a, _c, period, _g = fx._thunder_palette("warn")
+        _a, _c, period, _g = fx._thunder_palette("run")
 
         def lum(frac):
             layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
-            fx.paint_thunder(layer, period * 2 + frac, stage="warn", radius=14)
+            fx.paint_thunder(layer, period * 2 + frac, stage="run", radius=14)
             px = layer.convert("L")
             return sum(px.getdata()) / (248 * 92)
 
         self.assertGreater(lum(0.12), lum(1.5) * 1.5)
-        self.assertEqual(fx.thunder_fps("warn", period * 2 + 0.12), 60)
-        self.assertLess(fx.thunder_fps("warn", period * 2 + 1.5), 30)
+        self.assertEqual(fx.thunder_fps("run", period * 2 + 0.12), 60)
+        self.assertLess(fx.thunder_fps("run", period * 2 + 1.5), 30)
 
     def test_click_strike_reaches_border(self):
         """点一下：落点→边框要有亮线传导。"""

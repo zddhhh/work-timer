@@ -19,10 +19,6 @@ _ALPHA_LUT: dict[int, list[int]] = {}
 # 贴图只在画面中心附近漂移，避免整张 640×360 慢扫导致「停一下跳一格」
 _DRIFT_PX = 16
 
-# 皮肤背景动画与日程 stage 解耦：切换优先项时只换字色/文案，不猛切漂移与扫光
-SKIN_ANIM_STAGE = "run"
-THUNDER_SKIN_STAGE = "warn"  # 霹雳狂潮背景固定用预警红粉雷云
-
 # kind -> (主贴图, 可选第二层)；淡影(ghost)不用生图
 _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "glass": ("skin_glass.png", None),
@@ -363,15 +359,13 @@ def paste_skin(
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     phase = time.monotonic()
 
-    anim_stage = skin_anim_stage(kind)
-
     if kind in _PROC_KINDS:
         layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         if kind == "neonflow":
             fx.paint_neonflow(
                 layer,
                 phase,
-                stage=anim_stage,
+                stage=stage,
                 radius=int(radius),
                 light=light,
                 ammo=neon_ammo,
@@ -379,9 +373,9 @@ def paste_skin(
                 planets=neon_planets,
             )
         elif kind == "inkpulse":
-            fx.paint_inkpulse(layer, phase, stage=anim_stage, radius=int(radius), light=light)
+            fx.paint_inkpulse(layer, phase, stage=stage, radius=int(radius), light=light)
         elif kind == "thunder":
-            fx.paint_thunder(layer, phase, stage=anim_stage, radius=int(radius), light=light)
+            fx.paint_thunder(layer, phase, stage=stage, radius=int(radius), light=light)
         img.alpha_composite(_round_mask(layer, radius), (x0, y0))
         return True
 
@@ -395,7 +389,7 @@ def paste_skin(
         return False
 
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    freeze = anim_stage in ("idle", "done")
+    freeze = stage in ("idle", "done")
     drift = 0 if freeze else _DRIFT_PX
     if kind == "midautumn" and not freeze:
         drift = 8
@@ -424,10 +418,10 @@ def paste_skin(
         a0, a1 = (0.78, 0.52) if not light else (0.46, 0.34)
     else:  # glass 等
         a0, a1 = (0.74, 0.48) if not light else (0.50, 0.34)
-    bamp = 0.0 if freeze else (0.035 if anim_stage == "warn" else 0.025)
+    bamp = 0.0 if freeze else (0.035 if stage == "warn" else 0.025)
     if kind == "nationalday" and not freeze:
         bamp = 0.05
-    base_speed = 0.26 if anim_stage == "warn" else 0.20
+    base_speed = 0.26 if stage == "warn" else 0.20
 
     def _place(src_im: Image.Image, name: str, alpha: float, *, speed: float, twist: float) -> None:
         nonlocal layer
@@ -468,10 +462,10 @@ def paste_skin(
         # 红底不叠蓝灰情绪色，只留环境光
         mood = _mix_env((255, 176, 96, 18 if light else 22), env_rgb)
     else:
-        mood = _mix_env(_mood_rgba(anim_stage, light), env_rgb)
+        mood = _mix_env(_mood_rgba(stage, light), env_rgb)
     tint = Image.new("RGBA", (bw, bh), mood)
     layer = Image.alpha_composite(layer, tint)
-    _paint_sweep(layer, phase, light=light, stage=anim_stage)
+    _paint_sweep(layer, phase, light=light, stage=stage)
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
     return True
 
@@ -508,13 +502,6 @@ _CONFETTI_COLORS = (
 def is_animated(kind: str) -> bool:
     """需要按帧重绘的皮。"""
     return has_skin(kind)
-
-
-def skin_anim_stage(kind: str) -> str:
-    """绘制皮肤层用的 stage（与倒计时 stage 分离，避免换日程时背景猛切）。"""
-    if kind == "thunder":
-        return THUNDER_SKIN_STAGE
-    return SKIN_ANIM_STAGE
 
 
 def _confetti_seed(i: int) -> tuple[float, ...]:
