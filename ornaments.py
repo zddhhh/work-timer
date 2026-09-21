@@ -230,6 +230,7 @@ def _paint_embers(layer: Image.Image, phase: float, *, light: bool, stage: str, 
 
 
 BITE_SEC = fx.BITE_SEC
+MAX_THUNDER_HITS = fx.MAX_THUNDER_HITS
 thunder_fps = fx.thunder_fps
 
 

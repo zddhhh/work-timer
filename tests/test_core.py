@@ -445,6 +445,24 @@ class FxTests(unittest.TestCase):
         fx.paint_thunder(ambient, period * 2 + 0.12, stage="run", radius=14)
         self.assertGreater(sum(click.convert("L").getdata()), sum(ambient.convert("L").getdata()) * 1.15)
 
+    def test_thunder_combo_stacks_brightness(self):
+        """连击叠两道雷应比单道更亮。"""
+        import fx
+
+        one = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        two = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        fx.paint_thunder_click(one, 0.32, 80, 46, radius=14, stage="run")
+        fx.paint_thunder_click(two, 0.32, 80, 46, radius=14, stage="run")
+        fx.paint_thunder_click(two, 0.32, 168, 46, radius=14, stage="run")
+        self.assertGreater(sum(two.convert("L").getdata()), sum(one.convert("L").getdata()) * 1.08)
+
+    def test_thunder_skin_renamed(self):
+        import themes
+
+        th = themes.get_theme("thunder")
+        self.assertEqual(th.name, "霹雳狂潮")
+        self.assertIn("thunder", [t.id for t in themes.menu_sections()["fancy"]])
+
     def test_inkpulse_visible(self):
         import fx
 

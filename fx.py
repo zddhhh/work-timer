@@ -852,11 +852,12 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
     _ = radius  # 圆角由 ornaments 蒙版处理；保留参数与 neonflow 签名一致
 
 
-# ---------------------------------------------------------------- 雷霆恶狼
+# ---------------------------------------------------------------- 霹雳狂潮
 
 _STORM_CACHE: dict[tuple, Image.Image] = {}
-CLICK_SEC = 2.35  # 点一下：蓄力→狠雷→劈底→沿边电涌绕一圈→余烬
+CLICK_SEC = 2.35  # 单次点击：蓄力→狠雷→劈底→沿边电涌绕一圈→余烬
 BITE_SEC = CLICK_SEC  # main / ornaments 沿用旧名
+MAX_THUNDER_HITS = 8  # 连击叠加上限，防刷爆帧率
 CHARGE_END = 0.30
 STRIKE_START = 0.18
 STRIKE_END = 0.72

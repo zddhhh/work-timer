@@ -819,10 +819,7 @@ class WorkTimer:
         self._done_seen: dict[str, bool] = {}
         self._celebrate_start = 0.0
         self._celebrate_until = 0.0
-        self._bite_start = 0.0
-        self._bite_until = 0.0
-        self._bite_x = 0
-        self._bite_y = 0
+        self._thunder_hits: list[tuple[float, int, int]] = []  # (start, x, y)
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -1267,16 +1264,19 @@ class WorkTimer:
                 self._last_key = ""
                 self._last_pin_rotate = time.monotonic()
 
+    def _prune_thunder_hits(self, now: float) -> None:
+        dur = ornaments.BITE_SEC
+        self._thunder_hits = [(s, x, y) for s, x, y in self._thunder_hits if now - s < dur]
+
     def _maybe_bite(self, lx: int, ly: int) -> None:
-        """雷霆皮点一下：蓄力→狠雷劈底→沿边电涌绕一圈。"""
+        """霹雳狂潮点一下叠一道雷；可连击，多道同时轰。"""
         if self._theme().kind != "thunder":
             return
         now = time.monotonic()
-        if now < self._bite_until:  # 上一记雷还没跑完，别打断
-            return
-        self._bite_start = now
-        self._bite_until = now + ornaments.BITE_SEC
-        self._bite_x, self._bite_y = int(lx), int(ly)
+        self._prune_thunder_hits(now)
+        if len(self._thunder_hits) >= ornaments.MAX_THUNDER_HITS:
+            self._thunder_hits.pop(0)
+        self._thunder_hits.append((now, int(lx), int(ly)))
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("ctrl_hide"))
@@ -2579,9 +2579,11 @@ class WorkTimer:
             celebrating = phase < self._celebrate_until
             if celebrating:
                 key = f"{key}-c{int(phase * 30)}"
-            biting = phase < self._bite_until
-            if biting:
-                key = f"{key}-w{int(phase * 45)}"
+            self._prune_thunder_hits(phase)
+            thunder_hits = self._thunder_hits
+            if thunder_hits:
+                sig = "-".join(f"{int((phase - s) * 45)}" for s, _, _ in thunder_hits)
+                key = f"{key}-t{len(thunder_hits)}-{sig}"
 
             if key == self._last_key:
                 return
@@ -2638,16 +2640,16 @@ class WorkTimer:
                 ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
             if celebrating:
                 ornaments.paint_confetti(img, w, h, phase - self._celebrate_start)
-            if biting:
+            for start, bx, by in thunder_hits:
                 ornaments.paint_bite(
                     img,
                     (4, 4, w - 5, h - 5),
-                    phase - self._bite_start,
+                    phase - start,
                     stage=stage,
                     light=(surface == "light"),
                     radius=min(theme.radius, max(8, h // 5)),
-                    cx=self._bite_x - 4,
-                    cy=self._bite_y - 4,
+                    cx=bx - 4,
+                    cy=by - 4,
                 )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
@@ -2747,6 +2749,7 @@ class WorkTimer:
                 self._refresh_surface()
                 self._paint()
                 now = time.monotonic()
+                self._prune_thunder_hits(now)
                 if now - last_save > 1.5:
                     self._persist_pos()
                     last_save = now
@@ -2756,7 +2759,7 @@ class WorkTimer:
                 elif (
                     ornaments.is_animated(self._theme().kind)
                     or now < self._celebrate_until
-                    or now < self._bite_until
+                    or bool(self._thunder_hits)
                 ):
                     time.sleep(1.0 / FPS)
                 else:
