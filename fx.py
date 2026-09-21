@@ -885,7 +885,7 @@ def register_thunder_hit(
             if now - s < MERGE_COOLDOWN:
                 return alive, None
             p = min(HIT_POWER_MAX, p + 0.26)
-            alive[i] = (now, hx, hy, p, quote_idx)
+            alive[i] = (now, x, y, p, quote_idx)
             return alive, nxt
     if len(alive) >= MAX_THUNDER_HITS:
         alive.pop(0)
@@ -1484,7 +1484,7 @@ def _glyph_font(bh: int, bw: int) -> ImageFont.ImageFont:
     import os
     from pathlib import Path
 
-    size = max(40, min(int(bh * 1.12), int(bw * 0.62)))
+    size = max(32, min(int(bh * 0.88), int(bw * 0.42)))
     got = _GLYPH_FONT_CACHE.get(size)
     if got is not None:
         return got
@@ -1537,16 +1537,17 @@ def paint_thunder_glyph(
         return
 
     font = _glyph_font(bh, bw)
-    pad = max(8, int(bh * 0.14))
-    canv = Image.new("RGBA", (bw + pad * 2, bh + pad * 2), (0, 0, 0, 0))
-    d = ImageDraw.Draw(canv)
-    bbox = d.textbbox((0, 0), char, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    nxt = _rnd(quote_idx * 991 + 17)
-    ox = (canv.width - tw) // 2 - bbox[0] + (nxt(9) - 4)
-    oy = (canv.height - th) // 2 - bbox[1] + (nxt(7) - 3)
-    rot = (nxt(11) - 5) * 0.55
     stroke = max(2, int(bh / 28))
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    bbox = probe.textbbox((0, 0), char, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    glow_pad = max(10, stroke * 4)
+    canv = Image.new("RGBA", (tw + glow_pad * 2, th + glow_pad * 2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(canv)
+    nxt = _rnd(quote_idx * 991 + 17)
+    ox = glow_pad - bbox[0] + (nxt(9) - 4)
+    oy = glow_pad - bbox[1] + (nxt(7) - 3)
+    rot = (nxt(11) - 5) * 0.55
 
     body_a = min(255, int(118 * env * gain))
     glow_a = min(255, int(72 * env * gain))
@@ -1554,14 +1555,16 @@ def paint_thunder_glyph(
     if body_a < 8:
         return
 
-    for dx, dy, k in ((0, 0, 1.0), (2, 1, 0.55), (-2, 1, 0.45), (1, -1, 0.38)):
-        d.text(
+    glow = Image.new("RGBA", canv.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    for dx, dy, k in ((0, 0, 1.0), (2, 1, 0.55), (-2, 1, 0.45)):
+        gd.text(
             (ox + dx, oy + dy),
             char,
             font=font,
             fill=(*arc, int(glow_a * k)),
-            stroke_width=stroke,
-            stroke_fill=(*arc, int(glow_a * 0.55 * k)),
+            stroke_width=stroke + 1,
+            stroke_fill=(*arc, int(glow_a * 0.5 * k)),
         )
     d.text(
         (ox, oy),
@@ -1572,25 +1575,25 @@ def paint_thunder_glyph(
         stroke_fill=(12, 16, 28, min(255, int(body_a * 0.55))),
     )
     d.text((ox - 1, oy - 2), char, font=font, fill=(*core, rim_a))
+    canv.alpha_composite(glow.filter(ImageFilter.GaussianBlur(radius=max(1.2, bh * 0.024))))
 
     if abs(rot) > 0.2:
-        canv = canv.rotate(rot, resample=Image.Resampling.BICUBIC, expand=False)
+        canv = canv.rotate(rot, resample=Image.Resampling.BICUBIC, expand=True)
 
     mask = Image.new("L", canv.size, 0)
     md = ImageDraw.Draw(mask)
-    cx, cy = canv.width // 2, canv.height // 2
-    rx, ry = max(14, int(tw * 0.72)), max(12, int(th * 0.78))
-    md.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=255)
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(4.0, bh * 0.08)))
-    fade = mask.point(lambda v: min(255, int(v * (0.55 + 0.45 * env))))
+    mcx, mcy = canv.width // 2, canv.height // 2
+    rx, ry = max(10, int(tw * 0.62)), max(8, int(th * 0.68))
+    md.ellipse((mcx - rx, mcy - ry, mcx + rx, mcy + ry), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2.5, bh * 0.05)))
+    fade = mask.point(lambda v: min(255, int(v * (0.65 + 0.35 * env))))
     canv.putalpha(ImageChops.multiply(canv.getchannel("A"), fade))
 
-    mist = canv.filter(ImageFilter.GaussianBlur(radius=max(2.0, bh * 0.038)))
     ax = anchor_x if anchor_x is not None else (x0 + x1) * 0.5
     ay = anchor_y if anchor_y is not None else (y0 + y1) * 0.5
     lx = int(ax - canv.width / 2)
     ly = int(ay - canv.height / 2)
-    lx = max(x0 + 2, min(lx, x1 - canv.width - 2))
-    ly = max(y0 + 2, min(ly, y1 - canv.height - 2))
-    layer.alpha_composite(mist, (lx, ly))
+    margin = 2
+    lx = max(x0 - margin, min(lx, x1 - canv.width + margin))
+    ly = max(y0 - margin, min(ly, y1 - canv.height + margin))
     layer.alpha_composite(canv, (lx, ly))

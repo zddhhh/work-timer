@@ -502,6 +502,21 @@ class FxTests(unittest.TestCase):
         self.assertGreater(a0, 24)
         self.assertEqual(max(blank.getchannel("A").getdata()), 255)  # 过期帧不画
 
+    def test_thunder_glyph_follows_anchor(self):
+        """左右落点亮的区域应明显分开，不能都被 clamp 到同一角。"""
+        import fx
+
+        box = (4, 4, 244, 88)
+
+        def centroid(ax):
+            layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+            fx.paint_thunder_glyph(layer, box, 0.35, 0, anchor_x=ax, anchor_y=46, stage="run")
+            a = layer.getchannel("A")
+            xs = [x for y in range(layer.height) for x in range(layer.width) if a.getpixel((x, y)) > 40]
+            return sum(xs) / len(xs)
+
+        self.assertGreater(centroid(190), centroid(70) + 80)
+
     def test_inkpulse_visible(self):
         import fx
 

@@ -94,8 +94,8 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 霹雳狂潮单字台词跟随点击位置显示\n"
-    "- 多处连击时各字各跟落点"
+    "- 修霹雳狂潮单字不跟点击：画布按字裁切后定位\n"
+    "- 同点连刷也跟到最新落点"
 )
 
 
