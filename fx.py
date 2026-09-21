@@ -861,6 +861,7 @@ MAX_THUNDER_HITS = 6  # 不同落点最多同时几道
 MERGE_RADIUS = 34.0  # 同点半径内合并为一道，刷新动画而非叠满屏
 MERGE_COOLDOWN = 0.17  # 同点最快隔这么久才再吃下一记
 HIT_POWER_MAX = 2.0  # 同点连刷微增强度，有顶
+THUNDER_QUOTE = "我命由我不由天"
 CHARGE_END = 0.30
 STRIKE_START = 0.18
 STRIKE_END = 0.72
@@ -869,25 +870,27 @@ CONDUCT_END = 1.95
 
 
 def register_thunder_hit(
-    hits: list[tuple[float, int, int, float]],
+    hits: list[tuple[float, int, int, float, int]],
     now: float,
     x: int,
     y: int,
-) -> list[tuple[float, int, int, float]]:
-    """登记点击：远处可叠多道；同处连点合并刷新，避免频率过高糊成一团。"""
-    alive = [(s, hx, hy, p) for s, hx, hy, p in hits if now - s < CLICK_SEC]
+    quote_idx: int,
+) -> tuple[list[tuple[float, int, int, float, int]], int | None]:
+    """登记点击：远处可叠多道；同处连点合并刷新。返回 (hits, 下一字序号) 或忽略时 None。"""
+    alive = [(s, hx, hy, p, q) for s, hx, hy, p, q in hits if now - s < CLICK_SEC]
+    nxt = (quote_idx + 1) % len(THUNDER_QUOTE)
     r2 = MERGE_RADIUS * MERGE_RADIUS
-    for i, (s, hx, hy, p) in enumerate(alive):
+    for i, (s, hx, hy, p, _q) in enumerate(alive):
         if (x - hx) ** 2 + (y - hy) ** 2 <= r2:
             if now - s < MERGE_COOLDOWN:
-                return alive
+                return alive, None
             p = min(HIT_POWER_MAX, p + 0.26)
-            alive[i] = (now, hx, hy, p)
-            return alive
+            alive[i] = (now, hx, hy, p, quote_idx)
+            return alive, nxt
     if len(alive) >= MAX_THUNDER_HITS:
         alive.pop(0)
-    alive.append((now, x, y, 1.0))
-    return alive
+    alive.append((now, x, y, 1.0, quote_idx))
+    return alive, nxt
 
 
 def _thunder_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
@@ -1471,3 +1474,49 @@ def paint_thunder_click(
     if t < 0.0 or t > CLICK_SEC:
         return
     paint_strike_conduct(layer, t, cx, cy, radius=radius, stage=stage, light=light, power=power)
+
+
+def paint_thunder_quote(
+    layer: Image.Image,
+    t: float,
+    quote_idx: int,
+    font,
+    *,
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    """点击后在卡面中央依次亮出「我命由我不由天」。"""
+    if t < 0.0 or t > CLICK_SEC * 0.88 or not THUNDER_QUOTE:
+        return
+    q = quote_idx % len(THUNDER_QUOTE)
+    text = THUNDER_QUOTE[: q + 1]
+    arc, _cloud, _period, gain = _thunder_palette(stage, light=light)
+    bw, bh = layer.size
+    if t < 0.14:
+        env = t / 0.14
+        pop = 1.0 + 0.18 * (1.0 - t / 0.14)
+    elif t < 0.95:
+        env = 1.0
+        pop = 1.0
+    else:
+        env = max(0.0, 1.0 - (t - 0.95) / 0.55) ** 0.9
+        pop = 1.0
+    if env < 0.03:
+        return
+    d = ImageDraw.Draw(layer)
+    bbox = d.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    cx, cy = bw * 0.5, bh * 0.44
+    x = cx - tw * 0.5 - bbox[0]
+    y = cy - th * 0.5 - bbox[1]
+    if pop != 1.0 and tw > 2:
+        # 弹出感：往中心微缩后再回到原位（用偏移近似，避免每帧重算字体）
+        shrink = (1.0 - pop) * 0.5
+        x += tw * shrink * 0.5
+        y += th * shrink * 0.5
+    glow_a = int(120 * env * gain)
+    core_a = int(255 * env * gain)
+    for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1)):
+        d.text((x + dx, y + dy), text, font=font, fill=(*arc, glow_a))
+    d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, int(90 * env)))
+    d.text((x, y), text, font=font, fill=(248, 252, 255, core_a))

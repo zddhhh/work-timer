@@ -819,7 +819,8 @@ class WorkTimer:
         self._done_seen: dict[str, bool] = {}
         self._celebrate_start = 0.0
         self._celebrate_until = 0.0
-        self._thunder_hits: list[tuple[float, int, int, float]] = []  # (start, x, y, power)
+        self._thunder_hits: list[tuple[float, int, int, float, int]] = []  # start,x,y,power,quote_idx
+        self._thunder_quote_step = 0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -843,6 +844,7 @@ class WorkTimer:
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
+        self._font_quote = _font(max(13, min(20, int(h * 0.20))))
         self._kinetic: kinetic.Show | None = None
         self._font_kinetic = self._font_big
         self._surface = "dark"
@@ -1112,6 +1114,7 @@ class WorkTimer:
         self._font_title = _font(ft)
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
+        self._font_quote = _font(max(13, min(20, int(h * 0.20))))
         if self._kinetic is not None:
             self._font_kinetic = _kinetic_font(w, len(self._kinetic.text))
         self._last_key = ""
@@ -1266,16 +1269,19 @@ class WorkTimer:
 
     def _prune_thunder_hits(self, now: float) -> None:
         dur = ornaments.BITE_SEC
-        self._thunder_hits = [(s, x, y, p) for s, x, y, p in self._thunder_hits if now - s < dur]
+        self._thunder_hits = [(s, x, y, p, q) for s, x, y, p, q in self._thunder_hits if now - s < dur]
 
     def _maybe_bite(self, lx: int, ly: int) -> None:
         """霹雳狂潮：远处可叠多道；同处连点合并刷新，避免糊屏。"""
         if self._theme().kind != "thunder":
             return
         now = time.monotonic()
-        self._thunder_hits = ornaments.register_thunder_hit(
-            self._thunder_hits, now, int(lx), int(ly),
+        hits, nxt = ornaments.register_thunder_hit(
+            self._thunder_hits, now, int(lx), int(ly), self._thunder_quote_step,
         )
+        self._thunder_hits = hits
+        if nxt is not None:
+            self._thunder_quote_step = nxt
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("ctrl_hide"))
@@ -2581,7 +2587,7 @@ class WorkTimer:
             self._prune_thunder_hits(phase)
             thunder_hits = self._thunder_hits
             if thunder_hits:
-                sig = "-".join(f"{int((phase - s) * 45)}:{p:.1f}" for s, _, _, p in thunder_hits)
+                sig = "-".join(f"{int((phase - s) * 45)}:{p:.1f}:{q}" for s, _, _, p, q in thunder_hits)
                 key = f"{key}-t{len(thunder_hits)}-{sig}"
 
             if key == self._last_key:
@@ -2639,17 +2645,31 @@ class WorkTimer:
                 ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
             if celebrating:
                 ornaments.paint_confetti(img, w, h, phase - self._celebrate_start)
-            for start, bx, by, power in thunder_hits:
+            box = (4, 4, w - 5, h - 5)
+            rr = min(theme.radius, max(8, h // 5))
+            for start, bx, by, power, _q in thunder_hits:
                 ornaments.paint_bite(
                     img,
-                    (4, 4, w - 5, h - 5),
+                    box,
                     phase - start,
                     stage=stage,
                     light=(surface == "light"),
-                    radius=min(theme.radius, max(8, h // 5)),
+                    radius=rr,
                     cx=bx - 4,
                     cy=by - 4,
                     power=power,
+                )
+            if thunder_hits:
+                q_start, _bx, _by, _pw, qidx = max(thunder_hits, key=lambda h: h[0])
+                ornaments.paint_thunder_quote(
+                    img,
+                    box,
+                    phase - q_start,
+                    qidx,
+                    self._font_quote,
+                    stage=stage,
+                    light=(surface == "light"),
+                    radius=rr,
                 )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)

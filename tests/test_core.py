@@ -468,22 +468,40 @@ class FxTests(unittest.TestCase):
         import fx
 
         t0 = 100.0
-        hits = fx.register_thunder_hit([], t0, 120, 46)
-        hits = fx.register_thunder_hit(hits, t0 + 0.05, 122, 47)
+        hits, nxt = fx.register_thunder_hit([], t0, 120, 46, 0)
+        self.assertEqual(nxt, 1)
+        hits, nxt = fx.register_thunder_hit(hits, t0 + 0.05, 122, 47, nxt)
+        self.assertIsNone(nxt)
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0][0], t0)
-        hits = fx.register_thunder_hit(hits, t0 + 0.22, 121, 45)
+        hits, nxt = fx.register_thunder_hit(hits, t0 + 0.22, 121, 45, 1)
         self.assertEqual(len(hits), 1)
         self.assertAlmostEqual(hits[0][0], t0 + 0.22)
         self.assertGreater(hits[0][3], 1.0)
+        self.assertEqual(hits[0][4], 1)
 
     def test_thunder_far_apart_stacks(self):
         import fx
 
         t0 = 100.0
-        hits = fx.register_thunder_hit([], t0, 50, 46)
-        hits = fx.register_thunder_hit(hits, t0 + 0.01, 200, 46)
+        hits, nxt = fx.register_thunder_hit([], t0, 50, 46, 0)
+        hits, nxt2 = fx.register_thunder_hit(hits, t0 + 0.01, 200, 46, nxt)
         self.assertEqual(len(hits), 2)
+        self.assertEqual(nxt2, 2)
+
+    def test_thunder_quote_steps(self):
+        import fx
+        from PIL import ImageFont
+
+        self.assertEqual(fx.THUNDER_QUOTE, "我命由我不由天")
+        layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        font = ImageFont.load_default()
+        fx.paint_thunder_quote(layer, 0.35, 0, font, stage="run")
+        a0 = max(layer.getchannel("A").getdata())
+        fx.paint_thunder_quote(layer, 0.35, 3, font, stage="run")
+        a3 = max(layer.getchannel("A").getdata())
+        self.assertGreater(a0, 10)
+        self.assertGreaterEqual(a3, a0)
 
     def test_inkpulse_visible(self):
         import fx
