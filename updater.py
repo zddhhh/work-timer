@@ -198,6 +198,28 @@ def _safe_error(e: BaseException) -> str:
     return re.sub(r"https?://\S+", "<url>", text)[:160]
 
 
+def friendly_error(msg: str) -> tuple[str, str]:
+    """底层报错 → (说得清的标题, 能照着做的建议)。弹窗里直接甩 HTTPError 用户看不懂。"""
+    low = (msg or "").lower()
+    if "http 404" in low:
+        return "更新源上还没有发布版本", "过一阵子再看看"
+    if "http 401" in low or "http 403" in low:
+        return "更新服务器拒绝了请求", "可能是访问令牌过期了"
+    if "http 5" in low:
+        return "更新服务器暂时故障", "过几分钟再试一次"
+    if any(k in low for k in ("网络", "超时", "timeout", "timed out", "urlopen", "getaddrinfo", "ssl", "unreachable")):
+        return "连不上更新服务器", "检查一下网络，或者过几分钟再试"
+    if "prerelease" in low or "预发布" in msg or "no stable" in low:
+        return "目前只有测试版", "等正式版发布了再更新"
+    if "sha256" in low or "校验" in msg:
+        return "下载的文件没通过校验", "已经丢掉了，稍后重试一次"
+    if "winerror 32" in low or "被占用" in msg or "拒绝访问" in msg or "access is denied" in low:
+        return "程序文件正被占用", "关掉其他 WorkTimer 窗口再试"
+    if "no space" in low or "磁盘" in msg or "enospc" in low:
+        return "磁盘空间不够", "腾出 50MB 左右再试"
+    return "更新没能完成", (msg or "").strip()
+
+
 def check_update(cfg: dict) -> tuple[str, ReleaseInfo | None]:
     repo = (cfg.get("gitcode_repo") or "").strip()
     if not repo:

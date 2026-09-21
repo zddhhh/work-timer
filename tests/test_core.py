@@ -391,6 +391,63 @@ class FxTests(unittest.TestCase):
         self.assertTrue(ornaments.has_skin("inkpulse"))
         self.assertTrue(ornaments.is_animated("inkpulse"))
 
+    def test_thunder_paint(self):
+        import fx
+
+        layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+        for st in ("run", "warn", "done", "idle"):
+            _a, _c, period, _g = fx._thunder_palette(st)
+            for frac in (0.0, 0.12, 0.3, 1.5):
+                fx.paint_thunder(layer, period * 2 + frac, stage=st, radius=14, light=(st == "idle"))
+        self.assertEqual(layer.size, (248, 92))
+        self.assertTrue(ornaments.has_skin("thunder"))
+        self.assertTrue(ornaments.is_animated("thunder"))
+        self.assertIn("thunder", [t.id for t in themes.menu_sections()["fancy"]])
+
+    def test_thunder_strike_is_brighter_than_calm(self):
+        """主放电那一帧必须明显亮过平静帧，否则闪电等于没闪。"""
+        import fx
+
+        _a, _c, period, _g = fx._thunder_palette("run")
+
+        def lum(frac):
+            layer = Image.new("RGBA", (248, 92), (8, 9, 18, 255))
+            fx.paint_thunder(layer, period * 2 + frac, stage="run", radius=14)
+            px = layer.convert("L")
+            return sum(px.getdata()) / (248 * 92)
+
+        self.assertGreater(lum(0.12), lum(1.5) * 1.5)
+        self.assertEqual(fx.thunder_fps("run", period * 2 + 0.12), 60)
+        self.assertLess(fx.thunder_fps("run", period * 2 + 1.5), 30)
+
+    def test_wolf_jaw_opens_downward(self):
+        """下颌绕关节转的方向极易搞反：张口时下巴必须往下走，不能把嘴掀上天。"""
+        import fx
+
+        def chin_y(jaw):
+            head = fx._wolf_head(120, jaw, (176, 228, 255), gain=1.0)
+            a = head.getchannel("A")
+            # 只看吻部那一段（局部 x 10~50），颈背会一直顶到画布底
+            ys = [y for y in range(head.height) for x in range(12, 60) if a.getpixel((x, y)) > 100]
+            return max(ys), min(ys)
+
+        closed_low, closed_top = chin_y(0)
+        open_low, open_top = chin_y(32)
+        self.assertGreater(open_low, closed_low + 4)
+        self.assertLessEqual(closed_top, open_top + 2)  # 上颌不该跟着动
+
+    def test_wolf_bite_window(self):
+        """咬合只在 0~BITE_SEC 内画，越界必须什么都不留。"""
+        import fx
+
+        mid = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        fx.paint_wolf_bite(mid, fx.BITE_SEC * 0.4, stage="run")
+        self.assertGreater(sum(1 for a in mid.getchannel("A").getdata() if a > 60), 400)
+        for t in (-0.1, fx.BITE_SEC + 0.01):
+            blank = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+            fx.paint_wolf_bite(blank, t, stage="run")
+            self.assertEqual(max(blank.getchannel("A").getdata()), 0, t)
+
     def test_inkpulse_visible(self):
         import fx
 
@@ -425,6 +482,40 @@ class FxTests(unittest.TestCase):
         alphas = list(seal.getchannel("A").getdata())
         self.assertGreater(sum(1 for a in alphas if a > 120), 120)
         self.assertGreater(sum(1 for a in alphas if a == 0), 40)
+
+    def test_release_highlights_strip_noise(self):
+        """Release 正文要能变成给人看的几条：版本号标题、sha256、行首标记都得去掉。"""
+        import changelog
+
+        body = (
+            "WorkTimer 1.2.2\n\n"
+            "- 墨水涟漪的落墨点移到大数字右边\n"
+            "* 更新提示改成人话\n"
+            "\n"
+            "sha256: 634fdfeb2db5a675de54bfdff8241661\n"
+        )
+        got = changelog.highlights(body)
+        self.assertEqual(got, ["墨水涟漪的落墨点移到大数字右边", "更新提示改成人话"])
+        self.assertEqual(changelog.highlights(""), [])
+        self.assertEqual(changelog.highlights("WorkTimer 1.2.2\nsha256: abc"), [])
+        self.assertEqual(len(changelog.highlights("- a\n- b\n- c\n- d\n- e\n- f")), 4)
+
+    def test_friendly_update_errors(self):
+        """弹窗不该把 HTTPError 原文甩给用户。"""
+        cases = {
+            "HTTP 404": "更新源上还没有发布版本",
+            "HTTP 403": "更新服务器拒绝了请求",
+            "HTTP 502": "更新服务器暂时故障",
+            "网络错误：[Errno 11001] getaddrinfo failed": "连不上更新服务器",
+            "连接超时": "连不上更新服务器",
+            "sha256 校验失败": "下载的文件没通过校验",
+        }
+        for raw, head in cases.items():
+            self.assertEqual(updater.friendly_error(raw)[0], head, raw)
+        # 兜底也得有标题，且不能把原文丢掉
+        head, hint = updater.friendly_error("something exploded")
+        self.assertTrue(head)
+        self.assertIn("exploded", hint)
 
     def test_menu_sections_cover_catalog(self):
         secs = themes.menu_sections()

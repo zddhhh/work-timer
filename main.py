@@ -809,6 +809,8 @@ class WorkTimer:
         self._done_seen: dict[str, bool] = {}
         self._celebrate_start = 0.0
         self._celebrate_until = 0.0
+        self._bite_start = 0.0
+        self._bite_until = 0.0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -1195,25 +1197,26 @@ class WorkTimer:
             self.cfg["last_run_version"] = APP_VERSION
             store.save_config(self.cfg, now=True)
         if sections:
-            self._show_whats_new(sections)
+            self._show_whats_new(sections, from_ver=from_ver if from_ver else "")
 
-    def _show_whats_new(self, sections: list[tuple[str, str]]) -> None:
+    def _show_whats_new(self, sections: list[tuple[str, str]], *, from_ver: str = "") -> None:
         near = self._dialog_near()
         card_w = 420
         dlg = _card_dialog(self._tk_root(), near=near, width=card_w, height=200)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 14))
         _card_btn(bar, "知道了", dlg.destroy, accent=True).pack(side="left", padx=18)
+        # 这弹窗是重启后自己冒出来的，标题得先说清「刚才那次更新成了」
         tk.Label(
             dlg,
-            text="更新内容",
+            text="更新好了",
             fg=_CARD_FG,
             bg=_CARD_BG,
             font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(pady=(14, 2), padx=18, anchor="w")
         tk.Label(
             dlg,
-            text=f"已更新到 {APP_VERSION}",
+            text=(f"从 {from_ver} 升到 {APP_VERSION}，这次改了这些" if from_ver else f"现在是 {APP_VERSION}，这次改了这些"),
             fg=_CARD_MUTED,
             bg=_CARD_BG,
             font=("Microsoft YaHei UI", 9),
@@ -1238,6 +1241,7 @@ class WorkTimer:
             self._kinetic = None
             self._last_key = ""
             return
+        self._maybe_bite()
         schedules.ensure_fields(self.cfg)
         aid = schedules.active_id(self.cfg)
         # 下班项空闲「点我开始」始终进设置，不要被多日程轮换抢走
@@ -1250,6 +1254,16 @@ class WorkTimer:
                 store.save_config(self.cfg)
                 self._last_key = ""
                 self._last_pin_rotate = time.monotonic()
+
+    def _maybe_bite(self) -> None:
+        """雷霆皮点一下，扑一只狼出来咬一口。别的皮没这动作，点击照旧。"""
+        if self._theme().kind != "thunder":
+            return
+        now = time.monotonic()
+        if now < self._bite_until:  # 上一口还没咬完，别打断
+            return
+        self._bite_start = now
+        self._bite_until = now + ornaments.BITE_SEC
 
     def _esc_disguise_on(self) -> bool:
         return bool(self.cfg.get("ctrl_hide"))
@@ -2231,11 +2245,11 @@ class WorkTimer:
         btn_row.pack(side="bottom", fill="x", padx=16, pady=(8, 16))
 
         if known is not None:
-            status = tk.StringVar(value=f"有新版本 {known.version}")
-            detail = tk.StringVar(value=f"当前 {APP_VERSION}，要现在更新吗？")
+            status = tk.StringVar(value=f"新版本 {known.version}")
+            detail = tk.StringVar(value=f"你现在用的是 {APP_VERSION}")
         else:
             status = tk.StringVar(value="正在检查更新…")
-            detail = tk.StringVar(value=f"当前 {APP_VERSION}")
+            detail = tk.StringVar(value=f"当前版本 {APP_VERSION}")
 
         tk.Label(
             dlg, textvariable=status, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
@@ -2244,6 +2258,9 @@ class WorkTimer:
             dlg, textvariable=detail, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
             wraplength=270, justify="left", anchor="w",
         ).pack(padx=18, anchor="w")
+        # 更新前先让用户看到这版改了什么，别让人闭着眼点「现在更新」
+        notes_box = tk.Frame(dlg, bg=_CARD_BG)
+        notes_box.pack(fill="x", padx=18, anchor="w")
         bar = ttk.Progressbar(dlg, mode="indeterminate", length=270)
         if known is None:
             bar.pack(pady=(12, 4), padx=18)
@@ -2277,9 +2294,13 @@ class WorkTimer:
             for text, cmd, accent in specs:
                 _card_btn(btn_row, text, cmd, accent=accent).pack(side="left", padx=(0, 8))
 
-        def short(msg: str, n: int = 48) -> str:
+        def short(msg: str, n: int = 72) -> str:
             t = (msg or "").replace("\n", " ").strip()
             return t[:n] + ("…" if len(t) > n else "")
+
+        def clear_notes() -> None:
+            for w in notes_box.winfo_children():
+                w.destroy()
 
         def finish_idle(msg: str, sub: str = "", *, error: bool = False) -> None:
             if not alive():
@@ -2290,21 +2311,27 @@ class WorkTimer:
                 bar.pack_forget()
             except Exception:
                 pass
+            clear_notes()
             status.set(msg)
-            detail.set(short(sub) if sub else ("可以关闭" if not error else ""))
-            set_btns([("关闭", on_close, False)])
+            detail.set(short(sub))
+            set_btns([("好", on_close, False)])
             _fit_card(dlg, min_w=300, min_h=160, near=near)
+
+        def fail(msg: str) -> None:
+            head, hint = updater.friendly_error(msg)
+            finish_idle(head, hint, error=True)
 
         def start_download(info: updater.ReleaseInfo) -> None:
             if not alive():
                 return
             if updater.current_exe_path() is None:
-                finish_idle("当前是源码运行", "请重新打包 exe", error=True)
+                finish_idle("源码运行时不能自动更新", "打包成 exe 之后才能用", error=True)
                 return
             state["phase"] = "download"
             state["cancel"] = False
+            clear_notes()
             status.set(f"正在下载 {info.version}")
-            detail.set("下载完成后会自动重启")
+            detail.set("下载完会自动重启，设置和日程都会留着")
             set_btns([("取消", on_close, False)])
             try:
                 bar.stop()
@@ -2354,25 +2381,27 @@ class WorkTimer:
                         if total > 0:
                             pct = max(0, min(100, int(done * 100 / total)))
                             bar.configure(value=pct)
-                            detail.set(f"{done / (1024 * 1024):.1f} / {total / (1024 * 1024):.1f} MB")
+                            detail.set(
+                                f"已下载 {done / (1024 * 1024):.1f} MB / 共 {total / (1024 * 1024):.1f} MB"
+                            )
                         else:
                             detail.set(f"已下载 {done / (1024 * 1024):.1f} MB")
                     elif kind == "ok":
                         path = done_box[0][1]
-                        status.set("正在安装并重启…")
-                        detail.set("请稍候")
+                        status.set("正在安装，马上重启")
+                        detail.set("这就好，别关窗口")
                         bar.configure(value=100)
                         dlg.update_idletasks()
                         try:
                             updater.apply_update_and_restart(path)  # type: ignore[arg-type]
                             updater.force_exit_for_update()
                         except Exception as e:  # noqa: BLE001
-                            finish_idle("更新失败", str(e), error=True)
+                            fail(str(e))
                         return
                     elif kind == "cancel":
                         return
                     else:
-                        finish_idle("下载失败", str(done_box[0][1]), error=True)
+                        fail(str(done_box[0][1]))
                         return
                 try:
                     dlg.update()
@@ -2400,13 +2429,31 @@ class WorkTimer:
                 bar.pack_forget()
             except Exception:
                 pass
-            status.set(f"有新版本 {info.version}")
-            detail.set(f"当前 {APP_VERSION}，要现在更新吗？")
+            status.set(f"新版本 {info.version}")
+            # 换行写死：Tk 不在中文里断词，一长串跟在空格后面会把前面那一小截甩成孤行
+            detail.set(f"从 {APP_VERSION} 升到 {info.version}\n装完自动重启，设置和日程都会留着")
+            clear_notes()
+            try:
+                notes = changelog.highlights(info.body)
+            except Exception as e:  # noqa: BLE001
+                store.log_exception("changelog", e)
+                notes = []
+            if notes:
+                tk.Label(
+                    notes_box, text="这一版改了什么", fg=_CARD_FG, bg=_CARD_BG,
+                    font=("Microsoft YaHei UI", 9, "bold"), anchor="w",
+                ).pack(anchor="w", pady=(10, 3))
+                for item in notes:
+                    tk.Label(
+                        notes_box, text=item, fg="#c8ceda", bg=_CARD_BG,
+                        font=("Microsoft YaHei UI", 9), wraplength=268,
+                        justify="left", anchor="w",
+                    ).pack(anchor="w", pady=(0, 3))
 
             def go(inf=info) -> None:
                 state["pending_dl"] = inf
 
-            set_btns([("现在更新", go, True), ("稍后", on_close, False)])
+            set_btns([("现在更新", go, True), ("以后再说", on_close, False)])
             _fit_card(dlg, min_w=300, min_h=170, near=near)
 
         if known is not None:
@@ -2426,15 +2473,15 @@ class WorkTimer:
                 if result_box:
                     st, info = result_box[0]
                     if st == "no_repo":
-                        finish_idle("还没配置仓库", error=True)
+                        finish_idle("这个版本不带自动更新", "去项目主页手动下载最新版", error=True)
                     elif st.startswith("error:"):
-                        finish_idle("检查失败", st[6:], error=True)
+                        fail(st[6:])
                     elif st == "latest":
-                        finish_idle("已是最新版", f"当前 {APP_VERSION}")
+                        finish_idle("已经是最新版了", f"当前 {APP_VERSION}")
                     elif st == "available" and info is not None:
                         show_available(info)
                     else:
-                        finish_idle("没有可用更新", error=True)
+                        finish_idle("暂时没有新版本", f"当前 {APP_VERSION}")
                     break
                 try:
                     dlg.update()
@@ -2493,7 +2540,10 @@ class WorkTimer:
             if env is not None:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
             if ornaments.has_skin(theme.kind):
-                if theme.kind in ("neonflow", "inkpulse"):
+                if theme.kind == "thunder":
+                    # 落雷那半秒要满帧，平时只有雨在下
+                    fps = ornaments.thunder_fps(stage, phase)
+                elif theme.kind in ("neonflow", "inkpulse"):
                     fps = 30 if stage == "warn" else (16 if stage in ("idle", "done") else 28)
                 else:
                     period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
@@ -2510,6 +2560,9 @@ class WorkTimer:
             celebrating = phase < self._celebrate_until
             if celebrating:
                 key = f"{key}-c{int(phase * 30)}"
+            biting = phase < self._bite_until
+            if biting:
+                key = f"{key}-w{int(phase * 40)}"
 
             if key == self._last_key:
                 return
@@ -2566,6 +2619,15 @@ class WorkTimer:
                 ornaments.paint_pin_dots(img, w, h, color=chev, pin_dots=dots)
             if celebrating:
                 ornaments.paint_confetti(img, w, h, phase - self._celebrate_start)
+            if biting:
+                ornaments.paint_bite(
+                    img,
+                    (4, 4, w - 5, h - 5),
+                    phase - self._bite_start,
+                    stage=stage,
+                    light=(surface == "light"),
+                    radius=min(theme.radius, max(8, h // 5)),
+                )
             bgra, mask = _rgba_to_bgra(img)
             self.win.present_bgra(bgra, mask)
             self._last_key = key
@@ -2670,7 +2732,11 @@ class WorkTimer:
                 store.flush_pending()
                 if now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
                     time.sleep(0.001)
-                elif ornaments.is_animated(self._theme().kind) or now < self._celebrate_until:
+                elif (
+                    ornaments.is_animated(self._theme().kind)
+                    or now < self._celebrate_until
+                    or now < self._bite_until
+                ):
                     time.sleep(1.0 / FPS)
                 else:
                     # 无动画皮时 _paint 只在秒数变化才重绘，主循环没必要 60Hz 空转

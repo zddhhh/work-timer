@@ -19,7 +19,10 @@ import store
 
 DEFAULT_THEME_ID = "ghost"
 _KINDS = frozenset(
-    {"ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow", "inkpulse"}
+    {
+        "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder",
+    }
 )
 # 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
 _REMOVED_IDS = frozenset({"auto", "sky", "blink"})
@@ -314,7 +317,10 @@ def consume_updated() -> bool:
 
 # 这些皮会随版本改配色/自适应，优先用内置覆盖缓存或在线版本
 _PREFER_BUNDLED = frozenset(
-    {"ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow", "midautumn", "nationalday", "neonflow", "inkpulse"}
+    {
+        "ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder",
+    }
 )
 
 
@@ -468,7 +474,7 @@ def paint_card(
         light_card = _luma(theme.fill) >= 160
         wallpaper_light = surface == "light"
         # 夜景/红绸按墙纸加浓；玻璃/霓虹等按配色亮度走浅色处理
-        if kind in ("midautumn", "nationalday"):
+        if kind in ("midautumn", "nationalday", "thunder"):
             skin_light = wallpaper_light
         else:
             skin_light = light_card
@@ -494,6 +500,9 @@ def paint_card(
             elif kind == "inkpulse":
                 # 宣纸永远浅底深墨。透太狠纸就发灰，山水立刻变脏
                 base = (252, 246, 232, 232) if wallpaper_light else (250, 242, 222, 214)
+            elif kind == "thunder":
+                # 雷云得压在暗底上电弧才亮；浅墙纸下托底加厚，不然闪电糊成一团白
+                base = (14, 16, 30, 178) if skin_light else (8, 9, 18, 132)
             else:  # glass
                 base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
             d.rounded_rectangle(box, radius=r, fill=base)

@@ -8,6 +8,30 @@ import store
 import updater
 
 _HEADING = re.compile(r"^##\s+(\d+\.\d+\.\d+)\s*$")
+_NOISE = re.compile(r"^\s*(sha256|md5|sha1)\s*[:：]", re.IGNORECASE)
+
+
+def highlights(body: str, *, limit: int = 4) -> list[str]:
+    """Release 正文 → 给人看的几条（不带 - 之类的行首标记）。
+
+    本地 md 里没有「将要下载的那一版」的说明，只能用线上 Release 的正文，
+    所以得把版本号标题和 sha256 校验行滤掉。标记也一并去掉：Tk 换行会把
+    「- 一长串中文」的短横甩到单独一行。"""
+    out: list[str] = []
+    for raw in (body or "").splitlines():
+        line = raw.strip()
+        if not line or _NOISE.match(line):
+            continue
+        if _HEADING.match(line) or line.startswith("#"):
+            continue
+        if re.match(r"^worktimer\s+v?\d", line, re.IGNORECASE):
+            continue
+        line = line.lstrip("-*•·").strip()
+        if line:
+            out.append(line)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def notes_path() -> Path:

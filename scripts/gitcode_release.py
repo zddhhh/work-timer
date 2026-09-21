@@ -93,7 +93,11 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
         ) from e
 
 
-RELEASE_NOTE = "- 墨水涟漪的落墨点移到大数字右边，下落和涟漪不再被倒计时挡住"
+RELEASE_NOTE = (
+    "- 新皮肤「雷霆恶狼」：雷云斜雨压顶，每隔几秒劈一道带分叉的闪电，整卡爆闪、余电沿边爬\n"
+    "- 这款皮点一下卡片，会有一只狼从右边扑进来咬住倒计时，獠牙合拢时炸出电火花\n"
+    "- 更新后的提示弹窗改成人话，会写清从哪一版升到了哪一版"
+)
 
 
 def sha256_of(path: Path) -> str:

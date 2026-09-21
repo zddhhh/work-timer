@@ -850,3 +850,366 @@ def paint_inkpulse(layer: Image.Image, phase: float, *, stage: str, radius: int,
     layer.alpha_composite(_seal(ss, cs, gain=min(1.1, gain)), (max(0, sx0), sy0))
 
     _ = radius  # 圆角由 ornaments 蒙版处理；保留参数与 neonflow 签名一致
+
+
+# ---------------------------------------------------------------- 雷霆恶狼
+
+_STORM_CACHE: dict[tuple, Image.Image] = {}
+_WOLF_CACHE: dict[tuple, Image.Image] = {}
+
+BITE_SEC = 1.05  # 点一下的互动时长，main 里用它定重绘窗口
+
+
+def _thunder_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
+    """(电弧色, 雷云色, 落雷周期秒, 增益)"""
+    gain = 0.86 if light else 1.0
+    if stage == "warn":
+        return (255, 128, 214), (92, 34, 82), 2.5, gain
+    if stage == "done":
+        return (130, 255, 205), (30, 72, 66), 7.5, gain * 0.8
+    if stage == "idle":
+        return (158, 194, 255), (40, 48, 78), 9.0, gain * 0.62
+    return (176, 228, 255), (48, 60, 96), 4.6, gain
+
+
+def _storm(bw: int, bh: int, cloud: tuple[int, int, int], *, gain: float) -> Image.Image:
+    """雷云：上重下轻的一片翻卷暗团，宽 2bw。
+
+    画成横向周期为 bw 的图再裁窗口平移，比 offset 环绕靠谱——环绕会在左右
+    边界之间留一道对不上的硬缝，模糊也盖不住。"""
+    key = (bw, bh, cloud, int(gain * 20))
+    got = _STORM_CACHE.get(key)
+    if got is not None:
+        return got
+    im = Image.new("RGBA", (bw * 2, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    nxt = _rnd((bw * 2654435761) ^ (bh * 40503))
+    for _i in range(18):
+        cx, cy = nxt(bw), nxt(max(2, int(bh * 0.9)))
+        rx = bh * (0.24 + nxt(50) / 100.0)
+        ry = rx * (0.34 + nxt(32) / 100.0)
+        # 越往下越淡，云才像压在头顶，底下也给大数字留出暗底
+        fade = (1.0 - min(1.0, cy / max(1.0, bh))) ** 1.3
+        a = int((30 + nxt(38)) * fade * gain)
+        if a <= 2:
+            continue
+        for rep in (0, bw):  # 同一团画两遍，裁窗口跨过 bw 时接得上
+            d.ellipse((cx + rep - rx, cy - ry, cx + rep + rx, cy + ry), fill=(*cloud, a))
+    im = im.filter(ImageFilter.GaussianBlur(radius=max(3.0, bh * 0.085)))
+    return _cache_put(_STORM_CACHE, key, im)
+
+
+def _rain(
+    layer: Image.Image, phase: float, arc: tuple[int, int, int], *, n: int, gain: float, scale: float
+) -> None:
+    """斜雨：定种子的一把雨丝各自循环下落。落雷之间靠它撑住「暴雨」的动感。"""
+    bw, bh = layer.size
+    d = ImageDraw.Draw(layer)
+    nxt = _rnd(90210)
+    slant = 0.30
+    for _i in range(n):
+        x0 = nxt(1000) / 1000.0
+        off = nxt(1000) / 1000.0
+        spd = 1.5 + nxt(120) / 100.0
+        ln = bh * (0.10 + nxt(13) / 100.0)
+        bright = nxt(6) == 0
+        y = ((phase * spd * 0.75 + off) % 1.25) * (bh + ln) - ln
+        x = ((x0 + phase * spd * 0.02) % 1.0) * bw - y * slant
+        # 单根太显眼就成了划痕，得靠密度成雨
+        a = int((54 if bright else 26) * gain)
+        d.line((x, y, x + ln * slant, y + ln), fill=(*arc, a), width=1 if not bright else max(1, int(round(1.4 * scale))))
+
+
+def _bolt_pts(
+    seed: int, x0: float, y0: float, x1: float, y1: float, *, depth: int = 5, jitter: float = 0.30
+) -> list[tuple[float, float]]:
+    """中点位移生成折线：每次把线段中点往垂线方向random 推开，抖动逐层减半。"""
+    nxt = _rnd(seed)
+    pts = [(x0, y0), (x1, y1)]
+    for _ in range(depth):
+        out: list[tuple[float, float]] = [pts[0]]
+        for a, b in zip(pts, pts[1:]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            ln = math.hypot(dx, dy)
+            mx, my = (a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5
+            if ln > 1.0:
+                off = (nxt(2001) / 1000.0 - 1.0) * ln * jitter
+                mx -= dy / ln * off
+                my += dx / ln * off
+            out.append((mx, my))
+            out.append(b)
+        pts = out
+        jitter *= 0.55
+    return pts
+
+
+def _flash_env(g: float) -> float:
+    """真闪电是先一下虚闪、暗一瞬、再来主放电，然后拖尾。平滑上升会假。"""
+    if g < 0.05:
+        return 0.70
+    if g < 0.09:
+        return 0.12
+    if g < 0.15:
+        return 1.0
+    if g < 0.34:
+        return max(0.0, 1.0 - (g - 0.15) / 0.19) * 0.85
+    return 0.0
+
+
+def _draw_bolt(
+    bloom: ImageDraw.ImageDraw,
+    glow: ImageDraw.ImageDraw,
+    core: ImageDraw.ImageDraw,
+    pts: list[tuple[float, float]],
+    arc: tuple[int, int, int],
+    *,
+    env: float,
+    gain: float,
+    scale: float,
+    thick: float = 1.0,
+) -> None:
+    """三层画一道雷：宽泛光（后面重模糊）+ 紧边光 + 近白的芯。逐段收细，上粗下尖。"""
+    n = max(1, len(pts) - 1)
+    ba = int(86 * env * gain * thick)
+    ga = int(205 * env * gain * thick)
+    ca = int(255 * min(1.0, env * 1.25) * gain)
+    for i in range(n):
+        seg = (pts[i], pts[i + 1])
+        w = (1.0 - 0.58 * (i / n)) * thick
+        if ba > 2:
+            bloom.line(seg, fill=(*arc, ba), width=max(3, int(round(14.0 * scale * w))))
+        if ga > 3:
+            glow.line(seg, fill=(*arc, ga), width=max(2, int(round(4.4 * scale * w))))
+        if ca > 6:
+            core.line(seg, fill=(242, 250, 255, ca), width=max(1, int(round(2.0 * scale * w))))
+
+
+def paint_thunder(layer: Image.Image, phase: float, *, stage: str, radius: int, light: bool = False) -> None:
+    """雷霆：暗雷云 + 沿边游走的电弧 + 周期落雷（虚闪—主放电—余晖）+ 全卡爆闪。"""
+    bw, bh = layer.size
+    if bw < 40 or bh < 20:
+        return
+    arc, cloud, period, gain = _thunder_palette(stage, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    env = _flash_env(phase % period)
+    # 两次落雷之间来一记远处闷雷：只照亮云，不下电
+    far = _flash_env((phase + period * 0.55) % period) * 0.32
+    lit_k = max(env, far)
+
+    dx = int(phase * 5) % bw
+    drift = _storm(bw, bh, cloud, gain=gain).crop((dx, 0, dx + bw, bh))
+    layer.alpha_composite(drift)
+    # 云被自己肚子里的电照亮：拿云的 alpha 当蒙版上电弧色，比盖一层白纱可信
+    if lit_k > 0.02:
+        lit = Image.new("RGBA", (bw, bh), (*arc, 0))
+        lit.putalpha(drift.getchannel("A").point(lambda v: int(v * 0.85 * lit_k)))
+        layer.alpha_composite(lit)
+
+    _rain(layer, phase, arc, n=(34 if stage == "warn" else (14 if stage == "idle" else 24)), gain=gain, scale=scale)
+
+    bloom_im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    glow_im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    core_im = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    bd, gd, cd = ImageDraw.Draw(bloom_im), ImageDraw.Draw(glow_im), ImageDraw.Draw(core_im)
+
+    # 余电沿边爬：只在落雷那一下和余晖里出现。常驻的话就是几段乱窜的白虚线
+    if env > 0.06:
+        _total, point = _perimeter(bw, bh, float(radius), 2.0)
+        for k in range(2):
+            head = (phase / (3.4 + k * 1.9) + k * 0.5) % 1.0
+            n_pt = 9
+            jig: list[tuple[float, float]] = []
+            for i in range(n_pt):
+                u = (head + i * 0.006) % 1.0
+                px, py = point(u)
+                ax, ay = point((u + 0.002) % 1.0)
+                tx, ty = ax - px, ay - py
+                ln = math.hypot(tx, ty) or 1.0
+                # 沿边法线抖开才是锯齿电弧；顺切线抖只会得到一段歪线
+                amp = 0.0 if i in (0, n_pt - 1) else ((int(phase * 26) + i * 7 + k * 31) % 7 - 3) * 0.75 * scale
+                jig.append((px - ty / ln * amp, py + tx / ln * amp))
+            e = min(1.0, env * 1.2)
+            bd.line(jig, fill=(*arc, int(62 * gain * e)), width=max(3, int(round(5.0 * scale))), joint="curve")
+            gd.line(jig, fill=(*arc, int(140 * gain * e)), width=max(2, int(round(2.2 * scale))), joint="curve")
+            cd.line(jig, fill=(236, 250, 255, int(190 * gain * e)), width=1, joint="curve")
+
+    if env > (0.35 if stage == "idle" else 0.01):
+        seed = int(phase / period) * 7919 + 13
+        nxt = _rnd(seed)
+        # 主雷落在右侧，别糊住左边的大数字
+        x0 = bw * (0.50 + nxt(36) / 100.0)
+        x1 = x0 + (nxt(240) / 1000.0 - 0.12) * bw
+        y1 = bh * (0.82 + nxt(28) / 100.0)  # 多半穿出下边缘，别在半空断掉
+        main_pts = _bolt_pts(seed, x0, -2.0, x1, y1)
+        _draw_bolt(bd, gd, cd, main_pts, arc, env=env, gain=gain, scale=scale)
+        if y1 < bh:  # 落在卡内就砸出一团着地光
+            gr = bh * 0.3
+            bd.ellipse((x1 - gr, y1 - gr * 0.5, x1 + gr, y1 + gr * 0.5), fill=(*arc, int(80 * env * gain)))
+        for b in range(2):
+            i = int(len(main_pts) * (0.34 + 0.26 * b))
+            bx, by = main_pts[i]
+            ang = math.radians(-46 + nxt(92)) + (math.pi if b else 0.0)
+            ln = bh * (0.24 + nxt(22) / 100.0)
+            _draw_bolt(
+                bd, gd, cd,
+                _bolt_pts(seed + 977 * (b + 1), bx, by, bx + math.cos(ang) * ln, by + abs(math.sin(ang)) * ln, depth=3),
+                arc, env=env * 0.72, gain=gain, scale=scale, thick=0.5,
+            )
+
+    layer.alpha_composite(bloom_im.filter(ImageFilter.GaussianBlur(radius=max(4.0, 7.0 * scale))))
+    layer.alpha_composite(glow_im.filter(ImageFilter.GaussianBlur(radius=max(1.4, 2.0 * scale))))
+    layer.alpha_composite(core_im)
+
+    # 爆闪：亮那几帧整张卡提一下，且上重下轻——光是从云里打下来的
+    if env > 0.02:
+        top = int(140 * env * gain)
+        if top > 3:
+            ramp = Image.linear_gradient("L").resize((bw, bh)).point(lambda v: int((255 - v) * top / 255))
+            flash = Image.new("RGBA", (bw, bh), (*arc, 0))
+            flash.putalpha(ramp)
+            layer.alpha_composite(flash)
+
+
+# ---- 点一下：恶狼扑出来咬一口 ----
+
+def thunder_fps(stage: str, phase: float) -> int:
+    """落雷那半秒要 60Hz 才看得出虚闪—主放电的节奏；其余时间只有边缘电弧在爬，十几帧够了。"""
+    _arc, _cloud, period, _gain = _thunder_palette(stage)
+    if _flash_env(phase % period) > 0.01:
+        return 60
+    return 14 if stage in ("idle", "done") else 18
+
+
+def _wolf_head(size: int, jaw: int, arc: tuple[int, int, int], *, gain: float) -> Image.Image:
+    """侧面狼头剪影，朝左。jaw 是下颌张开度数（按档缓存）。
+
+    画布 (2·size)×size 对应 200×100 的局部坐标：头在左边 4~100，颈背拖到
+    右边缘，这样贴到卡上时身子始终连着卡片外，不会变成一颗飘着的头。
+    小尺寸认不出细节，形靠三样东西：立耳、脑门到吻的折角、张口的獠牙。"""
+    key = (size, jaw, arc, int(gain * 20))
+    got = _WOLF_CACHE.get(key)
+    if got is not None:
+        return got
+    im = Image.new("RGBA", (size * 2, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    u = size / 100.0
+    lw = max(1, int(round(2.0 * u)))
+
+    def P(pts):
+        return [(x * u, y * u) for x, y in pts]
+
+    body = (21, 24, 36, 250)
+    rim = (*arc, int(225 * gain))
+    tooth = (242, 248, 254, 252)
+    hinge = (72.0, 53.0)
+
+    def ear(pts):
+        d.polygon(P(pts), fill=body)
+        d.line(P(pts + (pts[0],)), fill=rim, width=lw, joint="curve")
+
+    # 鬃背：一撮撮斜倒向后，幅度参差且压得很平。齿高一点就成了剑龙脊
+    back: list[tuple[float, float]] = []
+    bx, by = 90.0, 33.0
+    for i in range(12):
+        back.append((bx, by))
+        back.append((bx + 3.0, by - (2.6 + (i * 7 % 5) * 0.5)))
+        bx, by = bx + 8.4, by + 1.6
+    back.append((200.0, 53.0))
+
+    # 头骨 + 上颌 + 颈背连到画布右边缘
+    top = [
+        (3, 43), (10, 36), (22, 31), (34, 27), (44, 25),  # 吻背，到额段折角
+        (52, 22), (64, 20), (78, 24), (90, 33),  # 脑门、颅顶、后脑
+    ] + back
+    lip = [(hinge[0], hinge[1] + 1), (52, 51), (32, 50), (10, 47)]
+    d.polygon(P(top + [(200, 100), (72, 100), (66, 74)] + lip), fill=body)
+    d.line(P(top), fill=rim, width=lw, joint="curve")
+    d.line(P(lip), fill=(*arc, int(150 * gain)), width=max(1, lw - 1), joint="curve")
+    # 只留一只近耳：两只并排在小尺寸下会连成一个王冠，认不出是狼
+    ear(((59, 22), (69, 2), (82, 26)))
+
+    # 上排獠牙：门牙后那对犬齿最长
+    for fx0, fw, fl in ((9, 5.0, 14), (21, 4.2, 9), (33, 3.4, 6), (45, 3.0, 5)):
+        d.polygon(P(((fx0, 48), (fx0 + fw, 48.5), (fx0 + fw * 0.5, 48 + fl))), fill=tooth)
+
+    # 下颌绕关节往下转（负角：前端 x 比关节小，正角会把嘴掀到天上）
+    rad = math.radians(-jaw)
+    cos, sin = math.cos(rad), math.sin(rad)
+
+    def rot(p):
+        dx, dy = p[0] - hinge[0], p[1] - hinge[1]
+        return (hinge[0] + dx * cos - dy * sin, hinge[1] + dx * sin + dy * cos)
+
+    jaw_top = [(70, 54), (52, 55), (30, 53), (10, 50)]
+    lower = jaw_top + [(12, 59), (32, 64), (56, 65), (70, 61)]
+    d.polygon(P([rot(p) for p in lower]), fill=body)
+    # 只描下颌的下缘和下巴：整圈描边会变成嘴下面浮着一条小船
+    d.line(P([rot(p) for p in lower[3:]]), fill=rim, width=max(1, lw - 1), joint="curve")
+    for fx0, fw, fl in ((14, 4.6, 12), (26, 3.8, 8), (38, 3.2, 6)):
+        tri = ((fx0, 53), (fx0 + fw, 53.5), (fx0 + fw * 0.5, 53 - fl))
+        d.polygon(P([rot(p) for p in tri]), fill=tooth)
+
+    # 眼：一枚朝前挑的尖角，尖头对着鼻子就是凶相；眉骨再压一道
+    ex, ey = 55.0, 31.0
+    d.polygon(P(((ex - 6, ey + 2.2), (ex + 4, ey - 1.6), (ex + 4.6, ey + 2.4))), fill=(*arc, 255))
+    d.line(P(((ex - 7, ey - 2), (ex + 6, ey - 4.5))), fill=rim, width=max(1, lw - 1))
+    return _cache_put(_WOLF_CACHE, key, im, cap=24)
+
+
+def paint_wolf_bite(layer: Image.Image, t: float, *, stage: str = "run", light: bool = False) -> None:
+    """点一下：恶狼从右边扑进来，张口—咬合—带着电火花退回去。t 从 0 起算秒。"""
+    bw, bh = layer.size
+    if bw < 40 or bh < 20 or t < 0.0 or t > BITE_SEC:
+        return
+    arc, _cloud, _period, gain = _thunder_palette(stage, light=light)
+    size = int(bh * 1.06)
+    if size < 24:
+        return
+    u = t / BITE_SEC
+
+    # 0~0.30 扑入（减速到位），0.30~0.42 咬合，0.42~0.58 咬住，0.58~1 退回
+    if u < 0.30:
+        k = u / 0.30
+        travel = 1.0 - (1.0 - k) ** 2.2
+        jaw = 34
+    elif u < 0.42:
+        travel = 1.0
+        jaw = int(34 * (1.0 - (u - 0.30) / 0.12))
+    elif u < 0.58:
+        travel = 1.0
+        jaw = 2
+    else:
+        k = (u - 0.58) / 0.42
+        travel = 1.0 - k * k
+        jaw = int(6 + 22 * k)
+
+    # 从右边缘外扑进来咬住大数字；身子那半张画布始终压在卡片右边
+    x_out, x_in = bw * 1.02, bw - size * 1.85
+    x = x_out + (x_in - x_out) * travel
+    y = bh * 0.5 - size * 0.5 + bh * 0.07 * (1.0 - travel)
+    jaw_q = max(0, min(36, int(round(jaw / 4.0)) * 4))  # 按 4 度一档，缓存才有意义
+    # paste 容得下负坐标（alpha_composite 不行），狼头才能有一半挂在卡片外
+    head = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    head.paste(_wolf_head(size, jaw_q, arc, gain=gain), (int(x), int(y)))
+    layer.alpha_composite(head)
+
+    # 咬合瞬间：白闪 + 牙口处炸几点电火花
+    if 0.36 < u < 0.52:
+        k = (u - 0.36) / 0.16
+        bite_x, bite_y = x + size * 0.16, y + size * 0.52
+        halo = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        core = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        hd, cd = ImageDraw.Draw(halo), ImageDraw.Draw(core)
+        nxt = _rnd(7717)
+        for _i in range(10):
+            ang = math.radians(nxt(360))
+            dist = (6 + nxt(16)) * (0.3 + k * 2.0)
+            px, py = bite_x + math.cos(ang) * dist, bite_y + math.sin(ang) * dist
+            pr = max(0.9, (2.8 - k * 1.9) * (bh / 92.0))
+            hd.ellipse((px - pr * 2.2, py - pr * 2.2, px + pr * 2.2, py + pr * 2.2), fill=(*arc, int(150 * (1.0 - k))))
+            cd.ellipse((px - pr, py - pr, px + pr, py + pr), fill=(250, 254, 255, int(250 * (1.0 - k))))
+        layer.alpha_composite(halo.filter(ImageFilter.GaussianBlur(radius=max(1.5, bh / 36))))
+        layer.alpha_composite(core)
+        veil = int(54 * (1.0 - k) * gain)
+        if veil > 2:
+            layer.alpha_composite(Image.new("RGBA", (bw, bh), (255, 255, 255, veil)))

@@ -32,7 +32,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "nationalday": ("skin_nationalday.png", "skin_nationalday_glow.png"),
 }
 # 不用生图、逐帧程序化绘制的皮
-_PROC_KINDS = frozenset({"neonflow", "inkpulse"})
+_PROC_KINDS = frozenset({"neonflow", "inkpulse", "thunder"})
 
 
 def asset_path(name: str) -> Path:
@@ -229,6 +229,27 @@ def _paint_embers(layer: Image.Image, phase: float, *, light: bool, stage: str, 
     layer.alpha_composite(spark)
 
 
+BITE_SEC = fx.BITE_SEC
+thunder_fps = fx.thunder_fps
+
+
+def paint_bite(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    t: float,
+    *,
+    stage: str = "run",
+    light: bool = False,
+    radius: int = 0,
+) -> None:
+    """点一下扑出来的恶狼。画在文字之上，同样吃圆角蒙版，免得糊出卡片边。"""
+    x0, y0, x1, y1 = box
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    fx.paint_wolf_bite(layer, t, stage=stage, light=light)
+    img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+
+
 def paste_skin(
     img: Image.Image,
     box: tuple[int, int, int, int],
@@ -250,6 +271,8 @@ def paste_skin(
             fx.paint_neonflow(layer, phase, stage=stage, radius=int(radius), light=light)
         elif kind == "inkpulse":
             fx.paint_inkpulse(layer, phase, stage=stage, radius=int(radius), light=light)
+        elif kind == "thunder":
+            fx.paint_thunder(layer, phase, stage=stage, radius=int(radius), light=light)
         img.alpha_composite(_round_mask(layer, radius), (x0, y0))
         return True
 
