@@ -89,6 +89,8 @@ def main() -> None:
         "--hidden-import",
         "single_instance",
         "--hidden-import",
+        "key_hide",
+        "--hidden-import",
         "store",
         "--hidden-import",
         "layered_win",

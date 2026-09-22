@@ -83,6 +83,7 @@ ID_FMT_SEC = 12
 ID_ABOUT = 13
 ID_SKIN_SETTINGS = 14
 ID_CREATE_DESKTOP_SHORTCUT = 15
+ID_KEY_HIDE_SETTINGS = 16
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -759,7 +760,8 @@ class LayeredPetWindow:
         display_mode: str = "hms",
         theme_id: str = "ghost",
         *,
-        esc_disguise: bool = False,
+        key_hide_enabled: bool = False,
+        key_hide_settings_label: str = "设置隐藏按键…",
         auto_start: bool = False,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
@@ -800,10 +802,11 @@ class LayeredPetWindow:
         user32.AppendMenuW(hset, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(
             hset,
-            MF_STRING | (MF_CHECKED if esc_disguise else 0),
+            MF_STRING | (MF_CHECKED if key_hide_enabled else 0),
             ID_DISGUISE,
-            "Ctrl 隐藏窗口",
+            "按键隐藏",
         )
+        user32.AppendMenuW(hset, MF_STRING, ID_KEY_HIDE_SETTINGS, key_hide_settings_label)
         user32.AppendMenuW(
             hset,
             MF_STRING | (MF_CHECKED if auto_start else 0),
@@ -857,7 +860,9 @@ class LayeredPetWindow:
         if cmd == ID_SCHEDULES:
             return "schedules"
         if cmd == ID_DISGUISE:
-            return "toggle_esc_disguise"
+            return "toggle_key_hide"
+        if cmd == ID_KEY_HIDE_SETTINGS:
+            return "key_hide_settings"
         if cmd == ID_AUTO_START:
             return "toggle_auto_start"
         if cmd == ID_FMT_HMS:

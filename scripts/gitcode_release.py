@@ -94,7 +94,8 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修 Ctrl 隐藏后点快捷方式唤起窗口僵住（同步恢复隐藏状态并重绘）"
+    "- 「Ctrl 隐藏」改为「按键隐藏」：默认关，可自定义隐藏键（默认反引号 `）\n"
+    "- 曾开启 Ctrl 隐藏的老用户仍保留 Ctrl 键位"
 )
 
 

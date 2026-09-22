@@ -22,6 +22,7 @@ import desktop_shortcut
 import festival
 import feedback
 import flex_time
+import key_hide
 import kinetic
 import layered_win
 import memos
@@ -813,10 +814,10 @@ class WorkTimer:
         self._fest_day = datetime.now().strftime("%Y-%m-%d")
         self._wall_at = datetime.now()
         self._mono_at = time.monotonic()
-        self._ctrl_held = False
-        self._ctrl_chord = False
-        self._ctrl_down_at = 0.0
-        self._ctrl_scan_at = 0.0
+        self._hide_key_held = False
+        self._hide_key_chord = False
+        self._hide_key_down_at = 0.0
+        self._hide_key_scan_at = 0.0
         self._done_seen: dict[str, bool] = {}
         self._celebrate_start = 0.0
         self._celebrate_until = 0.0
@@ -870,7 +871,7 @@ class WorkTimer:
             ssl.create_default_context()
         except Exception:
             pass
-        self.cfg["ctrl_hide"] = bool(self.cfg.get("ctrl_hide"))
+        key_hide.ensure_fields(self.cfg)
         self.cfg["remember_offwork"] = bool(self.cfg.get("remember_offwork", True))
         self.cfg["auto_start"] = bool(self.cfg.get("auto_start"))
         try:
@@ -1327,11 +1328,11 @@ class WorkTimer:
             )
             self._last_key = ""
 
-    def _esc_disguise_on(self) -> bool:
-        return bool(self.cfg.get("ctrl_hide"))
+    def _key_hide_on(self) -> bool:
+        return key_hide.enabled(self.cfg)
 
-    def _set_esc_disguise(self, on: bool) -> None:
-        self.cfg["ctrl_hide"] = bool(on)
+    def _set_key_hide(self, on: bool) -> None:
+        key_hide.set_enabled(self.cfg, on)
         store.save_config(self.cfg)
         if not on and self._esc_hidden:
             self._show_after_esc()
@@ -1381,8 +1382,8 @@ class WorkTimer:
             self._last_key = ""
             self._force_surface_sample = True
 
-    def _toggle_esc_hide(self) -> None:
-        if not self._esc_disguise_on() and not self._esc_hidden:
+    def _toggle_key_hide(self) -> None:
+        if not self._key_hide_on() and not self._esc_hidden:
             return
         if self._esc_hidden:
             self._show_after_esc()
@@ -1390,8 +1391,8 @@ class WorkTimer:
         self.win.hide()
         self._esc_hidden = True
 
-    def _ctrl_other_key_down(self) -> bool:
-        ignore = {0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}
+    def _hide_other_key_down(self, hide_vk: int) -> bool:
+        ignore = {hide_vk, 0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}
         for vk in range(0x08, 0xA6):
             if vk in ignore:
                 continue
@@ -1399,29 +1400,34 @@ class WorkTimer:
                 return True
         return False
 
-    def _poll_esc(self) -> None:
+    def _poll_key_hide(self) -> None:
         self._poll_clock_skew()
-        ctrl = bool(layered_win.user32.GetAsyncKeyState(0x11) & 0x8000)
-        if ctrl and not self._ctrl_held:
-            self._ctrl_chord = self._ctrl_other_key_down()
-            self._ctrl_down_at = time.monotonic()
-            self._ctrl_scan_at = self._ctrl_down_at
-        elif ctrl and not self._ctrl_chord:
-            # 按住 Ctrl 期间扫 150 个 VK 判断是否组合键：节流到 50ms 一次
+        if not self._key_hide_on() and not self._esc_hidden:
+            self._hide_key_held = False
+            return
+        hide_vk = key_hide.vk(self.cfg)
+        down = bool(layered_win.user32.GetAsyncKeyState(hide_vk) & 0x8000)
+        if down and not self._hide_key_held:
+            self._hide_key_chord = (
+                self._hide_other_key_down(hide_vk) if key_hide.is_modifier(hide_vk) else False
+            )
+            self._hide_key_down_at = time.monotonic()
+            self._hide_key_scan_at = self._hide_key_down_at
+        elif down and not self._hide_key_chord:
             t = time.monotonic()
-            if t - self._ctrl_scan_at >= 0.05:
-                self._ctrl_scan_at = t
-                if self._ctrl_other_key_down():
-                    self._ctrl_chord = True
-        if (not ctrl) and self._ctrl_held:
-            held = time.monotonic() - self._ctrl_down_at
+            if t - self._hide_key_scan_at >= 0.05:
+                self._hide_key_scan_at = t
+                if self._hide_other_key_down(hide_vk):
+                    self._hide_key_chord = True
+        if (not down) and self._hide_key_held:
+            held = time.monotonic() - self._hide_key_down_at
             if (
-                self._esc_disguise_on()
-                and not self._ctrl_chord
+                (self._key_hide_on() or self._esc_hidden)
+                and not self._hide_key_chord
                 and 0.04 <= held <= 0.55
             ):
-                self._toggle_esc_hide()
-        self._ctrl_held = ctrl
+                self._toggle_key_hide()
+        self._hide_key_held = down
 
     def _request_menu(self, sx: int, sy: int) -> None:
         if self._esc_hidden:
@@ -1625,6 +1631,91 @@ class WorkTimer:
         _card_btn(bar, "保存", save, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
         _reveal_card(dlg, min_w=420, min_h=280, near=self._dialog_near())
+        _run_card_modal(dlg, self.win)
+
+    def _open_key_hide_dialog(self) -> None:
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=420, height=320)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        err = tk.StringVar(value="")
+        _pack_err_line(body, err, wrap=360)
+        tk.Label(
+            body, text="按键隐藏", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 4), anchor="w")
+        tk.Label(
+            body,
+            text="单击指定按键可快速隐藏/显示计时窗。建议用 `、F12 等；Ctrl/Alt 易与组合键冲突。",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), wraplength=360, justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+
+        box = tk.Frame(body, bg="#1e2430", highlightthickness=1, highlightbackground="#2a3140")
+        box.pack(fill="x", pady=(0, 8))
+        inner = tk.Frame(box, bg="#1e2430")
+        inner.pack(fill="x", padx=12, pady=12)
+        preview = tk.StringVar(value=key_hide.label(key_hide.vk(self.cfg)))
+        tk.Label(inner, text="当前按键", fg=_CARD_MUTED, bg="#1e2430", font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w"
+        )
+        key_lbl = tk.Label(
+            inner,
+            textvariable=preview,
+            fg=_CARD_ACCENT,
+            bg="#1e2430",
+            font=("Consolas", 22, "bold"),
+        )
+        key_lbl.pack(anchor="w", pady=(4, 8))
+        tk.Label(
+            inner,
+            text="在下方按下新按键以替换",
+            fg=_CARD_MUTED,
+            bg="#1e2430",
+            font=("Microsoft YaHei UI", 9),
+        ).pack(anchor="w")
+
+        enabled_var = tk.BooleanVar(value=self._key_hide_on())
+        tk.Checkbutton(
+            body,
+            text="启用按键隐藏",
+            variable=enabled_var,
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            activebackground=_CARD_BG,
+            activeforeground=_CARD_FG,
+            selectcolor="#222733",
+            font=("Microsoft YaHei UI", 10),
+        ).pack(anchor="w", pady=(4, 0))
+
+        pending = {"vk": key_hide.vk(self.cfg)}
+
+        def on_key(event: tk.Event) -> str:
+            if event.keysym == "Escape":
+                dlg.destroy()
+                return "break"
+            code = key_hide.normalize_vk(event.keycode)
+            if code is None:
+                err.set("此键不可用，请换别的键。")
+                return "break"
+            pending["vk"] = code
+            preview.set(key_hide.label(code))
+            err.set("")
+            return "break"
+
+        dlg.bind("<KeyPress>", on_key)
+
+        def save() -> None:
+            key_hide.set_vk(self.cfg, pending["vk"])
+            key_hide.set_enabled(self.cfg, enabled_var.get())
+            store.save_config(self.cfg)
+            if not enabled_var.get() and self._esc_hidden:
+                self._show_after_esc()
+            err.set(f"已保存：{key_hide.label(pending['vk'])}")
+
+        _card_btn(bar, "保存", save, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        _reveal_card(dlg, min_w=420, min_h=300, near=self._dialog_near())
+        dlg.after(80, dlg.focus_force)
         _run_card_modal(dlg, self.win)
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
@@ -2333,7 +2424,8 @@ class WorkTimer:
             sy,
             self._display_mode(),
             self._theme().id,
-            esc_disguise=self._esc_disguise_on(),
+            key_hide_enabled=self._key_hide_on(),
+            key_hide_settings_label=key_hide.menu_caption(self.cfg),
             auto_start=self._auto_start_on(),
         )
         if op == "quit":
@@ -2347,8 +2439,10 @@ class WorkTimer:
                 self._need_close_schedule_list = True
             else:
                 self._open_schedule_list()
-        elif op == "toggle_esc_disguise":
-            self._set_esc_disguise(not self._esc_disguise_on())
+        elif op == "toggle_key_hide":
+            self._set_key_hide(not self._key_hide_on())
+        elif op == "key_hide_settings":
+            self._open_key_hide_dialog()
         elif op == "toggle_auto_start":
             self._set_auto_start(not self._auto_start_on())
         elif op == "about":
@@ -2869,7 +2963,7 @@ class WorkTimer:
         while self.running and not self.win.closed:
             try:
                 self.win.pump()
-                self._poll_esc()
+                self._poll_key_hide()
                 if self._esc_hidden:
                     # 单实例 ShowWindow 可能已把 hwnd 显示，但 _esc_hidden 未清 → 主循环空转像卡死
                     if self.win.hwnd and layered_win.user32.IsWindowVisible(self.win.hwnd):

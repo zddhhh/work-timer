@@ -90,7 +90,7 @@ def load_config() -> dict:
         "theme": "ghost",
         "win_w": 248,
         "win_h": 92,
-        "ctrl_hide": False,
+        "key_hide": {"enabled": False, "vk": 0xC0},
         "session_stale": False,
         "last_wall": "",
         "auto_start": False,
@@ -129,12 +129,12 @@ def load_config() -> dict:
         merged.update(data)
         if not (merged.get("gitcode_repo") or "").strip():
             merged["gitcode_repo"] = defaults.get("gitcode_repo", "")
-        # 旧键 esc_disguise → ctrl_hide（功能早就是「单击 Ctrl 隐藏」，键名跟着改）
-        if "ctrl_hide" not in data and "esc_disguise" in data:
-            merged["ctrl_hide"] = bool(data.get("esc_disguise"))
-        merged.pop("esc_disguise", None)
+        import key_hide
         import skin_settings
 
+        key_hide.migrate_legacy(merged, data)
+        merged.pop("ctrl_hide", None)
+        merged.pop("esc_disguise", None)
         merged["skin_settings"] = skin_settings.merge(merged.get("skin_settings"))
         return merged
     except json.JSONDecodeError:

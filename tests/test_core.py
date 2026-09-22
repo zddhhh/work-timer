@@ -15,6 +15,7 @@ import feedback  # noqa: E402
 import festival  # noqa: E402
 import store  # noqa: E402
 import flex_time  # noqa: E402
+import key_hide  # noqa: E402
 import ornaments  # noqa: E402
 import schedules  # noqa: E402
 import themes  # noqa: E402
@@ -326,8 +327,17 @@ class StoreTests(_TmpStore):
     def test_legacy_key_migrates(self):
         store.config_path().write_text('{"esc_disguise": true}', encoding="utf-8")
         cfg = store.load_config()
-        self.assertTrue(cfg["ctrl_hide"])
+        self.assertTrue(key_hide.enabled(cfg))
+        self.assertEqual(key_hide.vk(cfg), 0x11)
         self.assertNotIn("esc_disguise", cfg)
+        self.assertNotIn("ctrl_hide", cfg)
+
+    def test_ctrl_hide_migrates(self):
+        store.config_path().write_text('{"ctrl_hide": true}', encoding="utf-8")
+        cfg = store.load_config()
+        self.assertTrue(key_hide.enabled(cfg))
+        self.assertEqual(key_hide.vk(cfg), 0x11)
+        self.assertNotIn("ctrl_hide", cfg)
 
     def test_log_keeps_tail(self):
         path = store.user_data_dir() / "error.log"
@@ -337,6 +347,23 @@ class StoreTests(_TmpStore):
         self.assertLess(len(data), 41_000)
         self.assertIn(b"KEEP", data)
         self.assertTrue(data.endswith(b"new\n"))
+
+
+class KeyHideTests(unittest.TestCase):
+    def test_defaults_off_and_backtick(self):
+        cfg: dict = {}
+        key_hide.ensure_fields(cfg)
+        self.assertFalse(key_hide.enabled(cfg))
+        self.assertEqual(key_hide.vk(cfg), key_hide.DEFAULT_VK)
+
+    def test_label_and_modifier(self):
+        self.assertEqual(key_hide.label(0x11), "Ctrl")
+        self.assertTrue(key_hide.is_modifier(0x11))
+        self.assertFalse(key_hide.is_modifier(0xC0))
+
+    def test_menu_caption(self):
+        cfg = {"key_hide": {"enabled": True, "vk": 0xC0}}
+        self.assertIn("`", key_hide.menu_caption(cfg))
 
 
 class AttachmentGcTests(_TmpStore):
