@@ -94,7 +94,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 设置里新增「卸载本程序」：删除快捷方式、自启、配置与程序文件（不写注册表）"
+    "- 修应用内卸载未删除 exe（helper 用临时副本，主进程退出后再删程序文件）"
 )
 
 

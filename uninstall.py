@@ -110,26 +110,18 @@ def summary_lines() -> list[str]:
 
 def _write_manifest(pid: int, paths: list[Path]) -> Path:
     p = Path(tempfile.gettempdir()) / f"{_MANIFEST_PREFIX}{pid}.txt"
-    text = "\n".join(str(x) for x in paths)
-    p.write_text(text, encoding="utf-8")
+    p.write_text("\n".join(str(x) for x in paths), encoding="utf-8")
     return p
 
 
-def _spawn_helper(exe: Path, pid: int, manifest: Path) -> None:
+def _spawn_hidden(exe: Path, args: list[str]) -> None:
     env = os.environ.copy()
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     si = subprocess.STARTUPINFO()
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = 0
     subprocess.Popen(
-        [
-            str(exe),
-            "--uninstall",
-            "--wait-pid",
-            str(pid),
-            "--manifest",
-            str(manifest),
-        ],
+        [str(exe), *args],
         cwd=str(exe.parent),
         env=env,
         close_fds=True,
@@ -139,6 +131,37 @@ def _spawn_helper(exe: Path, pid: int, manifest: Path) -> None:
         startupinfo=si,
         creationflags=_DETACHED | _NEW_GROUP | _CREATE_NO_WINDOW,
     )
+
+
+def _schedule_exe_delete(paths: list[Path]) -> None:
+    """等当前进程退出后再删 exe（用于临时 helper 自删或复制失败时的兜底）。"""
+    exes = [p for p in paths if p.suffix.lower() == ".exe"]
+    if not exes:
+        return
+    parts = ["timeout /t 2 /nobreak >nul"]
+    for p in exes:
+        parts.append(f'del /f /q "{p}"')
+    _spawn_hidden(Path(os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")), ["/c", " & ".join(parts)])
+
+
+def _spawn_helper(exe: Path, pid: int, manifest: Path) -> None:
+    """复制到临时目录再启动 helper，避免 helper 占用待删除的 exe。"""
+    tmp = Path(tempfile.gettempdir()) / f"WorkTimer_uninstall_{pid}.exe"
+    args = [
+        "--uninstall",
+        "--wait-pid",
+        str(pid),
+        "--manifest",
+        str(manifest),
+    ]
+    try:
+        shutil.copy2(exe, tmp)
+        args.extend(["--helper-self", str(tmp)])
+        _spawn_hidden(tmp, args)
+    except OSError:
+        store.append_log("uninstall: 无法复制临时 helper，改用延时删除 exe")
+        args.append("--defer-exe")
+        _spawn_hidden(exe, args)
 
 
 def _remove_path(path: Path) -> None:
@@ -151,19 +174,40 @@ def _remove_path(path: Path) -> None:
         pass
 
 
+def _delete_manifest_paths(lines: list[str], *, defer_exe: bool) -> tuple[list[Path], list[Path]]:
+    paths = [Path(s.strip()) for s in lines if s.strip()]
+    exes = [p for p in paths if p.suffix.lower() == ".exe"]
+    rest = [p for p in paths if p.suffix.lower() != ".exe"]
+    for p in rest:
+        if p.is_dir():
+            continue
+        _remove_path(p)
+    if not defer_exe:
+        for p in exes:
+            _remove_path(p)
+    for p in rest:
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+    return exes, rest
+
+
 def _run_helper(argv: list[str]) -> bool:
     pid_s = _arg_value(argv, "--wait-pid")
     manifest_s = _arg_value(argv, "--manifest")
+    helper_self_s = _arg_value(argv, "--helper-self")
+    defer_exe = "--defer-exe" in argv
     try:
         pid = int(pid_s)
     except ValueError:
         pid = 0
     manifest = Path(manifest_s) if manifest_s else None
+    helper_self = Path(helper_self_s) if helper_self_s else None
     if manifest is None or not manifest.is_file():
         return True
     deadline = time.monotonic() + _WAIT_SEC
     while updater._pid_running(pid):
         if time.monotonic() > deadline:
+            store.append_log("uninstall: 等待主进程退出超时")
             break
         time.sleep(0.35)
     time.sleep(0.6)
@@ -171,12 +215,12 @@ def _run_helper(argv: list[str]) -> bool:
         lines = manifest.read_text(encoding="utf-8").splitlines()
     except OSError:
         lines = []
-    for line in lines:
-        s = line.strip()
-        if not s:
-            continue
-        _remove_path(Path(s))
+    exes, _ = _delete_manifest_paths(lines, defer_exe=defer_exe)
     _remove_path(manifest)
+    if defer_exe:
+        _schedule_exe_delete(exes)
+    elif helper_self is not None and helper_self.is_file():
+        _schedule_exe_delete([helper_self])
     return True
 
 
