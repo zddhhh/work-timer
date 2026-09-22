@@ -94,8 +94,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 恢复皮肤与剩余时间 stage 联动（不足 30 分钟预警配色/动效）\n"
-    "- 霹雳狂潮背景与点击闪电重新随状态变色（撤回 1.3.19 固定红粉底）"
+    "- 修创建桌面快捷方式时整桌图标先变白再恢复（缩小 Shell 刷新范围）"
 )
 
 

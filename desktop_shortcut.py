@@ -196,9 +196,17 @@ def _write_shortcut(lnk: Path, exe: Path, *, arguments: str = "") -> bool:
         _release(sl)
 
 
-def _notify_shell() -> None:
+def _notify_shell(lnk: Path | None = None) -> None:
+    """只刷新快捷方式所在目录，勿用 SHCNE_ASSOCCHANGED（会令整桌图标缓存失效、先闪白再恢复）。"""
     try:
-        ctypes.windll.shell32.SHChangeNotify(0x08000000, 0x0000, None, None)
+        shell32 = ctypes.windll.shell32
+        shcne_updatedir = 0x00001000
+        shcnf_path = 0x0001
+        shcnf_flushnowait = 0x3000
+        if lnk is not None:
+            parent = lnk.parent
+            if parent.is_dir():
+                shell32.SHChangeNotify(shcne_updatedir, shcnf_path | shcnf_flushnowait, str(parent), None)
     except OSError:
         pass
 
@@ -233,7 +241,7 @@ def _ensure_link(
         return False
     cfg[done_key] = True
     cfg[icon_key] = _ICON_STAMP
-    _notify_shell()
+    _notify_shell(lnk)
     return True
 
 
@@ -292,5 +300,5 @@ def create_desktop_shortcut(cfg: dict) -> tuple[bool, str]:
         return False, "创建失败，请稍后再试。"
     cfg["desktop_shortcut_done"] = True
     cfg["desktop_shortcut_icon"] = _ICON_STAMP
-    _notify_shell()
+    _notify_shell(lnk)
     return True, "已在桌面创建「下班倒计时」快捷方式。"
