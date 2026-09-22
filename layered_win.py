@@ -49,6 +49,7 @@ SC_MASK = 0xFFF0
 WM_SETTINGCHANGE = 0x001A
 WM_DISPLAYCHANGE = 0x007E
 WM_MOUSEACTIVATE = 0x0021
+WM_REQUEST_SHOW = 0x8001  # WM_APP+1：单实例唤起已隐藏窗口
 MA_ACTIVATE = 1
 SW_RESTORE = 9
 MONITOR_DEFAULTTONEAREST = 2
@@ -326,6 +327,7 @@ class LayeredPetWindow:
         self.y = 0
         self._on_right_click: Callable[[int, int], None] | None = None
         self._on_left_click: Callable[[int, int], None] | None = None
+        self._on_request_show: Callable[[], None] | None = None
         self._on_mouse_move: Callable[[int, int], None] | None = None
         self._dragging = False
         self._resizing = False
@@ -469,6 +471,10 @@ class LayeredPetWindow:
     def set_mouse_move_handler(self, fn: Callable[[int, int], None] | None) -> None:
         """鼠标在客户区内移动，参数为窗口内坐标 (lx, ly)。"""
         self._on_mouse_move = fn
+
+    def set_request_show_handler(self, fn: Callable[[], None] | None) -> None:
+        """单实例再次启动时唤起窗口（含 Ctrl 隐藏后的恢复）。"""
+        self._on_request_show = fn
 
     def _on_win_event(self, _hook, event, hwnd, _obj, _child, _thread, _time) -> None:
         self._desktop_changed = True
@@ -616,6 +622,10 @@ class LayeredPetWindow:
             return HTCLIENT
         if msg == WM_MOUSEACTIVATE:
             return MA_ACTIVATE
+        if msg == WM_REQUEST_SHOW:
+            if self._on_request_show:
+                self._on_request_show()
+            return 0
         if msg == WM_SYSCOMMAND:
             cmd = int(wparam) & SC_MASK
             if cmd in (SC_MINIMIZE, SC_MAXIMIZE, SC_SIZE):

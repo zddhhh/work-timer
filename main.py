@@ -837,6 +837,7 @@ class WorkTimer:
         self.win.set_left_click_handler(self._on_click)
         self.win.set_mouse_move_handler(self._on_mouse_move)
         self.win.set_right_click_handler(self._request_menu)
+        self.win.set_request_show_handler(self._on_request_show)
         self._esc_hidden = False
 
         area = layered_win.work_area()
@@ -1369,6 +1370,16 @@ class WorkTimer:
         self._esc_hidden = False
         self._last_key = ""
         self._force_surface_sample = True
+
+    def _on_request_show(self) -> None:
+        """快捷方式/再次启动唤起：同步清掉 Ctrl 隐藏状态，避免窗可见但主循环仍挂起。"""
+        if self._esc_hidden:
+            self._show_after_esc()
+        else:
+            self.win.show()
+            self.win.keep_topmost()
+            self._last_key = ""
+            self._force_surface_sample = True
 
     def _toggle_esc_hide(self) -> None:
         if not self._esc_disguise_on() and not self._esc_hidden:
@@ -2860,8 +2871,12 @@ class WorkTimer:
                 self.win.pump()
                 self._poll_esc()
                 if self._esc_hidden:
-                    time.sleep(0.008)
-                    continue
+                    # 单实例 ShowWindow 可能已把 hwnd 显示，但 _esc_hidden 未清 → 主循环空转像卡死
+                    if self.win.hwnd and layered_win.user32.IsWindowVisible(self.win.hwnd):
+                        self._show_after_esc()
+                    else:
+                        time.sleep(0.008)
+                        continue
                 if self._menu_pos is not None:
                     sx, sy = self._menu_pos
                     self._menu_pos = None

@@ -6,6 +6,8 @@ import sys
 import time
 from ctypes import wintypes
 
+import layered_win
+
 _MUTEX_NAME = "Local\\WorkTimer.SingleInstance"
 _CLASS_NAME = "WorkTimerLayeredWnd"
 _ERROR_ALREADY_EXISTS = 183
@@ -47,6 +49,9 @@ def _activate_existing() -> bool:
     except Exception:
         pass
     user32.SetForegroundWindow(hwnd)
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+    user32.PostMessageW(hwnd, layered_win.WM_REQUEST_SHOW, 0, 0)
     return True
 
 
