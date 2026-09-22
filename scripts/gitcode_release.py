@@ -94,7 +94,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修创建桌面快捷方式时整桌图标先变白再恢复（缩小 Shell 刷新范围）"
+    "- 修 exe 剪切搬家后快捷方式图标变白不恢复（启动时同步校验并重写图标来源）"
 )
 
 

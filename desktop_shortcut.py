@@ -130,21 +130,45 @@ def _current_exe() -> Path | None:
         return None
 
 
-def _read_target(lnk: Path) -> str:
+def _load_shell_link(lnk: Path) -> tuple[int, int] | None:
+    """返回 (IShellLink, IPersistFile)，失败时 None。"""
     if not lnk.exists():
-        return ""
+        return None
     try:
         sl = _create_shell_link()
     except OSError:
-        return ""
+        return None
     persist = 0
     try:
         persist = _query_interface(sl, _IID_IPERSIST_FILE)
         if not persist:
-            return ""
+            _release(sl)
+            return None
         load = WINFUNCTYPE(ctypes.HRESULT, c_void_p, LPCWSTR, DWORD)(_vtbl(persist)[5])
         if load(persist, str(lnk), 0):
-            return ""
+            _release(persist)
+            _release(sl)
+            return None
+        return sl, persist
+    except OSError:
+        if persist:
+            _release(persist)
+        _release(sl)
+        return None
+
+
+def _release_shell_link(sl: int, persist: int) -> None:
+    if persist:
+        _release(persist)
+    _release(sl)
+
+
+def _read_target(lnk: Path) -> str:
+    loaded = _load_shell_link(lnk)
+    if not loaded:
+        return ""
+    sl, persist = loaded
+    try:
         get_path = WINFUNCTYPE(
             ctypes.HRESULT, c_void_p, ctypes.c_wchar_p, ctypes.c_int, c_void_p, DWORD
         )(_vtbl(sl)[3])
@@ -155,9 +179,48 @@ def _read_target(lnk: Path) -> str:
     except OSError:
         return ""
     finally:
-        if persist:
-            _release(persist)
-        _release(sl)
+        _release_shell_link(sl, persist)
+
+
+def _read_icon(lnk: Path) -> tuple[str, int]:
+    loaded = _load_shell_link(lnk)
+    if not loaded:
+        return "", 0
+    sl, persist = loaded
+    try:
+        get_icon = WINFUNCTYPE(
+            ctypes.HRESULT,
+            c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int),
+        )(_vtbl(sl)[16])
+        buf = ctypes.create_unicode_buffer(32768)
+        idx = ctypes.c_int()
+        if get_icon(sl, buf, 32768, byref(idx)):
+            return "", 0
+        return buf.value, int(idx.value)
+    except OSError:
+        return "", 0
+    finally:
+        _release_shell_link(sl, persist)
+
+
+def _path_same(path: str, exe: Path) -> bool:
+    if not path:
+        return False
+    try:
+        return Path(path).resolve() == exe.resolve()
+    except OSError:
+        return False
+
+
+def _shortcut_matches_exe(lnk: Path, exe: Path) -> bool:
+    """目标与图标来源都应指向当前 exe（剪切后 Windows 常只更新目标，图标仍留在旧路径）。"""
+    if not _path_same(_read_target(lnk), exe):
+        return False
+    icon_path, _ = _read_icon(lnk)
+    return _path_same(icon_path, exe)
 
 
 def _write_shortcut(lnk: Path, exe: Path, *, arguments: str = "") -> bool:
@@ -197,16 +260,22 @@ def _write_shortcut(lnk: Path, exe: Path, *, arguments: str = "") -> bool:
 
 
 def _notify_shell(lnk: Path | None = None) -> None:
-    """只刷新快捷方式所在目录，勿用 SHCNE_ASSOCCHANGED（会令整桌图标缓存失效、先闪白再恢复）。"""
+    """刷新单个 lnk 及其目录，勿用 SHCNE_ASSOCCHANGED（会令整桌图标缓存失效、先闪白再恢复）。"""
     try:
         shell32 = ctypes.windll.shell32
+        shcne_updateitem = 0x00002000
         shcne_updatedir = 0x00001000
         shcnf_path = 0x0001
         shcnf_flushnowait = 0x3000
-        if lnk is not None:
+        if lnk is not None and lnk.exists():
+            shell32.SHChangeNotify(
+                shcne_updateitem, shcnf_path | shcnf_flushnowait, str(lnk), None
+            )
             parent = lnk.parent
             if parent.is_dir():
-                shell32.SHChangeNotify(shcne_updatedir, shcnf_path | shcnf_flushnowait, str(parent), None)
+                shell32.SHChangeNotify(
+                    shcne_updatedir, shcnf_path | shcnf_flushnowait, str(parent), None
+                )
     except OSError:
         pass
 
@@ -225,12 +294,7 @@ def _ensure_link(
         return False
     icon_stale = str(cfg.get(icon_key) or "") != _ICON_STAMP
     if lnk.exists():
-        got = _read_target(lnk)
-        try:
-            same = Path(got).resolve() == exe if got else False
-        except OSError:
-            same = False
-        if same and not icon_stale:
+        if _shortcut_matches_exe(lnk, exe) and not icon_stale:
             if not already:
                 cfg[done_key] = True
                 cfg[icon_key] = _ICON_STAMP
