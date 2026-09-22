@@ -32,6 +32,7 @@ import single_instance
 import skin_settings
 import store
 import themes
+import uninstall
 import updater
 import win_drop
 from version import APP_VERSION
@@ -1340,6 +1341,38 @@ class WorkTimer:
     def _auto_start_on(self) -> bool:
         return bool(self.cfg.get("auto_start"))
 
+    def _confirm_uninstall(self) -> None:
+        if not getattr(sys, "frozen", False):
+            try:
+                messagebox.showinfo(
+                    "卸载本程序",
+                    "开发模式请手动删除源码目录与 %AppData%\\Roaming\\WorkTimer。",
+                    parent=self._tk_root(),
+                )
+            except Exception:
+                pass
+            return
+        try:
+            ok = messagebox.askyesno(
+                "卸载本程序",
+                "\n".join(uninstall.summary_lines()),
+                parent=self._tk_root(),
+                icon="warning",
+            )
+        except Exception:
+            return
+        if not ok:
+            return
+        self.running = False
+        store.flush_pending(force=True)
+        try:
+            uninstall.request_and_exit()
+        except Exception as e:  # noqa: BLE001
+            try:
+                messagebox.showerror("卸载本程序", str(e), parent=self._tk_root())
+            except Exception:
+                pass
+
     def _create_desktop_shortcut(self) -> None:
         ok, msg = desktop_shortcut.create_desktop_shortcut(self.cfg)
         if ok:
@@ -2451,6 +2484,8 @@ class WorkTimer:
             self._open_skin_settings_dialog()
         elif op == "create_desktop_shortcut":
             self._create_desktop_shortcut()
+        elif op == "uninstall":
+            self._confirm_uninstall()
         elif op == "fmt_hms":
             self._set_display_mode("hms")
         elif op == "fmt_min":
@@ -3078,6 +3113,8 @@ class WorkTimer:
 
 def main() -> None:
     sys.excepthook = lambda *args: store.append_log("".join(__import__("traceback").format_exception(*args)))
+    if uninstall.run_if_requested():
+        return
     if updater.run_ota_replace_if_requested():
         return
     try:

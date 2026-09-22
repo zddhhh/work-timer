@@ -94,8 +94,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 「Ctrl 隐藏」改为「按键隐藏」：默认关，可自定义隐藏键（默认反引号 `）\n"
-    "- 曾开启 Ctrl 隐藏的老用户仍保留 Ctrl 键位"
+    "- 设置里新增「卸载本程序」：删除快捷方式、自启、配置与程序文件（不写注册表）"
 )
 
 

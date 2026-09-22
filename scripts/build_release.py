@@ -91,6 +91,8 @@ def main() -> None:
         "--hidden-import",
         "key_hide",
         "--hidden-import",
+        "uninstall",
+        "--hidden-import",
         "store",
         "--hidden-import",
         "layered_win",

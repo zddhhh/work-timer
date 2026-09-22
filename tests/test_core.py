@@ -16,6 +16,7 @@ import festival  # noqa: E402
 import store  # noqa: E402
 import flex_time  # noqa: E402
 import key_hide  # noqa: E402
+import uninstall  # noqa: E402
 import ornaments  # noqa: E402
 import schedules  # noqa: E402
 import themes  # noqa: E402
@@ -347,6 +348,19 @@ class StoreTests(_TmpStore):
         self.assertLess(len(data), 41_000)
         self.assertIn(b"KEEP", data)
         self.assertTrue(data.endswith(b"new\n"))
+
+
+class UninstallTests(unittest.TestCase):
+    def test_unique_paths(self):
+        a = Path("C:/a")
+        got = uninstall._unique_paths([a, a, Path("c:/a")])
+        self.assertEqual(len(got), 1)
+
+    def test_summary_has_warning(self):
+        self.assertTrue(any("不可恢复" in line for line in uninstall.summary_lines()))
+
+    def test_run_if_requested_false(self):
+        self.assertFalse(uninstall.run_if_requested(["WorkTimer.exe"]))
 
 
 class KeyHideTests(unittest.TestCase):
