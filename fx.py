@@ -1,4 +1,4 @@
-"""程序化皮肤特效：国旗星组（国庆皮）、霓虹流光 HUD、宣纸山水（墨水涟漪）。全部按帧绘制，不依赖生图。"""
+"""程序化皮肤特效：国旗星组（国庆皮）、霓虹流光 HUD、宣纸山水（墨水涟漪）、翻牌时钟。全部按帧绘制，不依赖生图。"""
 from __future__ import annotations
 
 import math
@@ -1544,6 +1544,405 @@ def paint_neon_active_shots(
                 layer, age, ox, oy, tx, ty,
                 col=colors[sl], stage=stage, light=light,
             )
+
+
+# ---------------------------------------------------------------- 翻牌时钟
+
+FLIP_ANIM_SEC = 0.36
+FLIP_TAP_SEC = 0.32
+
+_FLIP_FONT_CACHE: dict[int, ImageFont.ImageFont] = {}
+_FLIP_UNIT_FONT_CACHE: dict[int, ImageFont.ImageFont] = {}
+
+
+def _flip_font(size: int) -> ImageFont.ImageFont:
+    import os
+    from pathlib import Path
+
+    size = max(10, min(40, size))
+    got = _FLIP_FONT_CACHE.get(size)
+    if got is not None:
+        return got
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    for name in ("bahnschrift.ttf", "arialbd.ttf", "consola.ttf", "msyhbd.ttc"):
+        try:
+            font = ImageFont.truetype(str(windir / name), size)
+            _FLIP_FONT_CACHE[size] = font
+            return font
+        except OSError:
+            continue
+    font = ImageFont.load_default()
+    _FLIP_FONT_CACHE[size] = font
+    return font
+
+
+def _flip_unit_font(size: int) -> ImageFont.ImageFont:
+    import os
+    from pathlib import Path
+
+    size = max(9, min(22, size))
+    got = _FLIP_UNIT_FONT_CACHE.get(size)
+    if got is not None:
+        return got
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    for name in ("msyh.ttc", "msyhbd.ttc", "simhei.ttf", "msyh.ttf"):
+        try:
+            font = ImageFont.truetype(str(windir / name), size)
+            _FLIP_UNIT_FONT_CACHE[size] = font
+            return font
+        except OSError:
+            continue
+    font = ImageFont.load_default()
+    _FLIP_UNIT_FONT_CACHE[size] = font
+    return font
+
+
+def _flip_palette(stage: str, light: bool) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+    """面板、铰链、数字、单位字色。"""
+    if stage == "warn":
+        digit, led = (255, 214, 140), (255, 96, 64)
+    elif stage == "done":
+        digit, led = (190, 255, 200), (96, 220, 140)
+    elif stage == "idle":
+        digit, led = (170, 176, 188), (80, 88, 100)
+    else:
+        digit, led = (248, 250, 255), (220, 72, 52)
+    if light:
+        panel, hinge, unit = (58, 60, 68), (38, 40, 48), (120, 126, 138)
+    else:
+        panel, hinge, unit = (28, 30, 36), (14, 15, 18), (108, 114, 126)
+    return panel, hinge, digit, unit
+
+
+def paint_flipclock(layer: Image.Image, phase: float, *, stage: str, radius: int, light: bool = False) -> None:
+    """机械外壳：深灰机箱、内框、角钉与状态灯。"""
+    bw, bh = layer.size
+    if bw < 40 or bh < 20:
+        return
+    panel, hinge, _digit, _unit = _flip_palette(stage, light=light)
+    outer = (tuple(min(255, c + 10) for c in panel) if light else (20, 22, 28))
+    d = ImageDraw.Draw(layer)
+    d.rounded_rectangle((0, 0, bw - 1, bh - 1), radius=radius, fill=(*outer, 255))
+    inset = max(3, int(min(bw, bh) * 0.045))
+    d.rounded_rectangle(
+        (inset, inset, bw - 1 - inset, bh - 1 - inset),
+        radius=max(4, radius - 2),
+        fill=(*panel, 255),
+        outline=(*hinge, 180),
+        width=1,
+    )
+    screw = (72, 74, 80) if light else (52, 54, 60)
+    for sx, sy in (
+        (inset + 5, inset + 5),
+        (bw - inset - 5, inset + 5),
+        (inset + 5, bh - inset - 5),
+        (bw - inset - 5, bh - inset - 5),
+    ):
+        d.ellipse((sx - 2, sy - 2, sx + 2, sy + 2), fill=(*screw, 220))
+    pulse = 0.55 + 0.45 * math.sin(phase * (3.2 if stage == "warn" else 1.6))
+    led = (255, 88, 64) if stage == "warn" else ((120, 220, 150) if stage == "done" else (220, 72, 52))
+    la = int((55 if stage == "idle" else 95) * pulse)
+    lx, ly = bw - inset - 9, inset + 7
+    d.ellipse((lx - 3, ly - 3, lx + 3, ly + 3), fill=(*led, la))
+    _ = hinge
+
+
+def _flip_groups(text: str) -> list[tuple[str, str]]:
+    """按「数字 + 单位」分组，如 128时 / 30分 / 45秒。"""
+    s = text or ""
+    if not s or not any(c.isdigit() for c in s):
+        return []
+    groups: list[tuple[str, str]] = []
+    i, n = 0, len(s)
+    while i < n:
+        if not s[i].isdigit():
+            i += 1
+            continue
+        j = i
+        while j < n and s[j].isdigit():
+            j += 1
+        digits = s[i:j]
+        i = j
+        k = i
+        while k < n and not s[k].isdigit():
+            k += 1
+        groups.append((digits, s[i:k]))
+        i = k
+    return groups
+
+
+def _flip_row_metrics(
+    groups: list[tuple[str, str]],
+    max_w: float,
+    row_h: float,
+) -> tuple[float, float, float, float, float, int, ImageFont.ImageFont, float]:
+    cell_h = row_h * 0.92
+    digit_w = cell_h * 0.62
+    digit_gap = max(2.0, cell_h * 0.05)
+    group_gap = max(7.0, cell_h * 0.18)
+    unit_gap = max(3.0, cell_h * 0.10)
+    unit_fs = max(10, int(cell_h * 0.42))
+    unit_font = _flip_unit_font(unit_fs)
+
+    def total_width(scale: float) -> float:
+        total = 0.0
+        probe = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)))
+        for gi, (digits, unit) in enumerate(groups):
+            if gi:
+                total += group_gap * scale
+            if digits:
+                total += len(digits) * digit_w * scale
+                total += max(0, len(digits) - 1) * digit_gap * scale
+            if unit:
+                total += unit_gap * scale
+                total += probe.textlength(unit, font=unit_font) * scale
+        return total
+
+    scale = 1.0
+    tw = total_width(1.0)
+    if tw > max_w and tw > 1.0:
+        scale = max(0.48, max_w / tw)
+    return (
+        digit_w * scale,
+        cell_h * scale,
+        digit_gap * scale,
+        group_gap * scale,
+        unit_gap * scale,
+        max(9, int(unit_fs * scale)),
+        unit_font,
+        scale,
+    )
+
+
+def _char_bbox(font: ImageFont.ImageFont, ch: str) -> tuple[int, int]:
+    bbox = font.getbbox(ch or "0")
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def _paint_flap_half(
+    target: Image.Image,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    ch: str,
+    font: ImageFont.ImageFont,
+    color: tuple[int, int, int, int],
+    panel: tuple[int, int, int],
+    *,
+    top: bool,
+    scale_y: float,
+) -> None:
+    """绘制翻牌的上/下半片（scale_y 模拟翻转透视）。"""
+    if w < 2 or h < 2 or scale_y < 0.03:
+        return
+    half_h = max(1, h // 2)
+    cell = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cell)
+    cd.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(2, h // 7), fill=(*panel, 255))
+    cw, chh = _char_bbox(font, ch)
+    tx = (w - cw) // 2
+    ty = (h - chh) // 2 - (1 if top else 0)
+    cd.text((tx, ty), ch, font=font, fill=color)
+    mid = h // 2
+    if top:
+        piece = cell.crop((0, 0, w, mid))
+        nh = max(1, int(mid * scale_y))
+        piece = piece.resize((w, nh), Image.Resampling.BILINEAR)
+        target.alpha_composite(piece, (x, y + mid - nh))
+    else:
+        piece = cell.crop((0, mid, w, h))
+        nh = max(1, int(mid * scale_y))
+        piece = piece.resize((w, nh), Image.Resampling.BILINEAR)
+        target.alpha_composite(piece, (x, y + mid))
+
+
+def _paint_flap_cell(
+    layer: Image.Image,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    shown: str,
+    *,
+    from_ch: str | None,
+    progress: float | None,
+    font: ImageFont.ImageFont,
+    digit_color: tuple[int, int, int, int],
+    panel: tuple[int, int, int],
+    hinge: tuple[int, int, int],
+) -> None:
+    d = ImageDraw.Draw(layer)
+    d.rounded_rectangle((x, y, x + w - 1, y + h - 1), radius=max(2, h // 7), fill=(*panel, 255))
+    mid = y + h // 2
+    d.line((x + 2, mid, x + w - 3, mid), fill=(*hinge, 220), width=max(1, h // 18))
+    if progress is None or from_ch is None or from_ch == shown:
+        cw, chh = _char_bbox(font, shown)
+        d.text((x + (w - cw) // 2, y + (h - chh) // 2), shown, font=font, fill=digit_color)
+        return
+    p = max(0.0, min(1.0, progress))
+    if p < 0.5:
+        ang = p * math.pi
+        sy = max(0.04, abs(math.cos(ang)))
+        _paint_flap_half(layer, x, y, w, h, from_ch, font, digit_color, panel, top=True, scale_y=sy)
+        _paint_flap_half(layer, x, y, w, h, from_ch, font, digit_color, panel, top=False, scale_y=1.0)
+    else:
+        ang = p * math.pi
+        sy = max(0.04, abs(math.cos(ang)))
+        _paint_flap_half(layer, x, y, w, h, shown, font, digit_color, panel, top=True, scale_y=1.0)
+        _paint_flap_half(layer, x, y, w, h, shown, font, digit_color, panel, top=False, scale_y=sy)
+
+
+def paint_flip_row(
+    img: Image.Image,
+    x: int,
+    y: int,
+    max_w: int,
+    row_h: int,
+    text: str,
+    anims: dict[int, tuple[float, str, str]],
+    now: float,
+    font_fallback: ImageFont.ImageFont,
+    accent: tuple[int, int, int, int],
+    *,
+    stage: str = "run",
+    light: bool = False,
+    hit_rects: list[tuple[int, int, int, int, int]] | None = None,
+) -> None:
+    """翻牌数字行；anims[digit_idx]=(start, old, new)。"""
+    groups = _flip_groups(text)
+    panel, hinge, digit_rgb, unit_rgb = _flip_palette(stage, light=light)
+    digit_color = (*accent[:3], accent[3] if len(accent) > 3 else 255)
+    unit_color = (*unit_rgb, 235)
+    if not groups:
+        d = ImageDraw.Draw(img)
+        cw, chh = _char_bbox(font_fallback, text or "")
+        tx = x + max(0, (max_w - cw) // 2)
+        d.text((tx, y + (row_h - chh) // 2), text, font=font_fallback, fill=digit_color)
+        if hit_rects is not None:
+            hit_rects.clear()
+        return
+    digit_w, cell_h, digit_gap, group_gap, unit_gap, unit_fs, unit_font, _sc = _flip_row_metrics(
+        groups, float(max_w), float(row_h),
+    )
+    if digit_w <= 0:
+        d = ImageDraw.Draw(img)
+        d.text((x, y), text, font=font_fallback, fill=digit_color)
+        return
+    fs = max(10, int(cell_h * 0.62))
+    font = _flip_font(fs)
+    unit_font = _flip_unit_font(unit_fs)
+    d_probe = ImageDraw.Draw(img)
+    tw = 0.0
+    for gi, (digits, unit) in enumerate(groups):
+        if gi:
+            tw += group_gap
+        if digits:
+            tw += len(digits) * digit_w + max(0, len(digits) - 1) * digit_gap
+        if unit:
+            tw += unit_gap + d_probe.textlength(unit, font=unit_font)
+    cx = float(x) + max(0.0, (float(max_w) - tw) * 0.5)
+    cy = int(y + (row_h - cell_h) // 2)
+    d_idx = 0
+    if hit_rects is not None:
+        hit_rects.clear()
+    for gi, (digits, unit) in enumerate(groups):
+        if gi:
+            cx += group_gap
+        for di, ch in enumerate(digits):
+            if di:
+                cx += digit_gap
+            w, h = int(digit_w), int(cell_h)
+            anim = anims.get(d_idx)
+            prog = None
+            from_ch = None
+            shown = ch
+            if anim is not None:
+                start, old, new = anim
+                elapsed = now - start
+                if elapsed < FLIP_ANIM_SEC:
+                    prog = elapsed / FLIP_ANIM_SEC
+                    from_ch = old
+                    shown = new
+                else:
+                    shown = new
+            _paint_flap_cell(
+                img, int(cx), cy, w, h, shown,
+                from_ch=from_ch, progress=prog,
+                font=font, digit_color=digit_color, panel=panel, hinge=hinge,
+            )
+            if hit_rects is not None:
+                hit_rects.append((int(cx), cy, w, h, d_idx))
+            d_idx += 1
+            cx += w
+        if unit:
+            cx += unit_gap
+            _, chh = _char_bbox(unit_font, unit)
+            d_probe.text((int(cx), cy + (cell_h - chh) // 2), unit, font=unit_font, fill=unit_color)
+            cx += d_probe.textlength(unit, font=unit_font)
+
+
+def flip_anim_signature(anims: dict[int, tuple[float, str, str]], now: float) -> str:
+    if not anims:
+        return ""
+    parts = []
+    for i in sorted(anims):
+        start, old, new = anims[i]
+        parts.append(f"{i}:{int((now - start) * 60)}:{old}>{new}")
+    return "|".join(parts)
+
+
+def flip_digits_only(text: str) -> str:
+    return "".join(ch for ch in (text or "") if ch.isdigit())
+
+
+def sync_flip_anims(
+    anims: dict[int, tuple[float, str, str]],
+    prev_digits: str,
+    text: str,
+    now: float,
+) -> str:
+    """对比数字变化，登记翻牌动画；返回新的 prev_digits。"""
+    cur = flip_digits_only(text)
+    if cur != prev_digits:
+        for i, ch in enumerate(cur):
+            old = prev_digits[i] if i < len(prev_digits) else ch
+            if ch != old:
+                anims[i] = (now, old, ch)
+        for i in range(len(cur), len(prev_digits)):
+            anims.pop(i, None)
+        prev_digits = cur
+    expire = FLIP_ANIM_SEC + 0.02
+    for k in [k for k, (s, _, _) in anims.items() if now - s >= expire]:
+        anims.pop(k, None)
+    return prev_digits
+
+
+def flip_digit_index_at(
+    hit_rects: list[tuple[int, int, int, int, int]],
+    lx: int,
+    ly: int,
+) -> int | None:
+    for x, y, w, h, idx in hit_rects:
+        if x <= lx < x + w and y <= ly < y + h:
+            return idx
+    return None
+
+
+def flip_tap_digit(
+    anims: dict[int, tuple[float, str, str]],
+    digits: str,
+    idx: int,
+    now: float,
+) -> None:
+    """点击某一格：机械拨动翻一下（纯视觉，下一秒会回到真实读数）。"""
+    if idx < 0 or idx >= len(digits):
+        return
+    ch = digits[idx]
+    if not ch.isdigit():
+        return
+    nxt = str((int(ch) + 1) % 10)
+    anims[idx] = (now, ch, nxt)
 
 
 # ---------------------------------------------------------------- 霹雳狂潮

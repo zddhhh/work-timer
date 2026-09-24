@@ -427,10 +427,23 @@ class FxTests(unittest.TestCase):
                 fx.paint_national(layer, ph, stage=st, light=(st == "idle"))
                 fx.paint_neonflow(layer, ph, stage=st, radius=14)
                 fx.paint_inkpulse(layer, ph, stage=st, radius=14)
+                fx.paint_flipclock(layer, ph, stage=st, radius=12)
+        anims: dict[int, tuple[float, str, str]] = {2: (0.0, "4", "5")}
+        fx.paint_flip_row(
+            layer, 10, 28, 220, 34, "128时30分45秒", anims, 0.18, fx._flip_font(20),
+            (248, 250, 255, 252), stage="run",
+        )
         self.assertEqual(layer.size, (248, 92))
         self.assertTrue(ornaments.has_skin("neonflow"))
         self.assertTrue(ornaments.has_skin("inkpulse"))
+        self.assertTrue(ornaments.has_skin("flipclock"))
         self.assertTrue(ornaments.is_animated("inkpulse"))
+        self.assertTrue(ornaments.is_animated("flipclock"))
+        self.assertIn("flipclock", [t.id for t in themes.menu_sections()["fancy"]])
+        prev = fx.sync_flip_anims({}, "", "1时00分00秒", 1.0)
+        anims2: dict[int, tuple[float, str, str]] = {}
+        fx.sync_flip_anims(anims2, prev, "1时00分01秒", 1.0)
+        self.assertIn(4, anims2)
 
     def test_thunder_paint(self):
         import fx

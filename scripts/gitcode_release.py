@@ -94,7 +94,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 已用过弹性下班的用户，次日设置弹窗默认仍选「按到岗时间推算」"
+    "- 新皮肤「翻牌时钟」：机械翻牌倒计时，秒分跳变自动翻页，可点数字拨动"
 )
 
 

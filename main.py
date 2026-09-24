@@ -825,6 +825,10 @@ class WorkTimer:
         self._thunder_hits: list[tuple[float, int, int, float, int]] = []  # start,x,y,power,quote_idx
         self._thunder_quote_step = 0
         self._ink_hits: list[tuple[float, int, int, float]] = []
+        self._flip_prev_digits = ""
+        self._flip_anims: dict[int, tuple[float, str, str]] = {}
+        self._flip_hit_rects: list[tuple[int, int, int, int, int]] = []
+        self._flip_last_big = ""
         self._neon_ammo = ornaments.create_neon_ammo()
         self._neon_planets = ornaments.create_neon_planets()
         self._mouse_lx = -1
@@ -1314,6 +1318,13 @@ class WorkTimer:
                 self._thunder_quote_step = nxt
         elif kind == "inkpulse":
             self._ink_hits = ornaments.register_ink_hit(self._ink_hits, now, int(lx), int(ly))
+        elif kind == "flipclock":
+            import fx
+
+            idx = fx.flip_digit_index_at(self._flip_hit_rects, int(lx), int(ly))
+            if idx is not None:
+                digits = fx.flip_digits_only(self._flip_last_big)
+                fx.flip_tap_digit(self._flip_anims, digits, idx, now)
         elif kind == "neonflow":
             rr = min(self._theme().radius, max(8, self._win_h // 5))
             ornaments.neon_try_fire(
@@ -2821,6 +2832,8 @@ class WorkTimer:
                 if theme.kind == "thunder":
                     # 落雷那半秒要满帧，平时只有雨在下
                     fps = ornaments.thunder_fps(stage, phase)
+                elif theme.kind == "flipclock":
+                    fps = 60 if self._flip_anims else (14 if stage in ("idle", "done") else 20)
                 elif theme.kind in ("neonflow", "inkpulse"):
                     fps = 30 if stage == "warn" else (16 if stage in ("idle", "done") else 28)
                 else:
@@ -2838,6 +2851,16 @@ class WorkTimer:
             celebrating = phase < self._celebrate_until
             if celebrating:
                 key = f"{key}-c{int(phase * 30)}"
+            if theme.kind == "flipclock":
+                import fx
+
+                self._flip_prev_digits = fx.sync_flip_anims(
+                    self._flip_anims, self._flip_prev_digits, big, phase,
+                )
+                self._flip_last_big = big
+                flip_sig = fx.flip_anim_signature(self._flip_anims, phase)
+                if flip_sig:
+                    key = f"{key}-f{flip_sig}"
             self._prune_thunder_hits(phase)
             self._prune_ink_hits(phase)
             thunder_hits = self._thunder_hits
@@ -2892,6 +2915,9 @@ class WorkTimer:
                     neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
                     neon_now=phase,
                     neon_planets=self._neon_planets if theme.kind == "neonflow" else None,
+                    flip_anims=self._flip_anims if theme.kind == "flipclock" else None,
+                    flip_now=phase,
+                    flip_hit_rects=self._flip_hit_rects if theme.kind == "flipclock" else None,
                 )
                 kinetic.paint(
                     img,
@@ -2924,6 +2950,9 @@ class WorkTimer:
                     neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
                     neon_now=phase,
                     neon_planets=self._neon_planets if theme.kind == "neonflow" else None,
+                    flip_anims=self._flip_anims if theme.kind == "flipclock" else None,
+                    flip_now=phase,
+                    flip_hit_rects=self._flip_hit_rects if theme.kind == "flipclock" else None,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -3094,6 +3123,7 @@ class WorkTimer:
                     or now < self._celebrate_until
                     or bool(self._thunder_hits)
                     or bool(self._ink_hits)
+                    or bool(self._flip_anims)
                     or (
                         self._theme().kind == "neonflow"
                         and (self._mouse_lx >= 0 or self._neon_needs_frames(now))

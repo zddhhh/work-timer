@@ -14,6 +14,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 import festival
+import fx
 import ornaments
 import store
 
@@ -21,7 +22,7 @@ DEFAULT_THEME_ID = "ghost"
 _KINDS = frozenset(
     {
         "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
     }
 )
 # 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
@@ -319,7 +320,7 @@ def consume_updated() -> bool:
 _PREFER_BUNDLED = frozenset(
     {
         "ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
     }
 )
 
@@ -464,6 +465,9 @@ def paint_card(
     neon_ammo=None,
     neon_now: float = 0.0,
     neon_planets=None,
+    flip_anims: dict[int, tuple[float, str, str]] | None = None,
+    flip_now: float = 0.0,
+    flip_hit_rects: list[tuple[int, int, int, int, int]] | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
     box = (4, 4, w - 5, h - 5)
@@ -505,6 +509,8 @@ def paint_card(
             elif kind == "inkpulse":
                 # 宣纸永远浅底深墨。透太狠纸就发灰，山水立刻变脏
                 base = (252, 246, 232, 232) if wallpaper_light else (250, 242, 222, 214)
+            elif kind == "flipclock":
+                base = (24, 26, 32, 200) if skin_light else (16, 18, 24, 178)
             elif kind == "thunder":
                 # 雷云得压在暗底上电弧才亮；浅墙纸下托底加厚，不然闪电糊成一团白
                 base = (14, 16, 30, 178) if skin_light else (8, 9, 18, 132)
@@ -579,7 +585,31 @@ def paint_card(
         img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(1.6, h / 42))))
         d = ImageDraw.Draw(img)
     _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
-    _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost, glow=stage == "done")
+    if kind == "flipclock" and big:
+        flip_light = (
+            surface == "light"
+            if kind in ("midautumn", "nationalday", "thunder")
+            else _luma(theme.fill) >= 160
+        )
+        row_h = max(24, int(h * 0.40))
+        flip_pad = max(8, min(18, w // 14))
+        fx.paint_flip_row(
+            img,
+            flip_pad,
+            big_y - max(0, (row_h - int(h * 0.30)) // 2),
+            max(40, w - flip_pad * 2),
+            row_h,
+            big,
+            flip_anims or {},
+            flip_now,
+            font_big,
+            accent,
+            stage=stage,
+            light=flip_light,
+            hit_rects=flip_hit_rects,
+        )
+    else:
+        _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost, glow=stage == "done")
     if sub:
         _halo_text(d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub, ghost=ghost)
 
