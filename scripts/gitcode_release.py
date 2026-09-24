@@ -94,7 +94,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修应用内卸载未删除 exe（helper 用临时副本，主进程退出后再删程序文件）"
+    "- 已用过弹性下班的用户，次日设置弹窗默认仍选「按到岗时间推算」"
 )
 
 

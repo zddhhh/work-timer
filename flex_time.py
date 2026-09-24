@@ -122,3 +122,21 @@ def format_remaining(total_seconds: int, mode: str) -> str:
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
     return f"{h}时{m}分{s:02d}秒"
+
+
+def setup_dialog_default_mode(
+    cfg: dict,
+    *,
+    has_target: bool,
+    time_mode: str,
+) -> str:
+    """设置弹窗默认模式：新用户偏固定；已用过弹性的次日仍默认弹性。"""
+    mode = time_mode if time_mode in ("flex", "direct") else "flex"
+    if has_target:
+        return mode
+    if mode == "flex" and (
+        str(cfg.get("start_date") or "") != ""
+        or (isinstance(cfg.get("start_h"), int) and isinstance(cfg.get("start_m"), int))
+    ):
+        return "flex"
+    return "direct"

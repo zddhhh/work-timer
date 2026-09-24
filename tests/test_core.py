@@ -786,6 +786,26 @@ class FlexTimeTests(unittest.TestCase):
         self.assertEqual(flex_time.parse_clock("18.30"), (18, 30))
         self.assertIsNone(flex_time.parse_clock("25:00"))
 
+    def test_setup_dialog_default_mode(self):
+        fresh = {"time_mode": "flex"}
+        self.assertEqual(
+            flex_time.setup_dialog_default_mode(fresh, has_target=False, time_mode="flex"),
+            "direct",
+        )
+        veteran = {"time_mode": "flex", "start_date": "2026-09-23", "start_h": 9, "start_m": 0}
+        self.assertEqual(
+            flex_time.setup_dialog_default_mode(veteran, has_target=False, time_mode="flex"),
+            "flex",
+        )
+        self.assertEqual(
+            flex_time.setup_dialog_default_mode(
+                {"time_mode": "direct", "off_h": 18, "off_m": 0, "remember_offwork": True},
+                has_target=True,
+                time_mode="direct",
+            ),
+            "direct",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

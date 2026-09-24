@@ -1490,8 +1490,11 @@ class WorkTimer:
         else:
             oh, om = self.cfg.get("off_h"), self.cfg.get("off_m")
             off_preset = (int(oh), int(om)) if isinstance(oh, int) and isinstance(om, int) else (18, 0)
-        # 今天还没设过：默认「直接设下班点」，避免一上来就被弹性流程带偏
-        mode = self._time_mode() if self._has_target() else "direct"
+        mode = flex_time.setup_dialog_default_mode(
+            self.cfg,
+            has_target=self._has_target(),
+            time_mode=self._time_mode(),
+        )
         picked = _ask_offwork_setup(
             self._tk_root(),
             mode=mode,
