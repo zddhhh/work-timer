@@ -428,6 +428,7 @@ class FxTests(unittest.TestCase):
                 fx.paint_neonflow(layer, ph, stage=st, radius=14)
                 fx.paint_inkpulse(layer, ph, stage=st, radius=14)
                 fx.paint_flipclock(layer, ph, stage=st, radius=12)
+                fx.paint_flysword(layer, ph, stage=st, radius=14)
         anims: dict[int, tuple[float, str, str]] = {2: (0.0, "4", "5")}
         fx.paint_flip_row(
             layer, 10, 28, 220, 34, "128时30分45秒", anims, 0.18, fx._flip_font(20),
@@ -437,9 +438,11 @@ class FxTests(unittest.TestCase):
         self.assertTrue(ornaments.has_skin("neonflow"))
         self.assertTrue(ornaments.has_skin("inkpulse"))
         self.assertTrue(ornaments.has_skin("flipclock"))
+        self.assertTrue(ornaments.has_skin("flysword"))
         self.assertTrue(ornaments.is_animated("inkpulse"))
         self.assertTrue(ornaments.is_animated("flipclock"))
         self.assertIn("flipclock", [t.id for t in themes.menu_sections()["fancy"]])
+        self.assertIn("flysword", [t.id for t in themes.menu_sections()["fancy"]])
         prev = fx.sync_flip_anims({}, "", "1时00分00秒", 1.0)
         anims2: dict[int, tuple[float, str, str]] = {}
         fx.sync_flip_anims(anims2, prev, "1时00分01秒", 1.0)
@@ -711,6 +714,122 @@ class FxTests(unittest.TestCase):
         self.assertIn("neonflow", [t.id for t in secs["fancy"]])
         self.assertIn("inkpulse", [t.id for t in secs["fancy"]])
         self.assertTrue(all(len(t.name) >= 3 for t in secs["fancy"]))
+
+    def test_flip_digits_global(self):
+        cfg = {"flip_digits": True}
+        self.assertTrue(themes.use_flip_display("ghost", "1时30分", cfg))
+        self.assertFalse(themes.use_flip_display("ghost", "点我开始", cfg))
+        self.assertTrue(themes.use_flip_display("flipclock", "1时30分", {"flip_digits": False}))
+        cfg_off = {"flip_digits": False}
+        self.assertFalse(themes.use_flip_display("neon", "1时30分", cfg_off))
+        self.assertFalse(themes.use_flip_display("ghost", "1时30分", cfg, h=48))
+        self.assertIn("neonflow", themes.INTERACTIVE_SKINS)
+
+    def test_flip_layout_keeps_title_clear(self):
+        import fx
+
+        font = fx._flip_font(14)
+        title_h = fx._font_line_height(font, "距离下班")
+        for h in (55, 62, 72, 92, 120):
+            title_y, _pad, row_y, _rw, row_h = fx.flip_row_layout(248, h, title_h=title_h, has_sub=False)
+            self.assertGreaterEqual(row_y, title_y + title_h + 2, (h, title_y, row_y, row_h))
+            self.assertLessEqual(row_y + row_h, h - 4, (h, row_y, row_h))
+
+    def test_flip_overlay_transparency(self):
+        import fx
+
+        self.assertLessEqual(fx.FLIP_OVERLAY_ALPHA, 130)
+        layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        fx.paint_flip_row(
+            layer, 10, 30, 220, 28, "1时30分45秒", {}, 0.0,
+            fx._flip_font(16), (240, 250, 255, 252), overlay=True,
+        )
+        # 牌面区应明显透底：中心采样 alpha 不应接近不透明
+        cx, cy = 124, 44
+        a = layer.getpixel((cx, cy))[3]
+        self.assertLess(a, 200)
+
+    def test_paint_card_flip_all_themes_sizes(self):
+        import fx
+
+        big = "2时15分30秒"
+        title = "距离下班"
+        for th in themes.list_themes():
+            for w, h in ((148, 55), (200, 72), (248, 92), (360, 120)):
+                if not themes.use_flip_display(th.kind, big, {"flip_digits": True}, h=h):
+                    continue
+                img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                font_t, font_b, font_s = ornaments.layout_for(w, h)
+                from PIL import ImageFont
+
+                ft = ImageFont.load_default()
+                themes.paint_card(
+                    img, w, h, th, title, big, "", th.big,
+                    ft, ft, ft,
+                    stage="run",
+                    flip_anims={},
+                    flip_now=0.0,
+                    flip_hit_rects=[],
+                    flip_digits=True,
+                )
+                self.assertEqual(img.size, (w, h))
+                title_y, _p, row_y, _rw, row_h = fx.flip_row_layout(
+                    w, h,
+                    title_h=fx._font_line_height(ft, title),
+                    has_sub=False,
+                )
+                self.assertGreaterEqual(row_y, title_y + 8)
+
+    def test_inkpulse_flip_digit_contrast(self):
+        import fx
+
+        dark = fx.flip_digit_color(
+            (24, 20, 18, 252), skin_kind="inkpulse", wallpaper_light=False, stage="run",
+        )
+        light = fx.flip_digit_color(
+            (24, 20, 18, 252), skin_kind="inkpulse", wallpaper_light=True, stage="run",
+        )
+        self.assertGreater(dark[0] + dark[1] + dark[2], 600)
+        self.assertLess(light[0] + light[1] + light[2], 120)
+
+    def test_flip_digit_dark_on_light_wallpaper(self):
+        import fx
+
+        white_accent = (255, 252, 255, 255)
+        for kind in ("frost", "glass", "midautumn", "nationalday"):
+            c = fx.flip_digit_color(
+                white_accent,
+                skin_kind=kind,
+                wallpaper_light=True,
+                flip_light=True,
+                stage="run",
+            )
+            lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+            self.assertLess(lum, 130, msg=kind)
+
+    def test_neon_click_not_on_flip_digit(self):
+        import fx
+
+        rects = [(40, 36, 22, 28, 0), (66, 36, 22, 28, 1)]
+        self.assertIsNone(fx.flip_digit_index_at(rects, 120, 46))
+        self.assertEqual(fx.flip_digit_index_at(rects, 50, 40), 0)
+
+    def test_flysword_fire_and_replenish(self):
+        import fx
+
+        ammo = fx.create_sword_ammo()
+        t0 = 100.0
+        ok = fx.sword_try_fire(
+            ammo, t0, 120.0, 46.0, bw=248, bh=92, radius=14, phase=t0, stage="run",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(len(ammo.shots), 1)
+        slot = ammo.shots[0][1]
+        self.assertLess(ammo.present[slot], 0.05)
+        layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        fx.paint_sword_active_shots(layer, ammo, t0 + 0.12, stage="run")
+        fx.sword_tick(ammo, t0 + fx.SWORD_FIRE_SEC + fx.SWORD_REPLENISH_SEC * 0.5)
+        self.assertGreater(ammo.present[slot], 0.2)
 
     def test_perimeter_closed(self):
         import fx

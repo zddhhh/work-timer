@@ -19,10 +19,34 @@ import ornaments
 import store
 
 DEFAULT_THEME_ID = "ghost"
+
+
+def flip_digits_enabled(cfg: dict | None) -> bool:
+    """全局翻牌数字开关（默认开）。"""
+    if not cfg:
+        return True
+    return bool(cfg.get("flip_digits", True))
+
+
+def use_flip_display(kind: str, big: str, cfg: dict | None, *, h: int = 92) -> bool:
+    """是否用翻牌渲染大数字（翻牌时钟皮恒为翻牌；其它皮看设置与窗口高度）。"""
+    if not big or not fx._flip_text_has_digits(big):
+        return False
+    if kind == "flipclock":
+        return True
+    if not flip_digits_enabled(cfg):
+        return False
+    # 窗口太矮时叠层翻牌易挡标题，回落普通大字
+    if h < fx.MIN_FLIP_H:
+        return False
+    return True
+
+
+INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow", "flysword"})
 _KINDS = frozenset(
     {
         "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", "flysword",
     }
 )
 # 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
@@ -320,7 +344,7 @@ def consume_updated() -> bool:
 _PREFER_BUNDLED = frozenset(
     {
         "ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", "flysword",
     }
 )
 
@@ -423,10 +447,15 @@ def _halo_text(
     *,
     ghost: bool,
     glow: bool = False,
+    compact: bool = False,
 ) -> None:
     if not text:
         return
     x, y = xy
+    # 窗口矮时双层阴影会糊成重影，只画正文
+    if compact:
+        d.text((x, y), text, font=font, fill=fill)
+        return
     if glow:
         aura = (fill[0], fill[1], fill[2], max(40, min(120, fill[3] // 2)))
         for dx, dy in ((0, -1), (0, 2), (-1, 0), (1, 0)):
@@ -435,11 +464,9 @@ def _halo_text(
         d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 70))
         d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 40))
     elif _luma(fill) < 140:
-        d.text((x + 1, y + 1), text, font=font, fill=(255, 255, 255, 90))
-        d.text((x, y + 1), text, font=font, fill=(255, 255, 255, 50))
+        d.text((x + 1, y + 1), text, font=font, fill=(255, 255, 255, 70))
     else:
-        d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 90))
-        d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 55))
+        d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 65))
     d.text((x, y), text, font=font, fill=fill)
 
 
@@ -465,17 +492,26 @@ def paint_card(
     neon_ammo=None,
     neon_now: float = 0.0,
     neon_planets=None,
+    sword_ammo=None,
+    sword_now: float = 0.0,
     flip_anims: dict[int, tuple[float, str, str]] | None = None,
     flip_now: float = 0.0,
     flip_hit_rects: list[tuple[int, int, int, int, int]] | None = None,
+    flip_digits: bool = True,
 ) -> None:
     d = ImageDraw.Draw(img)
-    box = (4, 4, w - 5, h - 5)
     kind = theme.kind
-    r = min(theme.radius, max(8, h // 5))
+    compact_chrome = h < 72 or w < 200
+    if compact_chrome:
+        box = (2, 2, w - 3, h - 3)
+        r = min(theme.radius, max(4, h // 8))
+    else:
+        box = (4, 4, w - 5, h - 5)
+        r = min(theme.radius, max(8, h // 5))
     pad_x = max(10, min(22, w // 12))
     title_y = max(6, h // 10)
     big_y = int(h * (0.42 if sub else 0.38))
+    title_h = fx._font_line_height(font_title, title or "距")
     now = time.monotonic()
     pulse = 0.84 + 0.16 * math.sin(now * (1.15 if stage == "done" else (0.85 if stage == "warn" else 0.5)))
 
@@ -511,6 +547,8 @@ def paint_card(
                 base = (252, 246, 232, 232) if wallpaper_light else (250, 242, 222, 214)
             elif kind == "flipclock":
                 base = (24, 26, 32, 200) if skin_light else (16, 18, 24, 178)
+            elif kind == "flysword":
+                base = (12, 16, 28, 168) if skin_light else (6, 8, 16, 142)
             elif kind == "thunder":
                 # 雷云得压在暗底上电弧才亮；浅墙纸下托底加厚，不然闪电糊成一团白
                 base = (14, 16, 30, 178) if skin_light else (8, 9, 18, 132)
@@ -528,22 +566,27 @@ def paint_card(
                 neon_ammo=neon_ammo if kind == "neonflow" else None,
                 neon_now=neon_now,
                 neon_planets=neon_planets if kind == "neonflow" else None,
+                sword_ammo=sword_ammo if kind == "flysword" else None,
+                sword_now=sword_now,
             )
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
+                if compact_chrome:
+                    oa = min(oa, 10)
                 d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
-            inset = 2
-            ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
-            pale_rim = skin_light and kind not in ("midautumn", "nationalday")
-            rim_a = int((18 if pale_rim else 22) * pulse)
-            if stage == "done":
-                rim_a = int(rim_a * 1.35)
-            d.rounded_rectangle(
-                ibox,
-                radius=max(4, r - 2),
-                outline=(255, 255, 255, rim_a) if pale_rim else (255, 248, 236, rim_a),
-                width=1,
-            )
+            if not compact_chrome:
+                inset = 2
+                ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
+                pale_rim = skin_light and kind not in ("midautumn", "nationalday")
+                rim_a = int((18 if pale_rim else 22) * pulse)
+                if stage == "done":
+                    rim_a = int(rim_a * 1.35)
+                d.rounded_rectangle(
+                    ibox,
+                    radius=max(4, r - 2),
+                    outline=(255, 255, 255, rim_a) if pale_rim else (255, 248, 236, rim_a),
+                    width=1,
+                )
             if kind == "thunder" and thunder_glyphs:
                 for gt, gidx, gx, gy in thunder_glyphs:
                     ornaments.paint_thunder_glyph(
@@ -571,33 +614,45 @@ def paint_card(
                 d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
 
     ghost = kind == "ghost"
-    if kind == "neonflow" and big:
+    compact_text = h < 72
+    show_flip = use_flip_display(kind, big, {"flip_digits": flip_digits}, h=h)
+    if not show_flip and kind == "neonflow" and big:
         # 霓虹泛光：先把大数字按主色模糊一层垫在下面
         bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
         ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 170))
         img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.5, h / 28))))
         d = ImageDraw.Draw(img)
-    elif kind == "inkpulse" and big:
+    elif not show_flip and kind == "inkpulse" and big:
         # 字本身像写在纸上洇开，不要霓虹光晕
         ink = (32, 28, 24, 80)
         bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
         ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=ink)
         img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(1.6, h / 42))))
         d = ImageDraw.Draw(img)
-    _halo_text(d, (pad_x, title_y), title, font_title, theme.title, ghost=ghost)
-    if kind == "flipclock" and big:
+    elif not show_flip and kind == "flysword" and big:
+        bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 150))
+        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.0, h / 32))))
+        d = ImageDraw.Draw(img)
+    if show_flip:
         flip_light = (
             surface == "light"
-            if kind in ("midautumn", "nationalday", "thunder")
+            if kind in ("midautumn", "nationalday", "thunder", "inkpulse")
             else _luma(theme.fill) >= 160
         )
-        row_h = max(24, int(h * 0.40))
-        flip_pad = max(8, min(18, w // 14))
+        title_y, flip_pad, row_y, row_w, row_h = fx.flip_row_layout(
+            w, h, title_h=title_h, has_sub=bool(sub),
+        )
+    _halo_text(
+        d, (pad_x, title_y), title, font_title, theme.title,
+        ghost=ghost, compact=compact_text,
+    )
+    if show_flip:
         fx.paint_flip_row(
             img,
             flip_pad,
-            big_y - max(0, (row_h - int(h * 0.30)) // 2),
-            max(40, w - flip_pad * 2),
+            row_y,
+            row_w,
             row_h,
             big,
             flip_anims or {},
@@ -607,11 +662,20 @@ def paint_card(
             stage=stage,
             light=flip_light,
             hit_rects=flip_hit_rects,
+            overlay=(kind != "flipclock"),
+            skin_kind=kind,
+            wallpaper_light=(surface == "light"),
         )
     else:
-        _halo_text(d, (pad_x, big_y), big, font_big, accent, ghost=ghost, glow=stage == "done")
+        _halo_text(
+            d, (pad_x, big_y), big, font_big, accent,
+            ghost=ghost, glow=(stage == "done" and not compact_text), compact=compact_text,
+        )
     if sub:
-        _halo_text(d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub, ghost=ghost)
+        _halo_text(
+            d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub,
+            ghost=ghost, compact=compact_text,
+        )
 
 
 load_local_catalog()

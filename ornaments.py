@@ -32,7 +32,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "nationalday": ("skin_nationalday.png", "skin_nationalday_glow.png"),
 }
 # 不用生图、逐帧程序化绘制的皮
-_PROC_KINDS = frozenset({"neonflow", "inkpulse", "thunder", "flipclock"})
+_PROC_KINDS = frozenset({"neonflow", "inkpulse", "thunder", "flipclock", "flysword"})
 
 
 def asset_path(name: str) -> Path:
@@ -245,6 +245,11 @@ neon_planets_animating = fx.neon_planets_animating
 neon_recoil = fx.neon_recoil
 NeonAmmo = fx.NeonAmmo
 NeonPlanets = fx.NeonPlanets
+SWORD_CLICK_SEC = fx.SWORD_CLICK_SEC
+create_sword_ammo = fx.create_sword_ammo
+sword_try_fire = fx.sword_try_fire
+sword_ammo_signature = fx.sword_ammo_signature
+SwordAmmo = fx.SwordAmmo
 
 
 def paint_bite(
@@ -293,6 +298,24 @@ def paint_ink_splash(
     bw, bh = max(1, x1 - x0), max(1, y1 - y0)
     layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     fx.paint_ink_click(layer, t, cx, cy, stage=stage, light=light, power=power)
+    img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+
+
+def paint_sword_overlay(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    *,
+    ammo: fx.SwordAmmo,
+    now: float,
+    stage: str = "run",
+    light: bool = False,
+    radius: int = 0,
+) -> None:
+    """御剑绕边：飞行中的剑与落点斩击。"""
+    x0, y0, x1, y1 = box
+    bw, bh = max(1, x1 - x0), max(1, y1 - y0)
+    layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    fx.paint_sword_active_shots(layer, ammo, now, stage=stage, light=light)
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
 
 
@@ -353,6 +376,8 @@ def paste_skin(
     neon_ammo: fx.NeonAmmo | None = None,
     neon_now: float = 0.0,
     neon_planets: fx.NeonPlanets | None = None,
+    sword_ammo: fx.SwordAmmo | None = None,
+    sword_now: float = 0.0,
 ) -> bool:
     """把对应皮肤的生图贴进圆角卡片（含四个圆角弧）；程序化皮直接按帧画。"""
     x0, y0, x1, y1 = box
@@ -378,6 +403,16 @@ def paste_skin(
             fx.paint_thunder(layer, phase, stage=stage, radius=int(radius), light=light)
         elif kind == "flipclock":
             fx.paint_flipclock(layer, phase, stage=stage, radius=int(radius), light=light)
+        elif kind == "flysword":
+            fx.paint_flysword(
+                layer,
+                phase,
+                stage=stage,
+                radius=int(radius),
+                light=light,
+                ammo=sword_ammo,
+                ammo_now=sword_now if sword_ammo is not None else phase,
+            )
         img.alpha_composite(_round_mask(layer, radius), (x0, y0))
         return True
 

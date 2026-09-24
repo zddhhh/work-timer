@@ -1,4 +1,4 @@
-"""程序化皮肤特效：国旗星组（国庆皮）、霓虹流光 HUD、宣纸山水（墨水涟漪）、翻牌时钟。全部按帧绘制，不依赖生图。"""
+"""程序化皮肤特效：国旗星组（国庆皮）、霓虹流光 HUD、宣纸山水（墨水涟漪）、御剑绕边、翻牌时钟。全部按帧绘制，不依赖生图。"""
 from __future__ import annotations
 
 import math
@@ -1546,6 +1546,471 @@ def paint_neon_active_shots(
             )
 
 
+# ---------------------------------------------------------------- 御剑绕边
+
+def _sword_palette(stage: str, *, light: bool = False) -> tuple[tuple[int, int, int], tuple[int, int, int], float, float]:
+    """(主色, 副色, 绕行周期秒, 亮度)"""
+    if light:
+        if stage == "warn":
+            return (196, 88, 36), (168, 52, 48), 4.2, 0.92
+        if stage == "done":
+            return (48, 140, 108), (72, 168, 130), 15.0, 0.82
+        if stage == "idle":
+            return (88, 128, 168), (120, 100, 140), 18.0, 0.52
+        return (72, 148, 188), (140, 96, 148), 10.5, 0.88
+    if stage == "warn":
+        return (255, 196, 96), (255, 88, 72), 4.0, 1.0
+    if stage == "done":
+        return (120, 255, 190), (160, 255, 220), 14.0, 0.88
+    if stage == "idle":
+        return (140, 190, 230), (180, 140, 200), 17.0, 0.58
+    return (160, 220, 255), (220, 160, 255), 9.5, 1.0
+
+
+SWORD_COUNT = 3
+SWORD_FIRE_SEC = 0.32
+SWORD_REPLENISH_SEC = 1.28
+SWORD_SHOT_SEC = SWORD_FIRE_SEC + SWORD_REPLENISH_SEC
+SWORD_CLICK_SEC = SWORD_SHOT_SEC
+SWORD_CLICK_COOLDOWN = 0.18
+SWORD_SLOT_OFFSET = tuple(i / SWORD_COUNT + _hash01(i + 29, 71) * 0.055 for i in range(SWORD_COUNT))
+
+
+class SwordAmmo:
+    """三柄御剑绕边的状态。"""
+
+    __slots__ = ("present", "shots", "last_click")
+
+    def __init__(self) -> None:
+        self.present = [1.0] * SWORD_COUNT
+        self.shots: list[tuple[float, int, float, float, float, float, bool]] = []
+        # start, slot, tx, ty, sx, sy, done
+        self.last_click = 0.0
+
+
+def create_sword_ammo() -> SwordAmmo:
+    return SwordAmmo()
+
+
+def _sword_colors(
+    c1: tuple[int, int, int], c2: tuple[int, int, int], *, light: bool
+) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+    if light:
+        return (
+            tuple(min(255, int(c1[i] * 0.92 + 40)) for i in range(3)),
+            tuple(min(255, int(c2[i] * 0.90 + 36)) for i in range(3)),
+            (210, 178, 96),
+        )
+    return (
+        tuple(min(255, int(c1[i] * 0.75 + 80)) for i in range(3)),
+        tuple(min(255, int(c2[i] * 0.72 + 70)) for i in range(3)),
+        (255, 228, 140),
+    )
+
+
+def _sword_slot_u(head: float, slot: int) -> float:
+    return (head + SWORD_SLOT_OFFSET[slot]) % 1.0
+
+
+def _sword_slot_firing(ammo: SwordAmmo, slot: int, now: float) -> bool:
+    for s, sl, _tx, _ty, _sx, _sy, _done in ammo.shots:
+        if sl != slot:
+            continue
+        if 0.0 <= now - s < SWORD_FIRE_SEC:
+            return True
+    return False
+
+
+def _perim_angle(point, u: float, total_hint: float = 1.0) -> float:
+    du = 0.006 / max(1.0, total_hint)
+    x0, y0 = point((u - du) % 1.0)
+    x1, y1 = point((u + du) % 1.0)
+    return math.atan2(y1 - y0, x1 - x0)
+
+
+def _jian_local_points(scale: float) -> dict[str, list[tuple[float, float]]]:
+    """古风细剑（剑尖朝 +x）：护手中心为原点。"""
+    s = max(0.78, scale) * 1.34
+    bw = 0.92 * s
+    gw = 2.4 * s
+    hl = 9.0 * s
+    bl = 29.0 * s
+    return {
+        "blade": [
+            (1.0 * s, -bw),
+            (bl * 0.88, -bw * 0.94),
+            (bl * 0.96, -bw * 0.42),
+            (bl, 0.0),
+            (bl * 0.96, bw * 0.42),
+            (bl * 0.88, bw * 0.94),
+            (1.0 * s, bw),
+        ],
+        "blade_shine": [
+            (2.2 * s, -bw * 0.14),
+            (bl * 0.82, -bw * 0.06),
+            (bl * 0.98, 0.0),
+        ],
+        "guard": [
+            (-0.6 * s, -gw),
+            (1.8 * s, -gw * 0.88),
+            (1.8 * s, gw * 0.88),
+            (-0.6 * s, gw),
+        ],
+        "handle": [
+            (-hl, -bw * 0.34),
+            (-0.5 * s, -bw * 0.34),
+            (-0.5 * s, bw * 0.34),
+            (-hl, bw * 0.34),
+        ],
+        "pommel": [(-hl - 1.8 * s, -1.5 * s), (-hl + 0.2 * s, -1.5 * s), (-hl + 0.2 * s, 1.5 * s), (-hl - 1.8 * s, 1.5 * s)],
+        "tassel": [(-hl - 1.4 * s, 0.0), (-hl - 5.6 * s, 0.8 * s), (-hl - 7.2 * s, 2.8 * s)],
+    }
+
+
+def _xform_pts(
+    pts: list[tuple[float, float]],
+    ox: float,
+    oy: float,
+    ang: float,
+) -> list[tuple[float, float]]:
+    cos, sin = math.cos(ang), math.sin(ang)
+    out: list[tuple[float, float]] = []
+    for lx, ly in pts:
+        out.append((ox + lx * cos - ly * sin, oy + lx * sin + ly * cos))
+    return out
+
+
+def _jian_colors(col: tuple[int, int, int]) -> dict[str, tuple[int, int, int]]:
+    steel = tuple(int(col[i] * 0.14 + 178 - i * 6) for i in range(3))
+    edge = tuple(min(255, int(c * 0.10 + 238)) for c in col)
+    return {
+        "steel": steel,
+        "edge": edge,
+        "guard": (148, 158, 172),
+        "handle": (42, 38, 36),
+        "pommel": (108, 118, 132),
+        "tassel": tuple(int(col[i] * 0.55 + 100) for i in range(3)),
+        "ridge": (228, 236, 248),
+    }
+
+
+def _draw_jian_shape(
+    d: ImageDraw.ImageDraw,
+    x: float,
+    y: float,
+    ang: float,
+    col: tuple[int, int, int],
+    *,
+    scale: float,
+    alpha: float,
+) -> None:
+    pts = _jian_local_points(scale)
+    pal = _jian_colors(col)
+    aa = int(255 * alpha)
+
+    def poly(name: str, key: str) -> None:
+        c = pal[key]
+        d.polygon(_xform_pts(pts[name], x, y, ang), fill=(*c, aa))
+
+    poly("blade", "steel")
+    poly("blade_shine", "edge")
+    poly("guard", "guard")
+    poly("handle", "handle")
+
+    pommel = _xform_pts(pts["pommel"], x, y, ang)
+    pxs = [p[0] for p in pommel]
+    pys = [p[1] for p in pommel]
+    d.ellipse((min(pxs), min(pys), max(pxs), max(pys)), fill=(*pal["pommel"], aa))
+
+    cos, sin = math.cos(ang), math.sin(ang)
+    for i in range(5):
+        t = (i + 1) / 6.0
+        lx = pts["handle"][0][0] + (pts["handle"][2][0] - pts["handle"][0][0]) * t
+        ly = pts["handle"][0][1] + (pts["handle"][2][1] - pts["handle"][0][1]) * t
+        px, py = x + lx * cos - ly * sin, y + lx * sin + ly * cos
+        d.line(
+            (px - sin * 0.7, py + cos * 0.7, px + sin * 0.7, py - cos * 0.7),
+            fill=(32, 28, 26, int(150 * alpha)),
+            width=1,
+        )
+
+    tassel = _xform_pts(pts["tassel"], x, y, ang)
+    d.line(tassel[:2], fill=(*pal["tassel"], int(190 * alpha)), width=max(1, int(round(0.8 * scale))))
+    d.line(tassel[1:], fill=(*pal["tassel"], int(130 * alpha)), width=1)
+
+    blade = _xform_pts(pts["blade"], x, y, ang)
+    mid = ((blade[0][0] + blade[-1][0]) * 0.5, (blade[0][1] + blade[-1][1]) * 0.5)
+    tip = blade[3]
+    d.line([mid, tip], fill=(*pal["ridge"], int(175 * alpha)), width=1)
+    d.line([blade[0], blade[1], blade[2], tip], fill=(*pal["edge"], int(210 * alpha)), width=1)
+
+
+def _draw_sword(
+    layer: Image.Image,
+    x: float,
+    y: float,
+    ang: float,
+    col: tuple[int, int, int],
+    *,
+    gain: float,
+    scale: float,
+    alpha: float = 1.0,
+) -> None:
+    if alpha < 0.04:
+        return
+    bw, bh = layer.size
+    pad = int(math.ceil(28 * scale))
+    px, py = int(round(x)), int(round(y))
+    x0 = max(0, px - pad)
+    y0 = max(0, py - pad)
+    x1 = min(bw, px + pad)
+    y1 = min(bh, py + pad)
+    if x1 <= x0 or y1 <= y0:
+        return
+    patch = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
+    d = ImageDraw.Draw(patch)
+    _draw_jian_shape(d, px - x0, py - y0, ang, col, scale=scale, alpha=alpha)
+    ga = int(88 * gain * alpha)
+    if ga > 4:
+        glow = patch.filter(ImageFilter.GaussianBlur(radius=max(1.4, 2.0 * scale)))
+        glow.putalpha(glow.getchannel("A").point(lambda v: min(255, int(v * ga / 220))))
+        layer.alpha_composite(glow, (x0, y0))
+    layer.alpha_composite(patch, (x0, y0))
+
+
+def sword_tick(ammo: SwordAmmo, now: float) -> None:
+    for s, slot, _tx, _ty, _sx, _sy, _done in ammo.shots:
+        age = now - s
+        if age > SWORD_FIRE_SEC:
+            rep = min(1.0, (age - SWORD_FIRE_SEC) / SWORD_REPLENISH_SEC)
+            ammo.present[slot] = max(ammo.present[slot], rep)
+    ammo.shots = [
+        (s, sl, tx, ty, sx, sy, done)
+        for s, sl, tx, ty, sx, sy, done in ammo.shots
+        if now - s < SWORD_SHOT_SEC
+    ]
+
+
+def sword_try_fire(
+    ammo: SwordAmmo,
+    now: float,
+    tx: float,
+    ty: float,
+    *,
+    bw: int,
+    bh: int,
+    radius: int,
+    phase: float,
+    stage: str = "run",
+    light: bool = False,
+) -> bool:
+    """最近的一柄御剑脱轨射向落点，沿边补回。"""
+    if now - ammo.last_click < SWORD_CLICK_COOLDOWN:
+        return False
+    sword_tick(ammo, now)
+    ready: list[int] = []
+    for i in range(SWORD_COUNT):
+        if ammo.present[i] >= 0.97 and not _sword_slot_firing(ammo, i, now):
+            ready.append(i)
+    if not ready:
+        return False
+    _total, point = _perimeter(bw, bh, float(radius), 1.5)
+    _c1, _c2, period, _gain = _sword_palette(stage, light=light)
+    head = (phase / period) % 1.0
+    best = ready[0]
+    best_d = 1e18
+    for i in ready:
+        hx, hy = point(_sword_slot_u(head, i))
+        d = (hx - tx) ** 2 + (hy - ty) ** 2
+        if d < best_d:
+            best_d, best = d, i
+    sx, sy = point(_sword_slot_u(head, best))
+    ammo.present[best] = 0.0
+    ammo.shots.append((now, best, tx, ty, sx, sy, False))
+    ammo.last_click = now
+    return True
+
+
+def sword_ammo_signature(ammo: SwordAmmo, now: float) -> str:
+    sword_tick(ammo, now)
+    pres = ",".join(str(int(p * 24)) for p in ammo.present)
+    shots = ",".join(f"{sl}:{int((now - s) * 48)}" for s, sl, *_rest in ammo.shots)
+    return f"{pres}|{shots}"
+
+
+def _paint_sword_qi(
+    layer: Image.Image,
+    phase: float,
+    c1: tuple[int, int, int],
+    c2: tuple[int, int, int],
+    *,
+    gain: float,
+    scale: float,
+    stage: str,
+) -> None:
+    bw, bh = layer.size
+    fog = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(fog)
+    breath = 0.5 + 0.5 * math.sin(phase * (math.pi * 2 / 20.0))
+    a0 = int((42 if stage != "warn" else 58) * gain * breath)
+    drift = math.sin(phase * 0.22) * 0.06
+    blobs = (
+        (bw * (0.22 + drift), bh * 0.68, bh * 0.52, c1, a0),
+        (bw * (0.78 - drift), bh * 0.28, bh * 0.40, c2, int(a0 * 0.82)),
+    )
+    for bx, by, rr, col, aa in blobs:
+        if aa > 3:
+            fd.ellipse((bx - rr, by - rr, bx + rr, by + rr), fill=(*col, aa))
+    layer.alpha_composite(fog.filter(ImageFilter.GaussianBlur(radius=max(7.0, 11.0 * scale))))
+    streak = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(streak)
+    n = 5 if stage == "warn" else 3
+    for i in range(n):
+        off = phase * (0.35 + i * 0.08) + i * 1.7
+        y = bh * (0.18 + i * 0.16) + math.sin(off) * bh * 0.04
+        x0 = (off * 40.0) % (bw + 80) - 60
+        ln = bw * (0.22 + 0.06 * (i % 2))
+        aa = int((28 + i * 6) * gain)
+        sd.line((x0, y, x0 + ln, y), fill=(*c1, aa), width=1)
+    layer.alpha_composite(streak.filter(ImageFilter.GaussianBlur(radius=max(1.2, 1.8 * scale))))
+
+
+def _paint_sword_border(
+    layer: Image.Image,
+    ammo: SwordAmmo,
+    now: float,
+    phase: float,
+    point,
+    colors: tuple[tuple[int, int, int], ...],
+    *,
+    gain: float,
+    scale: float,
+    stage: str,
+    period: float,
+    total: float,
+) -> None:
+    head = (phase / period) % 1.0
+    for i in range(SWORD_COUNT):
+        col = colors[i % len(colors)]
+        hu = _sword_slot_u(head, i)
+        if _sword_slot_firing(ammo, i, now):
+            continue
+        if ammo.present[i] < 0.97:
+            goal = hu
+            start_u = (goal - 0.22) % 1.0
+            cu = _perim_lerp(start_u, goal, _ease_out(ammo.present[i]))
+            px, py = point(cu)
+            ang = _perim_angle(point, cu, total)
+            _draw_sword(
+                layer, px, py, ang, col,
+                gain=gain, scale=scale * 0.96, alpha=0.55 + 0.45 * ammo.present[i],
+            )
+            continue
+        pulse = 0.86 + 0.14 * math.sin(phase * 2.8 + i * 1.4)
+        px, py = point(hu)
+        ang = _perim_angle(point, hu, total)
+        _draw_sword(layer, px, py, ang, col, gain=gain, scale=scale, alpha=pulse)
+
+
+def paint_sword_shot(
+    layer: Image.Image,
+    t: float,
+    sx: float,
+    sy: float,
+    tx: float,
+    ty: float,
+    *,
+    col: tuple[int, int, int],
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    """御剑脱轨：从边框飞向落点，带剑气尾迹。"""
+    if t < 0.0 or t > SWORD_FIRE_SEC:
+        return
+    bw, bh = layer.size
+    _c1, c2, _period, gain = _sword_palette(stage, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    prog = min(1.0, t / (SWORD_FIRE_SEC * 0.9))
+    ease = 1.0 - (1.0 - prog) ** 2.4
+    hx = sx + (tx - sx) * ease
+    hy = sy + (ty - sy) * ease
+    fade = max(0.0, 1.0 - max(0.0, t - SWORD_FIRE_SEC * 0.5) / (SWORD_FIRE_SEC * 0.55))
+    ang = math.atan2(ty - sy, tx - sx)
+    trail = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    td = ImageDraw.Draw(trail)
+    n_seg = 12
+    pts: list[tuple[float, float]] = []
+    for i in range(n_seg + 1):
+        k = i / n_seg
+        px = sx + (hx - sx) * k + math.sin(k * 8.0 - t * 18.0) * scale * 0.28 * (1.0 - k)
+        py = sy + (hy - sy) * k
+        pts.append((px, py))
+    for i in range(len(pts) - 1):
+        f = (1.0 - i / len(pts)) * fade
+        td.line([pts[i], pts[i + 1]], fill=(*c2, int(130 * gain * f)), width=max(2, int(round(4.0 * scale * f))))
+        td.line([pts[i], pts[i + 1]], fill=(255, 255, 255, int(210 * gain * f)), width=max(1, int(round(1.5 * scale * f))))
+    layer.alpha_composite(trail.filter(ImageFilter.GaussianBlur(radius=max(1.2, 1.8 * scale))))
+    layer.alpha_composite(trail)
+    _draw_sword(layer, hx, hy, ang, col, gain=gain, scale=scale * 1.08, alpha=fade)
+    if prog > 0.82:
+        slash = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(slash)
+        sk = min(1.0, (prog - 0.82) / 0.18)
+        r = max(8.0, 14.0 * scale) * sk
+        perp = ang + math.pi / 2.0
+        cx, cy = tx, ty
+        p1 = (cx + math.cos(perp) * r, cy + math.sin(perp) * r)
+        p2 = (cx - math.cos(perp) * r, cy - math.sin(perp) * r)
+        q1 = (cx + math.cos(ang) * r * 0.35, cy + math.sin(ang) * r * 0.35)
+        q2 = (cx - math.cos(ang) * r * 0.35, cy - math.sin(ang) * r * 0.35)
+        sa = int(200 * gain * sk * fade)
+        sd.polygon([p1, q1, p2, q2], fill=(*col, sa))
+        layer.alpha_composite(slash.filter(ImageFilter.GaussianBlur(radius=max(0.8, 1.2 * scale))))
+
+
+def paint_sword_active_shots(
+    layer: Image.Image,
+    ammo: SwordAmmo,
+    now: float,
+    *,
+    stage: str = "run",
+    light: bool = False,
+) -> None:
+    c1, c2, _period, _gain = _sword_palette(stage, light=light)
+    colors = _sword_colors(c1, c2, light=light)
+    for s, sl, tx, ty, sx, sy, _done in ammo.shots:
+        age = now - s
+        if age < SWORD_FIRE_SEC:
+            paint_sword_shot(layer, age, sx, sy, tx, ty, col=colors[sl], stage=stage, light=light)
+
+
+def paint_flysword(
+    layer: Image.Image,
+    phase: float,
+    *,
+    stage: str,
+    radius: int,
+    light: bool = False,
+    ammo: SwordAmmo | None = None,
+    ammo_now: float = 0.0,
+) -> None:
+    """御剑绕边：剑气雾 + 三柄剑沿边巡航。"""
+    bw, bh = layer.size
+    if bw < 40 or bh < 20:
+        return
+    c1, c2, period, gain = _sword_palette(stage, light=light)
+    scale = max(0.7, min(2.4, bh / 92.0))
+    _paint_sword_qi(layer, phase, c1, c2, gain=gain, scale=scale, stage=stage)
+    colors = _sword_colors(c1, c2, light=light)
+    total, point = _perimeter(bw, bh, float(radius), 1.5)
+    sa = ammo if ammo is not None else create_sword_ammo()
+    now = ammo_now if ammo is not None else phase
+    _paint_sword_border(
+        layer, sa, now, phase, point, colors,
+        gain=gain, scale=scale, stage=stage, period=period, total=total,
+    )
+
+
 # ---------------------------------------------------------------- 翻牌时钟
 
 FLIP_ANIM_SEC = 0.36
@@ -1597,6 +2062,36 @@ def _flip_unit_font(size: int) -> ImageFont.ImageFont:
     return font
 
 
+MIN_FLIP_H = 52
+
+
+def _font_line_height(font: ImageFont.ImageFont, sample: str = "距") -> int:
+    bb = font.getbbox(sample or " ")
+    return max(8, bb[3] - bb[1])
+
+
+def flip_row_layout(
+    w: int,
+    h: int,
+    *,
+    title_h: int,
+    has_sub: bool,
+) -> tuple[int, int, int, int, int]:
+    """翻牌行布局：返回 (title_y, flip_pad, row_y, row_w, row_h)，保证不压住标题。"""
+    h = max(MIN_FLIP_H, int(h))
+    title_y = max(4, h // 12)
+    gap = max(3, h // 18)
+    top = title_y + max(8, title_h) + gap
+    bottom_reserve = int(h * 0.20) if has_sub else max(5, h // 12)
+    avail = max(14, h - top - bottom_reserve)
+    min_row = 18 if h < 68 else 16
+    row_h = max(min_row, min(int(h * 0.34), avail))
+    row_y = top + max(0, (avail - row_h) // 2)
+    flip_pad = max(6, min(16, w // 14))
+    row_w = max(36, w - flip_pad * 2)
+    return title_y, flip_pad, row_y, row_w, row_h
+
+
 def _flip_palette(stage: str, light: bool) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
     """面板、铰链、数字、单位字色。"""
     if stage == "warn":
@@ -1612,6 +2107,69 @@ def _flip_palette(stage: str, light: bool) -> tuple[tuple[int, int, int], tuple[
     else:
         panel, hinge, unit = (28, 30, 36), (14, 15, 18), (108, 114, 126)
     return panel, hinge, digit, unit
+
+
+def _flip_palette_overlay(
+    stage: str,
+    light: bool,
+    *,
+    skin_kind: str = "",
+) -> tuple[tuple[int, int, int], tuple[int, int, int], int]:
+    """叠在其它皮肤上的翻牌：半透明牌面。墨水涟漪用宣纸色牌，深墙纸可读。"""
+    if skin_kind == "inkpulse":
+        if light:
+            panel, hinge = (248, 242, 228), (148, 128, 108)
+        else:
+            panel, hinge = (252, 246, 234), (168, 148, 128)
+        return panel, hinge, 168
+    panel, hinge, _digit, _unit = _flip_palette(stage, light=light)
+    if light:
+        panel = tuple(int(c * 0.72 + 58) for c in panel)
+        hinge = tuple(int(c * 0.65 + 72) for c in hinge)
+    else:
+        panel = tuple(int(c * 0.85 + 8) for c in panel)
+        hinge = tuple(int(c * 0.75 + 18) for c in hinge)
+    return panel, hinge, FLIP_OVERLAY_ALPHA
+
+
+FLIP_OVERLAY_ALPHA = 118
+
+
+def flip_digit_color(
+    accent: tuple[int, int, int, int],
+    *,
+    skin_kind: str,
+    wallpaper_light: bool,
+    stage: str,
+    flip_light: bool = False,
+) -> tuple[int, int, int, int]:
+    """翻牌数字色：浅底压深字、深底提亮字；节日皮 on_light.big 常近白需兜底。"""
+    if skin_kind == "inkpulse":
+        if wallpaper_light:
+            return (28, 24, 20, 252)
+        return (252, 248, 238, 255)
+    r, g, b, a = accent[0], accent[1], accent[2], accent[3] if len(accent) > 3 else 255
+    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    paper_light = wallpaper_light or flip_light
+    if paper_light:
+        if lum >= 130:
+            if stage == "warn":
+                return (168, 68, 22, a)
+            if stage == "done":
+                return (22, 108, 52, a)
+            if stage == "idle":
+                return (68, 74, 86, a)
+            return (24, 28, 38, a)
+        return accent
+    if lum < 165:
+        boost = 175 - lum
+        return (
+            min(255, int(r + boost * 0.55)),
+            min(255, int(g + boost * 0.55)),
+            min(255, int(b + boost * 0.50)),
+            a,
+        )
+    return accent
 
 
 def paint_flipclock(layer: Image.Image, phase: float, *, stage: str, radius: int, light: bool = False) -> None:
@@ -1732,6 +2290,7 @@ def _paint_flap_half(
     *,
     top: bool,
     scale_y: float,
+    panel_alpha: int = 255,
 ) -> None:
     """绘制翻牌的上/下半片（scale_y 模拟翻转透视）。"""
     if w < 2 or h < 2 or scale_y < 0.03:
@@ -1739,7 +2298,7 @@ def _paint_flap_half(
     half_h = max(1, h // 2)
     cell = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     cd = ImageDraw.Draw(cell)
-    cd.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(2, h // 7), fill=(*panel, 255))
+    cd.rounded_rectangle((0, 0, w - 1, h - 1), radius=max(2, h // 7), fill=(*panel, panel_alpha))
     cw, chh = _char_bbox(font, ch)
     tx = (w - cw) // 2
     ty = (h - chh) // 2 - (1 if top else 0)
@@ -1757,6 +2316,32 @@ def _paint_flap_half(
         target.alpha_composite(piece, (x, y + mid))
 
 
+def _flip_text_has_digits(text: str) -> bool:
+    return bool(text) and any(c.isdigit() for c in text)
+
+
+def _draw_flip_digit(
+    d: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    ch: str,
+    font: ImageFont.ImageFont,
+    color: tuple[int, int, int, int],
+    *,
+    small: bool,
+) -> None:
+    """小格子上加一圈描边，深底浅字 / 浅底深字都更易读。"""
+    if not small:
+        d.text((x, y), ch, font=font, fill=color)
+        return
+    cr, cg, cb = color[0], color[1], color[2]
+    lum = 0.2126 * cr + 0.7152 * cg + 0.0722 * cb
+    stroke = (0, 0, 0, 100) if lum > 150 else (255, 255, 255, 110)
+    for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        d.text((x + ox, y + oy), ch, font=font, fill=stroke)
+    d.text((x, y), ch, font=font, fill=color)
+
+
 def _paint_flap_cell(
     layer: Image.Image,
     x: int,
@@ -1771,26 +2356,42 @@ def _paint_flap_cell(
     digit_color: tuple[int, int, int, int],
     panel: tuple[int, int, int],
     hinge: tuple[int, int, int],
+    panel_alpha: int = 255,
 ) -> None:
     d = ImageDraw.Draw(layer)
-    d.rounded_rectangle((x, y, x + w - 1, y + h - 1), radius=max(2, h // 7), fill=(*panel, 255))
+    d.rounded_rectangle((x, y, x + w - 1, y + h - 1), radius=max(2, h // 7), fill=(*panel, panel_alpha))
     mid = y + h // 2
-    d.line((x + 2, mid, x + w - 3, mid), fill=(*hinge, 220), width=max(1, h // 18))
+    hinge_a = min(255, int(220 * panel_alpha / 255))
+    d.line((x + 2, mid, x + w - 3, mid), fill=(*hinge, hinge_a), width=max(1, h // 18))
     if progress is None or from_ch is None or from_ch == shown:
         cw, chh = _char_bbox(font, shown)
-        d.text((x + (w - cw) // 2, y + (h - chh) // 2), shown, font=font, fill=digit_color)
+        tx = x + (w - cw) // 2
+        ty = y + (h - chh) // 2
+        _draw_flip_digit(d, tx, ty, shown, font, digit_color, small=(h < 22))
         return
     p = max(0.0, min(1.0, progress))
     if p < 0.5:
         ang = p * math.pi
         sy = max(0.04, abs(math.cos(ang)))
-        _paint_flap_half(layer, x, y, w, h, from_ch, font, digit_color, panel, top=True, scale_y=sy)
-        _paint_flap_half(layer, x, y, w, h, from_ch, font, digit_color, panel, top=False, scale_y=1.0)
+        _paint_flap_half(
+            layer, x, y, w, h, from_ch, font, digit_color, panel,
+            top=True, scale_y=sy, panel_alpha=panel_alpha,
+        )
+        _paint_flap_half(
+            layer, x, y, w, h, from_ch, font, digit_color, panel,
+            top=False, scale_y=1.0, panel_alpha=panel_alpha,
+        )
     else:
         ang = p * math.pi
         sy = max(0.04, abs(math.cos(ang)))
-        _paint_flap_half(layer, x, y, w, h, shown, font, digit_color, panel, top=True, scale_y=1.0)
-        _paint_flap_half(layer, x, y, w, h, shown, font, digit_color, panel, top=False, scale_y=sy)
+        _paint_flap_half(
+            layer, x, y, w, h, shown, font, digit_color, panel,
+            top=True, scale_y=1.0, panel_alpha=panel_alpha,
+        )
+        _paint_flap_half(
+            layer, x, y, w, h, shown, font, digit_color, panel,
+            top=False, scale_y=sy, panel_alpha=panel_alpha,
+        )
 
 
 def paint_flip_row(
@@ -1808,12 +2409,28 @@ def paint_flip_row(
     stage: str = "run",
     light: bool = False,
     hit_rects: list[tuple[int, int, int, int, int]] | None = None,
+    overlay: bool = False,
+    skin_kind: str = "",
+    wallpaper_light: bool = False,
 ) -> None:
-    """翻牌数字行；anims[digit_idx]=(start, old, new)。"""
+    """翻牌数字行；anims[digit_idx]=(start, old, new)。overlay=True 时牌面半透明，叠在其它皮肤上。"""
     groups = _flip_groups(text)
-    panel, hinge, digit_rgb, unit_rgb = _flip_palette(stage, light=light)
-    digit_color = (*accent[:3], accent[3] if len(accent) > 3 else 255)
-    unit_color = (*unit_rgb, 235)
+    if overlay:
+        panel, hinge, panel_alpha = _flip_palette_overlay(stage, light=light, skin_kind=skin_kind)
+        _digit_rgb, unit_rgb = _flip_palette(stage, light=light)[2:4]
+    else:
+        panel, hinge, _digit_rgb, unit_rgb = _flip_palette(stage, light=light)
+        panel_alpha = 255
+    digit_color = flip_digit_color(
+        accent,
+        skin_kind=skin_kind,
+        wallpaper_light=wallpaper_light,
+        flip_light=light,
+        stage=stage,
+    )
+    digit_color = (*digit_color[:3], digit_color[3] if len(digit_color) > 3 else 255)
+    unit_a = int(200 * panel_alpha / 255) if overlay else 235
+    unit_color = (*digit_color[:3], unit_a)
     if not groups:
         d = ImageDraw.Draw(img)
         cw, chh = _char_bbox(font_fallback, text or "")
@@ -1829,7 +2446,7 @@ def paint_flip_row(
         d = ImageDraw.Draw(img)
         d.text((x, y), text, font=font_fallback, fill=digit_color)
         return
-    fs = max(10, int(cell_h * 0.62))
+    fs = max(11 if cell_h < 24 else 10, int(cell_h * 0.62))
     font = _flip_font(fs)
     unit_font = _flip_unit_font(unit_fs)
     d_probe = ImageDraw.Draw(img)
@@ -1870,6 +2487,7 @@ def paint_flip_row(
                 img, int(cx), cy, w, h, shown,
                 from_ch=from_ch, progress=prog,
                 font=font, digit_color=digit_color, panel=panel, hinge=hinge,
+                panel_alpha=panel_alpha,
             )
             if hit_rects is not None:
                 hit_rects.append((int(cx), cy, w, h, d_idx))

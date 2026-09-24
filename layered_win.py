@@ -85,6 +85,7 @@ ID_SKIN_SETTINGS = 14
 ID_CREATE_DESKTOP_SHORTCUT = 15
 ID_KEY_HIDE_SETTINGS = 16
 ID_UNINSTALL = 17
+ID_FLIP_DIGITS = 18
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -764,6 +765,7 @@ class LayeredPetWindow:
         key_hide_enabled: bool = False,
         key_hide_settings_label: str = "设置隐藏按键…",
         auto_start: bool = False,
+        flip_digits: bool = True,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
         if not hmenu:
@@ -813,6 +815,12 @@ class LayeredPetWindow:
             MF_STRING | (MF_CHECKED if auto_start else 0),
             ID_AUTO_START,
             "开机自启动",
+        )
+        user32.AppendMenuW(
+            hset,
+            MF_STRING | (MF_CHECKED if flip_digits else 0),
+            ID_FLIP_DIGITS,
+            "翻牌数字",
         )
         user32.AppendMenuW(hset, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hset, MF_STRING, ID_SKIN_SETTINGS, "皮肤设置…")
@@ -870,6 +878,8 @@ class LayeredPetWindow:
             return "key_hide_settings"
         if cmd == ID_AUTO_START:
             return "toggle_auto_start"
+        if cmd == ID_FLIP_DIGITS:
+            return "toggle_flip_digits"
         if cmd == ID_FMT_HMS:
             return "fmt_hms"
         if cmd == ID_FMT_MIN:

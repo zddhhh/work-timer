@@ -104,6 +104,7 @@ def load_config() -> dict:
         "pin_order": ["offwork"],
         "active_pin_id": "offwork",
         "auto_rotate_pins": False,
+        "flip_digits": True,
         "rotate_sec": 5,
         "last_run_version": "",
         "skin_settings": {"thunder": {"quote": ""}},

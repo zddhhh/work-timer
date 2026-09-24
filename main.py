@@ -831,6 +831,7 @@ class WorkTimer:
         self._flip_last_big = ""
         self._neon_ammo = ornaments.create_neon_ammo()
         self._neon_planets = ornaments.create_neon_planets()
+        self._sword_ammo = ornaments.create_sword_ammo()
         self._mouse_lx = -1
         self._mouse_ly = -1
         self._check_clock_on_boot()
@@ -1293,6 +1294,11 @@ class WorkTimer:
             return True
         return ornaments.neon_planets_animating(self._neon_planets, now)
 
+    def _sword_needs_frames(self, now: float) -> bool:
+        if any(p < 0.98 for p in self._sword_ammo.present):
+            return True
+        return bool(self._sword_ammo.shots)
+
     def _on_mouse_move(self, lx: int, ly: int) -> None:
         if self._esc_hidden or self._theme().kind != "neonflow":
             return
@@ -1301,9 +1307,19 @@ class WorkTimer:
             self._last_key = ""
 
     def _maybe_skin_interact(self, lx: int, ly: int) -> None:
-        """特效皮点击互动：霹雳狂潮落雷 / 墨水落墨 / 霓虹射击。"""
+        """特效皮点击互动：霹雳狂潮落雷 / 墨水落墨 / 霓虹射击 / 翻牌拨动。"""
         kind = self._theme().kind
         now = time.monotonic()
+        if themes.use_flip_display(kind, self._flip_last_big, self.cfg, h=self._win_h):
+            import fx
+
+            idx = fx.flip_digit_index_at(self._flip_hit_rects, int(lx), int(ly))
+            if idx is not None:
+                digits = fx.flip_digits_only(self._flip_last_big)
+                fx.flip_tap_digit(self._flip_anims, digits, idx, now)
+                self._last_key = ""
+                if kind not in themes.INTERACTIVE_SKINS:
+                    return
         if kind == "thunder":
             hits, nxt = ornaments.register_thunder_hit(
                 self._thunder_hits,
@@ -1318,13 +1334,19 @@ class WorkTimer:
                 self._thunder_quote_step = nxt
         elif kind == "inkpulse":
             self._ink_hits = ornaments.register_ink_hit(self._ink_hits, now, int(lx), int(ly))
-        elif kind == "flipclock":
-            import fx
-
-            idx = fx.flip_digit_index_at(self._flip_hit_rects, int(lx), int(ly))
-            if idx is not None:
-                digits = fx.flip_digits_only(self._flip_last_big)
-                fx.flip_tap_digit(self._flip_anims, digits, idx, now)
+        elif kind == "flysword":
+            rr = min(self._theme().radius, max(8, self._win_h // 5))
+            ornaments.sword_try_fire(
+                self._sword_ammo,
+                now,
+                float(lx - 4),
+                float(ly - 4),
+                bw=max(1, self._win_w - 9),
+                bh=max(1, self._win_h - 9),
+                radius=rr,
+                phase=now,
+                light=(self._surface == "light"),
+            )
         elif kind == "neonflow":
             rr = min(self._theme().radius, max(8, self._win_h // 5))
             ornaments.neon_try_fire(
@@ -2474,6 +2496,7 @@ class WorkTimer:
             key_hide_enabled=self._key_hide_on(),
             key_hide_settings_label=key_hide.menu_caption(self.cfg),
             auto_start=self._auto_start_on(),
+            flip_digits=themes.flip_digits_enabled(self.cfg),
         )
         if op == "quit":
             self.running = False
@@ -2492,6 +2515,10 @@ class WorkTimer:
             self._open_key_hide_dialog()
         elif op == "toggle_auto_start":
             self._set_auto_start(not self._auto_start_on())
+        elif op == "toggle_flip_digits":
+            self.cfg["flip_digits"] = not themes.flip_digits_enabled(self.cfg)
+            store.save_config(self.cfg)
+            self._last_key = ""
         elif op == "about":
             self._open_about()
         elif op == "skin_settings":
@@ -2832,9 +2859,9 @@ class WorkTimer:
                 if theme.kind == "thunder":
                     # 落雷那半秒要满帧，平时只有雨在下
                     fps = ornaments.thunder_fps(stage, phase)
-                elif theme.kind == "flipclock":
+                elif themes.use_flip_display(theme.kind, big, self.cfg, h=h):
                     fps = 60 if self._flip_anims else (14 if stage in ("idle", "done") else 20)
-                elif theme.kind in ("neonflow", "inkpulse"):
+                elif theme.kind in ("neonflow", "inkpulse", "flysword"):
                     fps = 30 if stage == "warn" else (16 if stage in ("idle", "done") else 28)
                 else:
                     period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
@@ -2851,7 +2878,7 @@ class WorkTimer:
             celebrating = phase < self._celebrate_until
             if celebrating:
                 key = f"{key}-c{int(phase * 30)}"
-            if theme.kind == "flipclock":
+            if themes.use_flip_display(theme.kind, big, self.cfg, h=h):
                 import fx
 
                 self._flip_prev_digits = fx.sync_flip_anims(
@@ -2866,6 +2893,9 @@ class WorkTimer:
             thunder_hits = self._thunder_hits
             ink_hits = self._ink_hits
             neon_sig = ""
+            sword_sig = ""
+            if theme.kind == "flysword":
+                sword_sig = ornaments.sword_ammo_signature(self._sword_ammo, phase)
             if theme.kind == "neonflow":
                 neon_sig = ornaments.neon_ammo_signature(self._neon_ammo, phase)
                 neon_sig = f"{neon_sig}|{ornaments.neon_planets_signature(self._neon_planets, phase)}"
@@ -2877,6 +2907,8 @@ class WorkTimer:
                 key = f"{key}-i{len(ink_hits)}-{sig}"
             if neon_sig:
                 key = f"{key}-n{neon_sig}"
+            if sword_sig:
+                key = f"{key}-s{sword_sig}"
             if theme.kind == "neonflow" and self._mouse_lx >= 0:
                 key = f"{key}-m{self._mouse_lx // 3}-{self._mouse_ly // 3}"
 
@@ -2915,9 +2947,12 @@ class WorkTimer:
                     neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
                     neon_now=phase,
                     neon_planets=self._neon_planets if theme.kind == "neonflow" else None,
-                    flip_anims=self._flip_anims if theme.kind == "flipclock" else None,
+                    sword_ammo=self._sword_ammo if theme.kind == "flysword" else None,
+                    sword_now=phase,
+                    flip_anims=self._flip_anims if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
                     flip_now=phase,
-                    flip_hit_rects=self._flip_hit_rects if theme.kind == "flipclock" else None,
+                    flip_hit_rects=self._flip_hit_rects if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
+                    flip_digits=themes.flip_digits_enabled(self.cfg),
                 )
                 kinetic.paint(
                     img,
@@ -2950,9 +2985,12 @@ class WorkTimer:
                     neon_ammo=self._neon_ammo if theme.kind == "neonflow" else None,
                     neon_now=phase,
                     neon_planets=self._neon_planets if theme.kind == "neonflow" else None,
-                    flip_anims=self._flip_anims if theme.kind == "flipclock" else None,
+                    sword_ammo=self._sword_ammo if theme.kind == "flysword" else None,
+                    sword_now=phase,
+                    flip_anims=self._flip_anims if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
                     flip_now=phase,
-                    flip_hit_rects=self._flip_hit_rects if theme.kind == "flipclock" else None,
+                    flip_hit_rects=self._flip_hit_rects if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
+                    flip_digits=themes.flip_digits_enabled(self.cfg),
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -2986,6 +3024,16 @@ class WorkTimer:
                     light=(surface == "light"),
                     radius=rr,
                     power=power,
+                )
+            if theme.kind == "flysword":
+                ornaments.paint_sword_overlay(
+                    img,
+                    box,
+                    ammo=self._sword_ammo,
+                    now=phase,
+                    stage=stage,
+                    light=(surface == "light"),
+                    radius=rr,
                 )
             if theme.kind == "neonflow":
                 mouse_xy = None
@@ -3123,10 +3171,17 @@ class WorkTimer:
                     or now < self._celebrate_until
                     or bool(self._thunder_hits)
                     or bool(self._ink_hits)
-                    or bool(self._flip_anims)
+                    or (
+                        themes.flip_digits_enabled(self.cfg)
+                        and bool(self._flip_anims)
+                    )
                     or (
                         self._theme().kind == "neonflow"
                         and (self._mouse_lx >= 0 or self._neon_needs_frames(now))
+                    )
+                    or (
+                        self._theme().kind == "flysword"
+                        and self._sword_needs_frames(now)
                     )
                 ):
                     time.sleep(1.0 / FPS)
