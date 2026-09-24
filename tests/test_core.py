@@ -284,6 +284,15 @@ class FeedbackTests(unittest.TestCase):
 
 
 class ScheduleFieldTests(unittest.TestCase):
+    def test_schedule_countdown_title(self):
+        self.assertEqual(schedules.schedule_countdown_title("中秋"), "距离中秋还有")
+        self.assertEqual(schedules.schedule_countdown_title("国庆"), "距离国庆还有")
+        self.assertEqual(schedules.schedule_countdown_title("中秋", done=True), "中秋 · 到点")
+        self.assertEqual(
+            schedules.schedule_countdown_title("距离年假还有"),
+            "距离年假还有",
+        )
+
     def test_invalid_clock_not_done(self):
         bad = {"kind": "clock", "hm": [99, 0], "date": "2026-09-18"}
         self.assertEqual(schedules.schedule_remaining(bad, datetime(2026, 9, 18)), (0, False))
@@ -428,7 +437,6 @@ class FxTests(unittest.TestCase):
                 fx.paint_neonflow(layer, ph, stage=st, radius=14)
                 fx.paint_inkpulse(layer, ph, stage=st, radius=14)
                 fx.paint_flipclock(layer, ph, stage=st, radius=12)
-                fx.paint_flysword(layer, ph, stage=st, radius=14)
         anims: dict[int, tuple[float, str, str]] = {2: (0.0, "4", "5")}
         fx.paint_flip_row(
             layer, 10, 28, 220, 34, "128时30分45秒", anims, 0.18, fx._flip_font(20),
@@ -438,11 +446,9 @@ class FxTests(unittest.TestCase):
         self.assertTrue(ornaments.has_skin("neonflow"))
         self.assertTrue(ornaments.has_skin("inkpulse"))
         self.assertTrue(ornaments.has_skin("flipclock"))
-        self.assertTrue(ornaments.has_skin("flysword"))
         self.assertTrue(ornaments.is_animated("inkpulse"))
         self.assertTrue(ornaments.is_animated("flipclock"))
         self.assertIn("flipclock", [t.id for t in themes.menu_sections()["fancy"]])
-        self.assertIn("flysword", [t.id for t in themes.menu_sections()["fancy"]])
         prev = fx.sync_flip_anims({}, "", "1时00分00秒", 1.0)
         anims2: dict[int, tuple[float, str, str]] = {}
         fx.sync_flip_anims(anims2, prev, "1时00分01秒", 1.0)
@@ -716,14 +722,18 @@ class FxTests(unittest.TestCase):
         self.assertTrue(all(len(t.name) >= 3 for t in secs["fancy"]))
 
     def test_flip_digits_global(self):
-        cfg = {"flip_digits": True}
-        self.assertTrue(themes.use_flip_display("ghost", "1时30分", cfg))
-        self.assertFalse(themes.use_flip_display("ghost", "点我开始", cfg))
-        self.assertTrue(themes.use_flip_display("flipclock", "1时30分", {"flip_digits": False}))
-        cfg_off = {"flip_digits": False}
-        self.assertFalse(themes.use_flip_display("neon", "1时30分", cfg_off))
-        self.assertFalse(themes.use_flip_display("ghost", "1时30分", cfg, h=48))
+        self.assertTrue(themes.use_flip_display("ghost", "1时30分"))
+        self.assertFalse(themes.use_flip_display("ghost", "点我开始"))
+        self.assertTrue(themes.use_flip_display("neon", "11566秒", h=48))
         self.assertIn("neonflow", themes.INTERACTIVE_SKINS)
+
+    def test_flip_row_larger_than_before(self):
+        import fx
+
+        font = fx._flip_font(14)
+        title_h = fx._font_line_height(font, "距离下班")
+        _, _, _, _, row_h = fx.flip_row_layout(248, 92, title_h=title_h, has_sub=False)
+        self.assertGreaterEqual(row_h, 36)
 
     def test_flip_layout_keeps_title_clear(self):
         import fx
@@ -738,16 +748,35 @@ class FxTests(unittest.TestCase):
     def test_flip_overlay_transparency(self):
         import fx
 
-        self.assertLessEqual(fx.FLIP_OVERLAY_ALPHA, 130)
+        self.assertGreaterEqual(fx.FLIP_OVERLAY_ALPHA, 130)
         layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
         fx.paint_flip_row(
-            layer, 10, 30, 220, 28, "1时30分45秒", {}, 0.0,
-            fx._flip_font(16), (240, 250, 255, 252), overlay=True,
+            layer, 10, 30, 220, 40, "1时30分45秒", {}, 0.0,
+            fx._flip_font(16), (240, 250, 255, 252),
+            overlay=True, bare_digits=False,
         )
-        # 牌面区应明显透底：中心采样 alpha 不应接近不透明
-        cx, cy = 124, 44
-        a = layer.getpixel((cx, cy))[3]
-        self.assertLess(a, 200)
+        # 叠层牌面应比旧版更实，但仍能透底（数字描边可以很实，牌面区应有半透明像素）
+        band = layer.crop((10, 30, 230, 70))
+        alphas = [p[3] for p in band.getdata()]
+        self.assertGreater(max(alphas), 40)
+        translucent = [a for a in alphas if 30 < a < 220]
+        self.assertTrue(translucent)
+
+    def test_flip_bare_digits_no_panel_blocks(self):
+        import fx
+
+        layer = Image.new("RGBA", (248, 92), (120, 130, 140, 255))
+        fx.paint_flip_row(
+            layer, 10, 30, 220, 40, "1时30分45秒", {}, 0.0,
+            fx._flip_font(16), (24, 28, 38, 255), bare_digits=True,
+        )
+        band = layer.crop((10, 30, 230, 70))
+        # 纯数字翻动：不应有大片深色牌面底块
+        dark_panel = sum(
+            1 for p in band.getdata()
+            if p[3] > 180 and sum(p[:3]) < 90
+        )
+        self.assertLess(dark_panel, 40)
 
     def test_paint_card_flip_all_themes_sizes(self):
         import fx
@@ -756,7 +785,7 @@ class FxTests(unittest.TestCase):
         title = "距离下班"
         for th in themes.list_themes():
             for w, h in ((148, 55), (200, 72), (248, 92), (360, 120)):
-                if not themes.use_flip_display(th.kind, big, {"flip_digits": True}, h=h):
+                if not themes.use_flip_display(th.kind, big, h=h):
                     continue
                 img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                 font_t, font_b, font_s = ornaments.layout_for(w, h)
@@ -770,7 +799,6 @@ class FxTests(unittest.TestCase):
                     flip_anims={},
                     flip_now=0.0,
                     flip_hit_rects=[],
-                    flip_digits=True,
                 )
                 self.assertEqual(img.size, (w, h))
                 title_y, _p, row_y, _rw, row_h = fx.flip_row_layout(
@@ -783,14 +811,16 @@ class FxTests(unittest.TestCase):
     def test_inkpulse_flip_digit_contrast(self):
         import fx
 
-        dark = fx.flip_digit_color(
-            (24, 20, 18, 252), skin_kind="inkpulse", wallpaper_light=False, stage="run",
-        )
-        light = fx.flip_digit_color(
-            (24, 20, 18, 252), skin_kind="inkpulse", wallpaper_light=True, stage="run",
-        )
-        self.assertGreater(dark[0] + dark[1] + dark[2], 600)
-        self.assertLess(light[0] + light[1] + light[2], 120)
+        # 宣纸底恒浅，深浅墙纸都应出深墨字
+        for wallpaper_light in (False, True):
+            c = fx.flip_digit_color(
+                (252, 248, 238, 255),
+                skin_kind="inkpulse",
+                wallpaper_light=wallpaper_light,
+                card_light=True,
+                stage="run",
+            )
+            self.assertLess(c[0] + c[1] + c[2], 120, msg=wallpaper_light)
 
     def test_flip_digit_dark_on_light_wallpaper(self):
         import fx
@@ -807,6 +837,22 @@ class FxTests(unittest.TestCase):
             lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
             self.assertLess(lum, 130, msg=kind)
 
+    def test_flip_unit_not_fainter_than_digits(self):
+        import fx
+
+        digit = fx.flip_digit_color(
+            (255, 252, 255, 200),
+            skin_kind="frost",
+            wallpaper_light=True,
+            flip_light=True,
+            stage="run",
+        )
+        unit = fx.flip_unit_color(
+            digit, paper_light=True, overlay=True, stage="run",
+        )
+        self.assertGreaterEqual(unit[3], 252)
+        self.assertLess(0.2126 * unit[0] + 0.7152 * unit[1] + 0.0722 * unit[2], 120)
+
     def test_neon_click_not_on_flip_digit(self):
         import fx
 
@@ -814,22 +860,50 @@ class FxTests(unittest.TestCase):
         self.assertIsNone(fx.flip_digit_index_at(rects, 120, 46))
         self.assertEqual(fx.flip_digit_index_at(rects, 50, 40), 0)
 
-    def test_flysword_fire_and_replenish(self):
+    def test_flysword_removed(self):
+        self.assertEqual(themes.normalize_id("flysword"), themes.DEFAULT_THEME_ID)
+        self.assertNotIn("flysword", [t.id for t in themes.list_themes()])
+
+    def test_thunder_light_palette_soft_cloud(self):
         import fx
 
-        ammo = fx.create_sword_ammo()
-        t0 = 100.0
-        ok = fx.sword_try_fire(
-            ammo, t0, 120.0, 46.0, bw=248, bh=92, radius=14, phase=t0, stage="run",
-        )
-        self.assertTrue(ok)
-        self.assertEqual(len(ammo.shots), 1)
-        slot = ammo.shots[0][1]
-        self.assertLess(ammo.present[slot], 0.05)
-        layer = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
-        fx.paint_sword_active_shots(layer, ammo, t0 + 0.12, stage="run")
-        fx.sword_tick(ammo, t0 + fx.SWORD_FIRE_SEC + fx.SWORD_REPLENISH_SEC * 0.5)
-        self.assertGreater(ammo.present[slot], 0.2)
+        _arc, cloud, _p, _g = fx._thunder_palette("run", light=True)
+        self.assertGreater(sum(cloud), 360)
+
+    def test_skin_adapt_context_card_light(self):
+        th = themes.get_theme("midautumn")
+        light = themes.skin_adapt_context(themes.resolve_for_surface(th, "light"), "light")
+        dark = themes.skin_adapt_context(themes.resolve_for_surface(th, "dark"), "dark")
+        self.assertTrue(light.wallpaper_light)
+        self.assertFalse(light.card_light)
+        self.assertFalse(dark.card_light)
+
+        thunder = themes.get_theme("thunder")
+        t_light = themes.skin_adapt_context(themes.resolve_for_surface(thunder, "light"), "light")
+        self.assertTrue(t_light.card_light)
+
+    def test_adapt_text_on_light_card(self):
+        th = themes.get_theme("thunder")
+        theme = themes.resolve_for_surface(th, "light")
+        ctx = themes.skin_adapt_context(theme, "light")
+        c = themes.adapt_text_color(theme.title, ctx, kind=theme.kind, stage="run")
+        self.assertLess(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2], 130)
+
+    def test_inkpulse_dark_wallpaper_keeps_dark_ink(self):
+        th = themes.get_theme("inkpulse")
+        theme = themes.resolve_for_surface(th, "dark")
+        ctx = themes.skin_adapt_context(theme, "dark")
+        self.assertTrue(ctx.card_light)
+        c = themes.adapt_text_color(theme.title, ctx, kind="inkpulse", stage="run")
+        self.assertLess(c[0] + c[1] + c[2], 120)
+
+    def test_flip_row_capped_on_tall_window(self):
+        import fx
+
+        font = fx._flip_font(14)
+        title_h = fx._font_line_height(font, "距离下班")
+        _, _, _, _, row_h = fx.flip_row_layout(400, 140, title_h=title_h, has_sub=False)
+        self.assertLessEqual(row_h, 56)
 
     def test_perimeter_closed(self):
         import fx

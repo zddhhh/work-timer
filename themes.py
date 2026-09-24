@@ -21,36 +21,20 @@ import store
 DEFAULT_THEME_ID = "ghost"
 
 
-def flip_digits_enabled(cfg: dict | None) -> bool:
-    """全局翻牌数字开关（默认开）。"""
-    if not cfg:
-        return True
-    return bool(cfg.get("flip_digits", True))
+def use_flip_display(kind: str, big: str, cfg: dict | None = None, *, h: int = 92) -> bool:
+    """含数字的剩余时间一律翻牌渲染（「点我开始」等纯文案仍走大字）。cfg/h 保留兼容旧调用。"""
+    return bool(big) and fx._flip_text_has_digits(big)
 
 
-def use_flip_display(kind: str, big: str, cfg: dict | None, *, h: int = 92) -> bool:
-    """是否用翻牌渲染大数字（翻牌时钟皮恒为翻牌；其它皮看设置与窗口高度）。"""
-    if not big or not fx._flip_text_has_digits(big):
-        return False
-    if kind == "flipclock":
-        return True
-    if not flip_digits_enabled(cfg):
-        return False
-    # 窗口太矮时叠层翻牌易挡标题，回落普通大字
-    if h < fx.MIN_FLIP_H:
-        return False
-    return True
-
-
-INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow", "flysword"})
+INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow"})
 _KINDS = frozenset(
     {
         "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", "flysword",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
     }
 )
 # 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
-_REMOVED_IDS = frozenset({"auto", "sky", "blink"})
+_REMOVED_IDS = frozenset({"auto", "sky", "blink", "flysword"})
 
 
 def normalize_id(theme_id: object) -> str:
@@ -93,6 +77,102 @@ def _rgba(v, fallback: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
 def _luma(c: tuple[int, int, int, int]) -> float:
     r, g, b, _a = c
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+_WALLPAPER_KINDS = frozenset({"midautumn", "nationalday", "thunder", "inkpulse"})
+_CARD_LIGHT_LUMA = 152.0
+
+
+@dataclass(frozen=True)
+class SkinAdaptContext:
+    """墙纸自适应上下文：区分「墙纸明暗」「特效浅化」「卡片实际底色」。"""
+
+    surface: str
+    wallpaper_light: bool
+    skin_light: bool
+    card_light: bool
+    fx_light: bool
+
+
+def _skin_base_rgba(
+    kind: str,
+    *,
+    wallpaper_light: bool,
+    skin_light: bool,
+) -> tuple[int, int, int, int] | None:
+    if not ornaments.has_skin(kind):
+        return None
+    if kind == "neon":
+        return (236, 252, 250, 170) if skin_light else (6, 10, 16, 72)
+    if kind == "terminal":
+        return (232, 244, 236, 150) if skin_light else (4, 10, 6, 68)
+    if kind == "aurora":
+        return (242, 240, 252, 145) if skin_light else (10, 10, 22, 60)
+    if kind == "frost":
+        return (248, 250, 252, 110) if skin_light else (18, 22, 30, 48)
+    if kind == "inkgold":
+        return (250, 244, 230, 120) if skin_light else (14, 10, 8, 55)
+    if kind == "warmglow":
+        return (255, 236, 214, 175) if skin_light else (32, 18, 12, 95)
+    if kind == "midautumn":
+        return (8, 10, 34, 155) if skin_light else (8, 10, 32, 55)
+    if kind == "nationalday":
+        return (56, 8, 12, 140) if skin_light else (40, 6, 10, 50)
+    if kind == "neonflow":
+        return (244, 250, 255, 165) if skin_light else (6, 8, 14, 135)
+    if kind == "inkpulse":
+        return (252, 246, 232, 232) if wallpaper_light else (250, 242, 222, 214)
+    if kind == "flipclock":
+        return (24, 26, 32, 200) if skin_light else (16, 18, 24, 178)
+    if kind == "thunder":
+        return (238, 244, 254, 168) if skin_light else (8, 9, 18, 132)
+    if kind == "glass":
+        return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
+    return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
+
+
+def skin_adapt_context(theme: Theme, surface: str) -> SkinAdaptContext:
+    """统一计算墙纸自适应：文字对比看 card_light，特效参数看 skin_light / fx_light。"""
+    kind = theme.kind
+    wallpaper_light = surface == "light"
+    if kind in _WALLPAPER_KINDS:
+        skin_light = wallpaper_light
+    else:
+        skin_light = _luma(theme.fill) >= _CARD_LIGHT_LUMA
+    base = _skin_base_rgba(kind, wallpaper_light=wallpaper_light, skin_light=skin_light)
+    if kind == "inkpulse":
+        card_light = True
+    elif base is not None:
+        card_light = _luma(base) >= _CARD_LIGHT_LUMA
+    elif kind == "ghost":
+        card_light = wallpaper_light
+    else:
+        card_light = _luma(theme.fill) >= _CARD_LIGHT_LUMA
+    fx_light = wallpaper_light if kind == "inkpulse" else skin_light
+    return SkinAdaptContext(
+        surface=surface,
+        wallpaper_light=wallpaper_light,
+        skin_light=skin_light,
+        card_light=card_light,
+        fx_light=fx_light,
+    )
+
+
+def adapt_text_color(
+    color: tuple[int, int, int, int],
+    ctx: SkinAdaptContext,
+    *,
+    kind: str,
+    stage: str,
+    card_light: bool | None = None,
+) -> tuple[int, int, int, int]:
+    return fx.contrast_text_color(
+        color,
+        skin_kind=kind,
+        wallpaper_light=ctx.wallpaper_light,
+        card_light=card_light if card_light is not None else ctx.card_light,
+        stage=stage,
+    )
 
 
 def _parse_theme(raw: object) -> Theme | None:
@@ -344,7 +424,7 @@ def consume_updated() -> bool:
 _PREFER_BUNDLED = frozenset(
     {
         "ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", "flysword",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
     }
 )
 
@@ -438,6 +518,13 @@ def refresh_async(cfg: dict) -> None:
     threading.Thread(target=_run, daemon=True, name="theme-refresh").start()
 
 
+def _centered_text_x(d: ImageDraw.ImageDraw, text: str, font, width: int) -> int:
+    if not text:
+        return 0
+    tw = d.textlength(text, font=font)
+    return max(0, int((width - tw) // 2))
+
+
 def _halo_text(
     d: ImageDraw.ImageDraw,
     xy: tuple[int, int],
@@ -492,93 +579,69 @@ def paint_card(
     neon_ammo=None,
     neon_now: float = 0.0,
     neon_planets=None,
-    sword_ammo=None,
-    sword_now: float = 0.0,
     flip_anims: dict[int, tuple[float, str, str]] | None = None,
     flip_now: float = 0.0,
     flip_hit_rects: list[tuple[int, int, int, int, int]] | None = None,
-    flip_digits: bool = True,
 ) -> None:
     d = ImageDraw.Draw(img)
     kind = theme.kind
     compact_chrome = h < 72 or w < 200
+    large_chrome = h >= 104 or w >= 320
     if compact_chrome:
         box = (2, 2, w - 3, h - 3)
         r = min(theme.radius, max(4, h // 8))
+    elif large_chrome:
+        box = (3, 3, w - 4, h - 4)
+        r = min(theme.radius, max(10, h // 7))
     else:
         box = (4, 4, w - 5, h - 5)
         r = min(theme.radius, max(8, h // 5))
     pad_x = max(10, min(22, w // 12))
-    title_y = max(6, h // 10)
+    title_y = max(8, int(h * 0.11))
     big_y = int(h * (0.42 if sub else 0.38))
     title_h = fx._font_line_height(font_title, title or "距")
     now = time.monotonic()
     pulse = 0.84 + 0.16 * math.sin(now * (1.15 if stage == "done" else (0.85 if stage == "warn" else 0.5)))
 
+    ctx = skin_adapt_context(theme, surface)
+    title_fill = adapt_text_color(theme.title, ctx, kind=kind, stage=stage)
+    sub_fill = adapt_text_color(theme.sub, ctx, kind=kind, stage=stage)
+    accent_fill = adapt_text_color(accent, ctx, kind=kind, stage=stage)
+
     if kind != "ghost":
-        light_card = _luma(theme.fill) >= 160
-        wallpaper_light = surface == "light"
-        # 夜景/红绸按墙纸加浓；玻璃/霓虹等按配色亮度走浅色处理
-        if kind in ("midautumn", "nationalday", "thunder"):
-            skin_light = wallpaper_light
-        else:
-            skin_light = light_card
-        if ornaments.has_skin(kind):
-            if kind == "neon":
-                base = (236, 252, 250, 170) if skin_light else (6, 10, 16, 72)
-            elif kind == "terminal":
-                base = (232, 244, 236, 150) if skin_light else (4, 10, 6, 68)
-            elif kind == "aurora":
-                base = (242, 240, 252, 145) if skin_light else (10, 10, 22, 60)
-            elif kind == "frost":
-                base = (248, 250, 252, 110) if skin_light else (18, 22, 30, 48)
-            elif kind == "inkgold":
-                base = (250, 244, 230, 120) if skin_light else (14, 10, 8, 55)
-            elif kind == "warmglow":
-                base = (255, 236, 214, 175) if skin_light else (32, 18, 12, 95)
-            elif kind == "midautumn":
-                base = (8, 10, 34, 155) if skin_light else (8, 10, 32, 55)
-            elif kind == "nationalday":
-                base = (56, 8, 12, 140) if skin_light else (40, 6, 10, 50)
-            elif kind == "neonflow":
-                base = (244, 250, 255, 165) if skin_light else (6, 8, 14, 135)
-            elif kind == "inkpulse":
-                # 宣纸永远浅底深墨。透太狠纸就发灰，山水立刻变脏
-                base = (252, 246, 232, 232) if wallpaper_light else (250, 242, 222, 214)
-            elif kind == "flipclock":
-                base = (24, 26, 32, 200) if skin_light else (16, 18, 24, 178)
-            elif kind == "flysword":
-                base = (12, 16, 28, 168) if skin_light else (6, 8, 16, 142)
-            elif kind == "thunder":
-                # 雷云得压在暗底上电弧才亮；浅墙纸下托底加厚，不然闪电糊成一团白
-                base = (14, 16, 30, 178) if skin_light else (8, 9, 18, 132)
-            else:  # glass
-                base = (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
+        base = _skin_base_rgba(
+            kind,
+            wallpaper_light=ctx.wallpaper_light,
+            skin_light=ctx.skin_light,
+        )
+        if base is not None:
             d.rounded_rectangle(box, radius=r, fill=base)
             ornaments.paste_skin(
                 img,
                 box,
                 kind,
-                light=wallpaper_light if kind == "inkpulse" else skin_light,
+                light=ctx.fx_light,
                 stage=stage,
                 env_rgb=env_rgb,
                 radius=r,
                 neon_ammo=neon_ammo if kind == "neonflow" else None,
                 neon_now=neon_now,
                 neon_planets=neon_planets if kind == "neonflow" else None,
-                sword_ammo=sword_ammo if kind == "flysword" else None,
-                sword_now=sword_now,
             )
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
                 if compact_chrome:
                     oa = min(oa, 10)
+                elif large_chrome:
+                    oa = min(oa, 14)
                 d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
             if not compact_chrome:
                 inset = 2
                 ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
-                pale_rim = skin_light and kind not in ("midautumn", "nationalday")
+                pale_rim = ctx.card_light and kind not in ("midautumn", "nationalday", "thunder")
                 rim_a = int((18 if pale_rim else 22) * pulse)
+                if large_chrome:
+                    rim_a = int(rim_a * 0.5)
                 if stage == "done":
                     rim_a = int(rim_a * 1.35)
                 d.rounded_rectangle(
@@ -597,14 +660,13 @@ def paint_card(
                         anchor_x=float(gx),
                         anchor_y=float(gy),
                         stage=stage,
-                        light=wallpaper_light,
+                        light=ctx.wallpaper_light,
                         quote=thunder_quote,
                     )
         else:
             d.rounded_rectangle((8, 10, w - 3, h - 2), radius=r + 1, fill=(0, 0, 0, 40))
-            # 按填充明暗铺一层实底，避免半透明把字洗掉；深浅皮各自适配
             if theme.fill[3] < 230:
-                if light_card:
+                if ctx.card_light:
                     d.rounded_rectangle(box, radius=r, fill=(252, 253, 255, 235))
                 else:
                     d.rounded_rectangle(box, radius=r, fill=(10, 12, 18, 235))
@@ -615,36 +677,14 @@ def paint_card(
 
     ghost = kind == "ghost"
     compact_text = h < 72
-    show_flip = use_flip_display(kind, big, {"flip_digits": flip_digits}, h=h)
-    if not show_flip and kind == "neonflow" and big:
-        # 霓虹泛光：先把大数字按主色模糊一层垫在下面
-        bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 170))
-        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.5, h / 28))))
-        d = ImageDraw.Draw(img)
-    elif not show_flip and kind == "inkpulse" and big:
-        # 字本身像写在纸上洇开，不要霓虹光晕
-        ink = (32, 28, 24, 80)
-        bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=ink)
-        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(1.6, h / 42))))
-        d = ImageDraw.Draw(img)
-    elif not show_flip and kind == "flysword" and big:
-        bloom = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(bloom).text((pad_x, big_y), big, font=font_big, fill=(*accent[:3], 150))
-        img.alpha_composite(bloom.filter(ImageFilter.GaussianBlur(radius=max(2.0, h / 32))))
-        d = ImageDraw.Draw(img)
+    show_flip = use_flip_display(kind, big, h=h)
     if show_flip:
-        flip_light = (
-            surface == "light"
-            if kind in ("midautumn", "nationalday", "thunder", "inkpulse")
-            else _luma(theme.fill) >= 160
-        )
         title_y, flip_pad, row_y, row_w, row_h = fx.flip_row_layout(
             w, h, title_h=title_h, has_sub=bool(sub),
         )
+    title_x = _centered_text_x(d, title, font_title, w)
     _halo_text(
-        d, (pad_x, title_y), title, font_title, theme.title,
+        d, (title_x, title_y), title, font_title, title_fill,
         ghost=ghost, compact=compact_text,
     )
     if show_flip:
@@ -658,22 +698,22 @@ def paint_card(
             flip_anims or {},
             flip_now,
             font_big,
-            accent,
+            accent_fill,
             stage=stage,
-            light=flip_light,
+            light=ctx.card_light,
             hit_rects=flip_hit_rects,
-            overlay=(kind != "flipclock"),
+            bare_digits=(kind != "flipclock"),
             skin_kind=kind,
-            wallpaper_light=(surface == "light"),
+            wallpaper_light=ctx.wallpaper_light,
         )
-    else:
+    elif big:
         _halo_text(
-            d, (pad_x, big_y), big, font_big, accent,
+            d, (pad_x, big_y), big, font_big, accent_fill,
             ghost=ghost, glow=(stage == "done" and not compact_text), compact=compact_text,
         )
     if sub:
         _halo_text(
-            d, (pad_x, int(h * 0.78)), sub, font_sub, theme.sub,
+            d, (pad_x, int(h * 0.78)), sub, font_sub, sub_fill,
             ghost=ghost, compact=compact_text,
         )
 

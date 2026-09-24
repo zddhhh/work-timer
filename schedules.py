@@ -156,6 +156,16 @@ def format_schedule_when(item: dict) -> str:
     return ""
 
 
+def schedule_countdown_title(name: str, *, done: bool = False) -> str:
+    """主窗卡片标题：根据日程短名生成「距离XX还有」（列表仍显示短名）。"""
+    raw = (name or "日程").strip() or "日程"
+    if done:
+        return f"{raw} · 到点"
+    if raw.startswith("距离") and raw.endswith("还有"):
+        return raw
+    return f"距离{raw}还有"
+
+
 def new_clock(title: str, h: int, m: int, *, date: str | None = None) -> dict[str, Any]:
     day = date or datetime.now().strftime("%Y-%m-%d")
     return {
