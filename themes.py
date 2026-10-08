@@ -707,8 +707,9 @@ def paint_card(
             wallpaper_light=ctx.wallpaper_light,
         )
     elif big:
+        big_x = _centered_text_x(d, big, font_big, w)
         _halo_text(
-            d, (pad_x, big_y), big, font_big, accent_fill,
+            d, (big_x, big_y), big, font_big, accent_fill,
             ghost=ghost, glow=(stage == "done" and not compact_text), compact=compact_text,
         )
     if sub:
