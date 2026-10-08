@@ -21,6 +21,7 @@ import ornaments  # noqa: E402
 import schedules  # noqa: E402
 import themes  # noqa: E402
 import updater  # noqa: E402
+import worklog  # noqa: E402
 from PIL import Image  # noqa: E402
 
 
@@ -1011,6 +1012,118 @@ class FlexTimeTests(unittest.TestCase):
             ),
             "direct",
         )
+
+
+class WorklogTests(unittest.TestCase):
+    D = datetime(2026, 10, 8)  # 周四
+    LATER = datetime(2026, 10, 20).date()
+
+    def at(self, h, m):
+        return self.D.replace(hour=h, minute=m)
+
+    def test_live_today_has_no_diff_and_skips_summary(self):
+        cfg = {}
+        worklog.record_arrival(cfg, self.at(8, 40), (8, 40))
+        worklog.heartbeat(cfg, self.at(14, 0), active=True, target_hm=(18, 10))
+        live = worklog.row(cfg, self.D.date(), today=self.D.date())
+        self.assertTrue(live["live"])
+        self.assertIsNone(live["diff"])
+        self.assertEqual(live["dur"], 320)
+        self.assertEqual(worklog.summarize([live])["days"], 0)
+        done = worklog.row(cfg, self.D.date(), today=self.LATER)
+        self.assertFalse(done["live"])
+        self.assertEqual(done["diff"], -250)
+
+    def test_flex_arrival_then_heartbeat_extends_out(self):
+        cfg = {}
+        worklog.heartbeat(cfg, self.at(8, 20), active=True, target_hm=None)
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["src"], "seen")
+        worklog.record_arrival(cfg, self.at(8, 40), (8, 40))
+        worklog.heartbeat(cfg, self.at(12, 0), active=True, target_hm=(18, 10))
+        worklog.heartbeat(cfg, self.at(18, 35), active=True, target_hm=(18, 10))
+        self.assertFalse(worklog.heartbeat(cfg, self.at(18, 50), active=False, target_hm=(18, 10)))
+        r = worklog.row(cfg, self.D.date(), today=self.LATER)
+        self.assertEqual((r["in"], r["out"], r["target"]), (520, 1115, 1090))
+        self.assertEqual(r["dur"], 595)
+        self.assertEqual(r["diff"], 25)
+        self.assertEqual(r["src"], "flex")
+
+    def test_lunch_gap_does_not_close_but_evening_gap_does(self):
+        cfg = {}
+        tgt = (18, 0)
+        worklog.heartbeat(cfg, self.at(9, 0), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(11, 30), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(13, 40), active=True, target_hm=tgt)
+        self.assertEqual(worklog.row(cfg, self.D.date())["out"], 13 * 60 + 40)
+        worklog.heartbeat(cfg, self.at(18, 20), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(21, 0), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(21, 5), active=True, target_hm=tgt)
+        r = worklog.row(cfg, self.D.date())
+        self.assertEqual(r["out"], 18 * 60 + 20)
+        self.assertTrue(r["closed"])
+
+    def test_long_afternoon_meeting_keeps_counting(self):
+        cfg = {}
+        tgt = (18, 0)
+        for hm in ((9, 0), (15, 0), (18, 40), (19, 10)):
+            worklog.heartbeat(cfg, self.at(*hm), active=True, target_hm=tgt)
+        r = worklog.row(cfg, self.D.date())
+        self.assertEqual(r["out"], 19 * 60 + 10)
+        self.assertFalse(r["closed"])
+
+    def test_left_early_then_home_use_is_ignored(self):
+        cfg = {}
+        tgt = (18, 0)
+        worklog.heartbeat(cfg, self.at(9, 0), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(17, 0), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(20, 30), active=True, target_hm=tgt)
+        self.assertEqual(worklog.row(cfg, self.D.date())["out"], 17 * 60)
+
+    def test_manual_edit_wins_and_blank_deletes(self):
+        cfg = {}
+        worklog.heartbeat(cfg, self.at(9, 0), active=True, target_hm=(18, 30))
+        self.assertIsNone(worklog.set_manual(cfg, self.D.date(), "8.50", "19:05"))
+        worklog.heartbeat(cfg, self.at(19, 30), active=True, target_hm=(18, 30))
+        r = worklog.row(cfg, self.D.date())
+        self.assertEqual((r["in"], r["out"]), (530, 1145))
+        self.assertTrue(r["manual"])
+        self.assertIn("早于", worklog.set_manual(cfg, self.D.date(), "19:00", "9:00"))
+        self.assertIn("看不懂", worklog.set_manual(cfg, self.D.date(), "abc", ""))
+        self.assertIsNone(worklog.set_manual(cfg, self.D.date(), "", ""))
+        self.assertIsNone(worklog.get_day(cfg, self.D.date()))
+
+    def test_should_track_skips_weekend_unless_set_today(self):
+        sat = datetime(2026, 10, 10, 10, 0)
+        self.assertFalse(worklog.should_track(sat, has_target=True, set_today=False))
+        self.assertTrue(worklog.should_track(sat, has_target=True, set_today=True))
+        self.assertTrue(worklog.should_track(self.at(10, 0), has_target=True, set_today=False))
+        self.assertFalse(worklog.should_track(self.at(10, 0), has_target=False, set_today=True))
+
+    def test_summary_and_csv(self):
+        cfg = {}
+        worklog.set_manual(cfg, self.D.date(), "9:00", "18:30")
+        cfg["worklog"]["2026-10-08"]["target"] = 18 * 60
+        worklog.set_manual(cfg, datetime(2026, 10, 9).date(), "8:30", "18:00")
+        rows = [worklog.row(cfg, d, today=self.LATER) for d in worklog.week_dates(self.D.date())]
+        s = worklog.summarize(rows)
+        self.assertEqual((s["days"], s["total"], s["avg"], s["diff"]), (2, 1140, 570, 30))
+        self.assertIn("共 19:00", worklog.summary_text("本周", s))
+        csv_text = worklog.to_csv(cfg, worklog.month_dates(2026, 10))
+        lines = csv_text.strip().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertIn("2026-10-08,周四,9:00,18:30,9:30,18:00,30,手改", lines[1])
+
+    def test_ensure_fields_prunes_garbage_and_old(self):
+        cfg = {
+            "worklog": {
+                "2026-10-08": {"in": 540, "out": 99999, "src": "flex"},
+                "2024-01-01": {"in": 540},
+                "bad": {"in": 1},
+                "2026-10-07": "x",
+            }
+        }
+        worklog.ensure_fields(cfg, today=self.D.date())
+        self.assertEqual(cfg["worklog"], {"2026-10-08": {"in": 540, "src": "flex"}})
 
 
 if __name__ == "__main__":

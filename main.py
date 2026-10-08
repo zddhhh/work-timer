@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -35,6 +35,7 @@ import themes
 import uninstall
 import updater
 import win_drop
+import worklog
 from version import APP_VERSION
 
 FPS = 60
@@ -376,7 +377,22 @@ def _new_attach_state(existing: object = None) -> dict:
 
 
 def _pick_image_files(dlg: tk.Toplevel) -> tuple[str, ...]:
-    """系统选文件框不能被无边框置顶卡片挡住；但只关当前卡片的置顶时，底下列表仍置顶会把卡片盖没。"""
+    def ask() -> tuple[str, ...]:
+        paths = filedialog.askopenfilenames(
+            parent=dlg,
+            title="选择图片",
+            filetypes=[
+                ("图片", "*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif"),
+                ("全部文件", "*.*"),
+            ],
+        )
+        return tuple(str(p) for p in (paths or ()) if p)
+
+    return _native_file_dialog(dlg, ask)
+
+
+def _native_file_dialog(dlg: tk.Toplevel, ask):
+    """系统文件框不能被无边框置顶卡片挡住；但只关当前卡片的置顶时，底下列表仍置顶会把卡片盖没。"""
     lowered: list[tk.Misc] = []
 
     def _lower(w: tk.Misc) -> None:
@@ -396,15 +412,7 @@ def _pick_image_files(dlg: tk.Toplevel) -> tuple[str, ...]:
     except Exception:
         _lower(dlg)
     try:
-        paths = filedialog.askopenfilenames(
-            parent=dlg,
-            title="选择图片",
-            filetypes=[
-                ("图片", "*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif"),
-                ("全部文件", "*.*"),
-            ],
-        )
-        return tuple(str(p) for p in (paths or ()) if p)
+        return ask()
     finally:
         for w in lowered:
             try:
@@ -789,6 +797,7 @@ class WorkTimer:
             store.log_exception("desktop-shortcut", e)
         schedules.ensure_fields(self.cfg)
         memos.ensure_fields(self.cfg)
+        worklog.ensure_fields(self.cfg)
         # 下架的皮（自适应/天色）回落到淡影
         fixed_theme = themes.normalize_id(self.cfg.get("theme"))
         if fixed_theme != self.cfg.get("theme"):
@@ -833,6 +842,7 @@ class WorkTimer:
         self._neon_planets = ornaments.create_neon_planets()
         self._mouse_lx = -1
         self._mouse_ly = -1
+        self._worklog_at = 0.0
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -1530,14 +1540,29 @@ class WorkTimer:
         if mode == "flex":
             self.cfg["start_h"], self.cfg["start_m"] = hm
             # 弹性每天重填到岗，不沿用固定下班点
+            worklog.record_arrival(self.cfg, datetime.now(), hm)
         else:
             self.cfg["off_h"], self.cfg["off_m"] = hm
             self.cfg["remember_offwork"] = bool(remember)
         schedules.ensure_fields(self.cfg)
         schedules.set_pinned(self.cfg, schedules.OFFWORK_ID, True)
         self.cfg["active_pin_id"] = schedules.OFFWORK_ID
+        self._worklog_tick(force=True)
         store.save_config(self.cfg)
         self._last_key = ""
+
+    def _worklog_tick(self, *, force: bool = False) -> None:
+        mono = time.monotonic()
+        if not force and mono - self._worklog_at < 30:
+            return
+        self._worklog_at = mono
+        now = datetime.now()
+        set_today = str(self.cfg.get("start_date") or "") == self._today()
+        if not worklog.should_track(now, has_target=self._has_target(), set_today=set_today):
+            return
+        active = force or worklog.idle_seconds() < worklog.IDLE_LIMIT_SEC
+        if worklog.heartbeat(self.cfg, now, active=active, target_hm=self._off_hm()):
+            store.save_config(self.cfg)
 
     def _open_about(self) -> None:
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=620)
@@ -1769,6 +1794,168 @@ class WorkTimer:
         _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
         _reveal_card(dlg, min_w=420, min_h=300, near=self._dialog_near())
         dlg.after(80, dlg.focus_force)
+        _run_card_modal(dlg, self.win)
+
+    def _open_worklog_dialog(self) -> None:
+        worklog.ensure_fields(self.cfg)
+        self._worklog_tick(force=True)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=560, height=560)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        err = tk.StringVar(value="")
+        _pack_err_line(body, err, wrap=500)
+        tk.Label(
+            body, text="工时账本", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 4), anchor="w")
+        tk.Label(
+            body,
+            text=(
+                "到岗取弹性打卡（固定下班取当天首次使用），离开取最后一次键鼠操作。\n"
+                "过了下班点离开 90 分钟自动封账；时间可直接改，两格清空即删除当天。"
+            ),
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+
+        cell_bg = "#1e2430"
+        state = {"anchor": date.today()}
+        week_var = tk.StringVar()
+        nav = tk.Frame(body, bg=_CARD_BG)
+        nav.pack(fill="x", pady=(0, 8))
+        table = tk.Frame(body, bg=cell_bg, highlightthickness=1, highlightbackground="#2a3140")
+        table.pack(fill="x")
+        week_sum = tk.StringVar()
+        month_sum = tk.StringVar()
+        tk.Label(body, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10)).pack(
+            anchor="w", pady=(10, 0)
+        )
+        tk.Label(body, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w", pady=(2, 0)
+        )
+        edits: list[tuple[date, tk.StringVar, tk.StringVar, str, str]] = []
+
+        def diff_fg(v: int | None) -> str:
+            if v is None or v == 0:
+                return _CARD_MUTED
+            return "#ffc46b" if v > 0 else "#ff8b8b"
+
+        def render() -> None:
+            for w in table.winfo_children():
+                w.destroy()
+            edits.clear()
+            today = date.today()
+            days = worklog.week_dates(state["anchor"])
+            week_var.set(f"{days[0].month}/{days[0].day} – {days[-1].month}/{days[-1].day}")
+            for c, text in enumerate(("日期", "到岗", "离开", "时长", "比应下班")):
+                tk.Label(
+                    table, text=text, fg=_CARD_MUTED, bg=cell_bg, font=("Microsoft YaHei UI", 9),
+                ).grid(row=0, column=c, sticky="w", padx=(14 if c == 0 else 8, 8), pady=(10, 4))
+            rows = []
+            for i, d in enumerate(days, start=1):
+                r = worklog.row(self.cfg, d, today=today)
+                rows.append(r)
+                label = f"{d.month}/{d.day} 周{worklog.WEEKDAY_CN[d.weekday()]}"
+                if d == today:
+                    label += " · 今天"
+                tk.Label(
+                    table, text=label, fg=_CARD_FG if d.weekday() < 5 else _CARD_MUTED, bg=cell_bg,
+                    font=("Microsoft YaHei UI", 10, "bold" if d == today else "normal"),
+                ).grid(row=i, column=0, sticky="w", padx=(14, 8), pady=3)
+                vin = tk.StringVar(value=worklog.fmt_clock(r["in"]))
+                vout = tk.StringVar(value=worklog.fmt_clock(r["out"]))
+                for c, var in ((1, vin), (2, vout)):
+                    ent = tk.Entry(
+                        table, textvariable=var, width=7, font=("Consolas", 11), justify="center",
+                        bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+                        disabledbackground=cell_bg, disabledforeground=_CARD_MUTED,
+                    )
+                    if d > today:
+                        ent.configure(state="disabled")
+                    ent.grid(row=i, column=c, padx=8, pady=3, ipady=2)
+                tk.Label(
+                    table, text=worklog.fmt_span(r["dur"]) + (" 记录中" if r["live"] else ""),
+                    fg=_CARD_FG, bg=cell_bg, font=("Consolas", 11),
+                ).grid(row=i, column=3, sticky="w", padx=8)
+                tk.Label(
+                    table, text=worklog.fmt_span(r["diff"], signed=True), fg=diff_fg(r["diff"]),
+                    bg=cell_bg, font=("Consolas", 11),
+                ).grid(row=i, column=4, sticky="w", padx=8)
+                edits.append((d, vin, vout, vin.get(), vout.get()))
+            tk.Frame(table, bg=cell_bg, height=8).grid(row=len(days) + 1, column=0)
+            this_week = days[0] <= today <= days[-1]
+            week_sum.set(worklog.summary_text("本周" if this_week else "这周", worklog.summarize(rows)))
+            m = state["anchor"]
+            mrows = [worklog.row(self.cfg, d, today=today) for d in worklog.month_dates(m.year, m.month)]
+            month_sum.set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
+
+        def apply_edits() -> bool:
+            changed = False
+            ok = True
+            for d, vin, vout, old_in, old_out in edits:
+                if vin.get().strip() == old_in and vout.get().strip() == old_out:
+                    continue
+                msg = worklog.set_manual(self.cfg, d, vin.get(), vout.get())
+                if msg:
+                    err.set(msg)
+                    ok = False
+                    break
+                changed = True
+            if changed:
+                store.save_config(self.cfg)
+            return ok
+
+        def save() -> None:
+            if apply_edits():
+                render()
+                err.set("已保存")
+
+        def shift(days: int) -> None:
+            if not apply_edits():
+                return
+            state["anchor"] = state["anchor"] + timedelta(days=days) if days else date.today()
+            err.set("")
+            render()
+
+        def export() -> None:
+            if not apply_edits():
+                return
+            render()
+            m = state["anchor"]
+
+            def ask() -> str:
+                return filedialog.asksaveasfilename(
+                    parent=dlg,
+                    title="导出工时账本",
+                    defaultextension=".csv",
+                    initialfile=f"工时账本-{m.year}-{m.month:02d}.csv",
+                    filetypes=[("CSV 表格", "*.csv")],
+                )
+
+            path = _native_file_dialog(dlg, ask)
+            if not path:
+                return
+            try:
+                Path(path).write_text(
+                    worklog.to_csv(self.cfg, worklog.month_dates(m.year, m.month)), encoding="utf-8-sig"
+                )
+            except OSError as e:
+                err.set(f"导出失败：{e}")
+                return
+            err.set(f"已导出 {m.month} 月：{path}")
+
+        _card_btn(nav, "‹ 上周", lambda: shift(-7)).pack(side="left")
+        tk.Label(nav, textvariable=week_var, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold")).pack(
+            side="left", padx=12
+        )
+        _card_btn(nav, "下周 ›", lambda: shift(7)).pack(side="left")
+        _card_btn(nav, "回到本周", lambda: shift(0)).pack(side="right")
+        _card_btn(bar, "保存修改", save, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "导出本月 CSV…", export).pack(side="left", padx=6)
+        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        dlg.bind("<Return>", lambda _e: save())
+        render()
+        _reveal_card(dlg, min_w=560, min_h=480, near=self._dialog_near())
         _run_card_modal(dlg, self.win)
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
@@ -2490,6 +2677,8 @@ class WorkTimer:
                 self._need_close_schedule_list = True
             else:
                 self._open_schedule_list()
+        elif op == "worklog":
+            self._open_worklog_dialog()
         elif op == "toggle_key_hide":
             self._set_key_hide(not self._key_hide_on())
         elif op == "key_hide_settings":
@@ -3111,6 +3300,7 @@ class WorkTimer:
                     # active_pin 是易失状态，轮播切换不值得每 5s 写一次盘
                     self._last_pin_rotate = now_m
                     self._last_key = ""
+                self._worklog_tick()
                 self._refresh_surface()
                 self._paint()
                 now = time.monotonic()
@@ -3140,6 +3330,10 @@ class WorkTimer:
             except Exception as e:  # noqa: BLE001
                 store.log_exception("loop", e)
                 time.sleep(0.05)
+        try:
+            self._worklog_tick(force=True)
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("worklog-quit", e)
         self._persist_pos()
         self._persist_size()
         store.flush_pending(force=True)

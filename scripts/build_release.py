@@ -79,6 +79,8 @@ def main() -> None:
         "--hidden-import",
         "memos",
         "--hidden-import",
+        "worklog",
+        "--hidden-import",
         "attachments",
         "--hidden-import",
         "PIL.ImageTk",
