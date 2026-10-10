@@ -158,8 +158,7 @@ def _place_dialog(dlg: tk.Toplevel, near, *, min_w: int, min_h: int) -> None:
         dlg.geometry(f"{w}x{h}")
 
 
-def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
-    """按内容把卡片撑开，避免高 DPI 下底栏按钮被裁掉。"""
+def _card_bounds(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> str:
     dlg.update_idletasks()
     w = max(min_w, int(dlg.winfo_reqwidth()) + 20)
     h = max(min_h, int(dlg.winfo_reqheight()) + 24)
@@ -168,16 +167,94 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     w, h = min(w, sw), min(h, sh)
     if near:
         x, y = _resolve_near(near, w, h, sw, sh)
-        dlg.geometry(f"{w}x{h}+{x}+{y}")
-    else:
-        dlg.geometry(f"{w}x{h}")
-    # 第一次 fit 才亮出来：此时尺寸/位置都是最终值，不会先闪一块空壳
+        return f"{w}x{h}+{x}+{y}"
+    return f"{w}x{h}"
+
+
+def _alpha(dlg: tk.Toplevel) -> float:
     try:
+        return float(dlg.attributes("-alpha"))
+    except tk.TclError:
+        return 1.0
+
+
+def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
+    """按内容把卡片撑开；藏着的卡片在全透明状态下映射并画完，再亮出来。
+
+    update_idletasks 只排版、不处理 WM_PAINT。直接亮出会先看到空底板和白色按钮块，
+    控件再分几次画上去。必须 update() 让控件真正画完。
+    """
+    try:
+        withdrawn = dlg.state() == "withdrawn"
+        visible = not withdrawn and _alpha(dlg) >= 0.99
+    except tk.TclError:
+        withdrawn, visible = True, False
+    if not visible:
+        # 带着 WS_EX_TRANSPARENT 挪回屏幕会被当成「底下变了」整窗重画，必须先摘掉
+        _click_through(dlg, False)
+    dlg.geometry(_card_bounds(dlg, min_w=min_w, min_h=min_h, near=near))
+    if visible:
+        return
+    try:
+        # 已映射（_park_card 收起的）别再 deiconify：Tk 会整窗重显、所有控件重画一遍
+        if withdrawn:
+            dlg.attributes("-alpha", 0.0)
+            dlg.deiconify()
+        dlg.update()
+        dlg.geometry(_card_bounds(dlg, min_w=min_w, min_h=min_h, near=near))
+        dlg.update()
+        dlg.attributes("-alpha", 1.0)
+        dlg.lift()
+        dlg.focus_force()
+    except tk.TclError:
+        pass
+
+
+_GWL_EXSTYLE = -20
+_WS_EX_TRANSPARENT = 0x20
+_WS_EX_LAYERED = 0x80000
+_PARK_POS = "+-20000+0"
+
+
+def _frame_hwnd(dlg: tk.Toplevel) -> int:
+    try:
+        return int(dlg.wm_frame(), 16)
+    except (tk.TclError, ValueError):
+        return 0
+
+
+def _click_through(dlg: tk.Toplevel, on: bool) -> None:
+    hwnd = _frame_hwnd(dlg)
+    if not hwnd:
+        return
+    u = layered_win.user32
+    ex = u.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+    want = (ex | _WS_EX_TRANSPARENT | _WS_EX_LAYERED) if on else (ex & ~_WS_EX_TRANSPARENT)
+    if want != ex:
+        u.SetWindowLongW(hwnd, _GWL_EXSTYLE, want)
+
+
+def _park_card(dlg: tk.Toplevel, give_focus_to: int = 0) -> None:
+    """收起常驻卡片：不 withdraw，挪到屏幕外、全透明、鼠标穿透。
+
+    withdraw 后再显示要把每个子控件重画一遍，这台机子上一张日程卡片也要 70~100ms；
+    保持映射时系统留着画好的内容，下次 _fit_card 几毫秒就能亮出来。
+    窗口一直映射着，收起时若还占着前台，要把前台还回去，否则键盘输入会落进看不见的输入框。
+    """
+    try:
+        dlg.attributes("-alpha", 0.0)
+        dlg.geometry(_PARK_POS)
         if dlg.state() == "withdrawn":
             dlg.deiconify()
-            dlg.lift()
-            dlg.focus_force()
-    except Exception:
+            dlg.update()
+        else:
+            dlg.update_idletasks()
+        _click_through(dlg, True)
+        hwnd = _frame_hwnd(dlg)
+        u = layered_win.user32
+        if hwnd and u.GetForegroundWindow() == hwnd and give_focus_to and u.IsWindow(give_focus_to):
+            u.SetForegroundWindow(give_focus_to)
+    except tk.TclError:
         pass
 
 
@@ -195,13 +272,6 @@ def _reveal_card(
         near = (cx, cy)
         min_w = max(min_w, min(int(cw), 560))
     _fit_card(dlg, min_w=min_w, min_h=min_h, near=near)
-    try:
-        dlg.update_idletasks()
-        dlg.deiconify()
-        dlg.lift()
-        dlg.focus_force()
-    except Exception:
-        pass
     cb = getattr(dlg, "_on_drop_files", None)
     if callable(cb):
         win_drop.hook_files(dlg, cb)
@@ -320,6 +390,10 @@ def _card_dialog(
     dlg = tk.Toplevel(parent)
     dlg.withdraw()
     dlg.overrideredirect(True)
+    try:
+        dlg.attributes("-alpha", 0.0)
+    except tk.TclError:
+        pass
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
     dlg.configure(bg=_CARD_BG)
@@ -615,16 +689,27 @@ def _pack_attach_editor(
     return box
 
 
-def _run_card_modal(dlg: tk.Toplevel, win: layered_win.LayeredPetWindow | None = None) -> None:
-    """与分层窗泵兼容的模态循环；调用方 destroy 即结束。"""
-    dlg.bind("<Escape>", lambda _e: dlg.destroy())
+def _run_card_modal(
+    dlg: tk.Toplevel,
+    win: layered_win.LayeredPetWindow | None = None,
+    *,
+    on_frame=None,
+    stop=None,
+) -> None:
+    """与分层窗泵兼容的模态循环。默认 Esc 关闭；stop() 为真时只退出循环，不销毁窗口。"""
+    if stop is None:
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
     while True:
         try:
+            if stop is not None and stop():
+                break
             if not dlg.winfo_exists():
                 break
             dlg.update()
             if win is not None:
                 win.pump()
+            if on_frame is not None:
+                on_frame()
         except Exception:
             break
         time.sleep(0.02)
@@ -843,6 +928,11 @@ class WorkTimer:
         self._mouse_lx = -1
         self._mouse_ly = -1
         self._worklog_at = 0.0
+        self._worklog_dirty = False
+        self._worklog_save_at = 0.0
+        self._ui_prewarmed = False
+        self._worklog_ui: dict | None = None
+        self._schedule_ui: dict | None = None
         self._check_clock_on_boot()
 
         w, h = self._load_size()
@@ -1551,18 +1641,98 @@ class WorkTimer:
         store.save_config(self.cfg)
         self._last_key = ""
 
-    def _worklog_tick(self, *, force: bool = False) -> None:
+    def _worklog_tick(self, *, force: bool = False, flush: bool = False) -> None:
         mono = time.monotonic()
-        if not force and mono - self._worklog_at < 30:
+        if not force and mono - self._worklog_at < 1:
             return
         self._worklog_at = mono
         now = datetime.now()
         set_today = str(self.cfg.get("start_date") or "") == self._today()
         if not worklog.should_track(now, has_target=self._has_target(), set_today=set_today):
             return
-        active = force or worklog.idle_seconds() < worklog.IDLE_LIMIT_SEC
-        if worklog.heartbeat(self.cfg, now, active=active, target_hm=self._off_hm()):
+        idle = worklog.idle_seconds()
+        mark = worklog.last_active_minute(now, idle)
+        # 打开面板、退出都不能假装「此刻正在干活」，否则离开时间会被改成现在
+        active = mark is not None and idle < worklog.IDLE_LIMIT_SEC
+        if worklog.heartbeat(
+            self.cfg, now, active=active, activity_min=mark, target_hm=self._off_hm()
+        ):
+            self._worklog_dirty = True
+        if self._worklog_dirty and (flush or mono - self._worklog_save_at >= 180):
             store.save_config(self.cfg)
+            self._worklog_dirty = False
+            self._worklog_save_at = mono
+
+    def _card_frame(self) -> None:
+        """弹窗开着时主循环进不去，这里继续记工时并刷新倒计时，避免整窗卡死。"""
+        self._worklog_tick()
+        self._refresh_worklog_live()
+        self._paint()
+
+    def _worklog_dur_text(self, r: dict, now: datetime) -> str:
+        """记录中的那一行按秒走；已经封账的仍用分钟。"""
+        if not r.get("live") or r.get("in") is None:
+            return worklog.fmt_span(r.get("dur"))
+        start = int(r["in"]) * 60
+        if worklog.idle_seconds() < worklog.IDLE_LIMIT_SEC:
+            end = now.hour * 3600 + now.minute * 60 + now.second
+        elif r.get("out") is not None:
+            end = int(r["out"]) * 60
+        else:
+            end = start
+        if end < start:
+            end = start
+        return worklog.fmt_elapsed(end - start) + " 记录中"
+
+    def _refresh_worklog_live(self) -> None:
+        """账本开着时，今天这一行每秒改时长，不重画整表，也不覆盖正在改的格子。"""
+        ui = self._worklog_ui
+        if ui is None or ui.get("stop"):
+            return
+        dlg = ui["dlg"]
+        try:
+            if not dlg.winfo_exists() or dlg.state() == "withdrawn":
+                return
+        except tk.TclError:
+            return
+        sec = int(time.monotonic())
+        if ui.get("live_sec") == sec:
+            return
+        ui["live_sec"] = sec
+        today = date.today()
+        now = datetime.now()
+        days = worklog.week_dates(ui["anchor"])
+        touched = False
+        for d, slot in zip(days, ui["slots"]):
+            if d != today:
+                continue
+            r = worklog.row(self.cfg, d, today=today)
+            text = self._worklog_dur_text(r, now)
+            if slot["dur"].cget("text") != text:
+                slot["dur"].configure(text=text)
+            diff_text = worklog.fmt_span(r["diff"], signed=True)
+            if slot["diff"].cget("text") != diff_text:
+                slot["diff"].configure(text=diff_text, fg=self._worklog_diff_fg(r["diff"]))
+                touched = True
+            out_s = worklog.fmt_clock(r["out"])
+            if slot.get("auto_out") == slot["vout"].get() and out_s != slot.get("auto_out"):
+                slot["vout"].set(out_s)
+                slot["auto_out"] = out_s
+                edits = ui["edits"]
+                for i, (ed, vin, vout, old_in, _old_out) in enumerate(edits):
+                    if ed == d:
+                        edits[i] = (ed, vin, vout, old_in, out_s)
+                        break
+                touched = True
+            break
+        if not touched:
+            return
+        rows = [worklog.row(self.cfg, d, today=today) for d in days]
+        this_week = days[0] <= today <= days[-1]
+        ui["week_sum"].set(worklog.summary_text("本周" if this_week else "这周", worklog.summarize(rows)))
+        m = ui["anchor"]
+        mrows = [worklog.row(self.cfg, d, today=today) for d in worklog.month_dates(m.year, m.month)]
+        ui["month_sum"].set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
 
     def _open_about(self) -> None:
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=620)
@@ -1796,9 +1966,83 @@ class WorkTimer:
         dlg.after(80, dlg.focus_force)
         _run_card_modal(dlg, self.win)
 
-    def _open_worklog_dialog(self) -> None:
-        worklog.ensure_fields(self.cfg)
-        self._worklog_tick(force=True)
+    def _prewarm_ui(self) -> None:
+        """建控件、首次映射加起来两三百毫秒。启动后先建好并在屏幕外画一遍，右键打开就不再顿住。"""
+        fg = layered_win.user32.GetForegroundWindow()
+        ui = self._ensure_worklog_ui()
+        self._fill_worklog(ui)
+        _park_card(ui["dlg"], fg)
+        sched = self._ensure_schedule_ui()
+        sched["show_tab"]("schedules")
+        _park_card(sched["dlg"], fg)
+
+    def _ensure_worklog_ui(self) -> dict:
+        ui = self._worklog_ui
+        if ui is not None:
+            try:
+                if ui["dlg"].winfo_exists():
+                    return ui
+            except tk.TclError:
+                pass
+        ui = self._build_worklog_dialog()
+        self._worklog_ui = ui
+        return ui
+
+    def _worklog_diff_fg(self, v: int | None) -> str:
+        if v is None or v == 0:
+            return _CARD_MUTED
+        return "#ffc46b" if v > 0 else "#ff8b8b"
+
+    def _worklog_apply(self, ui: dict) -> bool:
+        changed = False
+        for d, vin, vout, old_in, old_out in ui["edits"]:
+            if vin.get().strip() == old_in and vout.get().strip() == old_out:
+                continue
+            msg = worklog.set_manual(self.cfg, d, vin.get(), vout.get())
+            if msg:
+                ui["err"].set(msg)
+                return False
+            changed = True
+        if changed:
+            store.save_config(self.cfg)
+            self._worklog_dirty = False
+            self._worklog_save_at = time.monotonic()
+        return True
+
+    def _fill_worklog(self, ui: dict) -> None:
+        today = date.today()
+        days = worklog.week_dates(ui["anchor"])
+        ui["week_var"].set(f"{days[0].month}/{days[0].day} – {days[-1].month}/{days[-1].day}")
+        ui["edits"].clear()
+        rows = []
+        for d, slot in zip(days, ui["slots"]):
+            r = worklog.row(self.cfg, d, today=today)
+            rows.append(r)
+            label = f"{d.month}/{d.day} 周{worklog.WEEKDAY_CN[d.weekday()]}"
+            if d == today:
+                label += " · 今天"
+            slot["date"].configure(
+                text=label,
+                fg=_CARD_FG if d.weekday() < 5 else _CARD_MUTED,
+                font=("Microsoft YaHei UI", 10, "bold" if d == today else "normal"),
+            )
+            out_s = worklog.fmt_clock(r["out"])
+            slot["auto_out"] = out_s
+            slot["vin"].set(worklog.fmt_clock(r["in"]))
+            slot["vout"].set(out_s)
+            state = "disabled" if d > today else "normal"
+            slot["ein"].configure(state=state)
+            slot["eout"].configure(state=state)
+            slot["dur"].configure(text=self._worklog_dur_text(r, datetime.now()))
+            slot["diff"].configure(text=worklog.fmt_span(r["diff"], signed=True), fg=self._worklog_diff_fg(r["diff"]))
+            ui["edits"].append((d, slot["vin"], slot["vout"], slot["vin"].get(), slot["vout"].get()))
+        this_week = days[0] <= today <= days[-1]
+        ui["week_sum"].set(worklog.summary_text("本周" if this_week else "这周", worklog.summarize(rows)))
+        m = ui["anchor"]
+        mrows = [worklog.row(self.cfg, d, today=today) for d in worklog.month_dates(m.year, m.month)]
+        ui["month_sum"].set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
+
+    def _build_worklog_dialog(self) -> dict:
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=560, height=560)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
@@ -1819,12 +2063,39 @@ class WorkTimer:
         ).pack(anchor="w", pady=(0, 10))
 
         cell_bg = "#1e2430"
-        state = {"anchor": date.today()}
         week_var = tk.StringVar()
         nav = tk.Frame(body, bg=_CARD_BG)
         nav.pack(fill="x", pady=(0, 8))
         table = tk.Frame(body, bg=cell_bg, highlightthickness=1, highlightbackground="#2a3140")
         table.pack(fill="x")
+        for c, text in enumerate(("日期", "到岗", "离开", "时长", "比应下班")):
+            tk.Label(
+                table, text=text, fg=_CARD_MUTED, bg=cell_bg, font=("Microsoft YaHei UI", 9),
+            ).grid(row=0, column=c, sticky="w", padx=(14 if c == 0 else 8, 8), pady=(10, 4))
+        slots = []
+        for i in range(1, 8):
+            date_lbl = tk.Label(table, text="", fg=_CARD_FG, bg=cell_bg, font=("Microsoft YaHei UI", 10))
+            date_lbl.grid(row=i, column=0, sticky="w", padx=(14, 8), pady=3)
+            vin = tk.StringVar()
+            vout = tk.StringVar()
+            ein = tk.Entry(
+                table, textvariable=vin, width=7, font=("Consolas", 11), justify="center",
+                bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+                disabledbackground=cell_bg, disabledforeground=_CARD_MUTED,
+            )
+            eout = tk.Entry(
+                table, textvariable=vout, width=7, font=("Consolas", 11), justify="center",
+                bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+                disabledbackground=cell_bg, disabledforeground=_CARD_MUTED,
+            )
+            ein.grid(row=i, column=1, padx=8, pady=3, ipady=2)
+            eout.grid(row=i, column=2, padx=8, pady=3, ipady=2)
+            dur = tk.Label(table, text="", fg=_CARD_FG, bg=cell_bg, font=("Consolas", 11))
+            diff = tk.Label(table, text="", fg=_CARD_MUTED, bg=cell_bg, font=("Consolas", 11))
+            dur.grid(row=i, column=3, sticky="w", padx=8)
+            diff.grid(row=i, column=4, sticky="w", padx=8)
+            slots.append({"date": date_lbl, "vin": vin, "vout": vout, "ein": ein, "eout": eout, "dur": dur, "diff": diff})
+        tk.Frame(table, bg=cell_bg, height=8).grid(row=8, column=0)
         week_sum = tk.StringVar()
         month_sum = tk.StringVar()
         tk.Label(body, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10)).pack(
@@ -1833,95 +2104,39 @@ class WorkTimer:
         tk.Label(body, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
             anchor="w", pady=(2, 0)
         )
-        edits: list[tuple[date, tk.StringVar, tk.StringVar, str, str]] = []
+        ui = {
+            "dlg": dlg,
+            "stop": False,
+            "anchor": date.today(),
+            "slots": slots,
+            "edits": [],
+            "err": err,
+            "week_var": week_var,
+            "week_sum": week_sum,
+            "month_sum": month_sum,
+        }
 
-        def diff_fg(v: int | None) -> str:
-            if v is None or v == 0:
-                return _CARD_MUTED
-            return "#ffc46b" if v > 0 else "#ff8b8b"
-
-        def render() -> None:
-            for w in table.winfo_children():
-                w.destroy()
-            edits.clear()
-            today = date.today()
-            days = worklog.week_dates(state["anchor"])
-            week_var.set(f"{days[0].month}/{days[0].day} – {days[-1].month}/{days[-1].day}")
-            for c, text in enumerate(("日期", "到岗", "离开", "时长", "比应下班")):
-                tk.Label(
-                    table, text=text, fg=_CARD_MUTED, bg=cell_bg, font=("Microsoft YaHei UI", 9),
-                ).grid(row=0, column=c, sticky="w", padx=(14 if c == 0 else 8, 8), pady=(10, 4))
-            rows = []
-            for i, d in enumerate(days, start=1):
-                r = worklog.row(self.cfg, d, today=today)
-                rows.append(r)
-                label = f"{d.month}/{d.day} 周{worklog.WEEKDAY_CN[d.weekday()]}"
-                if d == today:
-                    label += " · 今天"
-                tk.Label(
-                    table, text=label, fg=_CARD_FG if d.weekday() < 5 else _CARD_MUTED, bg=cell_bg,
-                    font=("Microsoft YaHei UI", 10, "bold" if d == today else "normal"),
-                ).grid(row=i, column=0, sticky="w", padx=(14, 8), pady=3)
-                vin = tk.StringVar(value=worklog.fmt_clock(r["in"]))
-                vout = tk.StringVar(value=worklog.fmt_clock(r["out"]))
-                for c, var in ((1, vin), (2, vout)):
-                    ent = tk.Entry(
-                        table, textvariable=var, width=7, font=("Consolas", 11), justify="center",
-                        bg="#222733", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
-                        disabledbackground=cell_bg, disabledforeground=_CARD_MUTED,
-                    )
-                    if d > today:
-                        ent.configure(state="disabled")
-                    ent.grid(row=i, column=c, padx=8, pady=3, ipady=2)
-                tk.Label(
-                    table, text=worklog.fmt_span(r["dur"]) + (" 记录中" if r["live"] else ""),
-                    fg=_CARD_FG, bg=cell_bg, font=("Consolas", 11),
-                ).grid(row=i, column=3, sticky="w", padx=8)
-                tk.Label(
-                    table, text=worklog.fmt_span(r["diff"], signed=True), fg=diff_fg(r["diff"]),
-                    bg=cell_bg, font=("Consolas", 11),
-                ).grid(row=i, column=4, sticky="w", padx=8)
-                edits.append((d, vin, vout, vin.get(), vout.get()))
-            tk.Frame(table, bg=cell_bg, height=8).grid(row=len(days) + 1, column=0)
-            this_week = days[0] <= today <= days[-1]
-            week_sum.set(worklog.summary_text("本周" if this_week else "这周", worklog.summarize(rows)))
-            m = state["anchor"]
-            mrows = [worklog.row(self.cfg, d, today=today) for d in worklog.month_dates(m.year, m.month)]
-            month_sum.set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
-
-        def apply_edits() -> bool:
-            changed = False
-            ok = True
-            for d, vin, vout, old_in, old_out in edits:
-                if vin.get().strip() == old_in and vout.get().strip() == old_out:
-                    continue
-                msg = worklog.set_manual(self.cfg, d, vin.get(), vout.get())
-                if msg:
-                    err.set(msg)
-                    ok = False
-                    break
-                changed = True
-            if changed:
-                store.save_config(self.cfg)
-            return ok
+        def close() -> None:
+            ui["stop"] = True
+            _park_card(dlg, ui.get("fg", 0))
 
         def save() -> None:
-            if apply_edits():
-                render()
+            if self._worklog_apply(ui):
+                self._fill_worklog(ui)
                 err.set("已保存")
 
         def shift(days: int) -> None:
-            if not apply_edits():
+            if not self._worklog_apply(ui):
                 return
-            state["anchor"] = state["anchor"] + timedelta(days=days) if days else date.today()
+            ui["anchor"] = ui["anchor"] + timedelta(days=days) if days else date.today()
             err.set("")
-            render()
+            self._fill_worklog(ui)
 
         def export() -> None:
-            if not apply_edits():
+            if not self._worklog_apply(ui):
                 return
-            render()
-            m = state["anchor"]
+            self._fill_worklog(ui)
+            m = ui["anchor"]
 
             def ask() -> str:
                 return filedialog.asksaveasfilename(
@@ -1952,11 +2167,21 @@ class WorkTimer:
         _card_btn(nav, "回到本周", lambda: shift(0)).pack(side="right")
         _card_btn(bar, "保存修改", save, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "导出本月 CSV…", export).pack(side="left", padx=6)
-        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        _card_btn(bar, "关闭", close).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: save())
-        render()
-        _reveal_card(dlg, min_w=560, min_h=480, near=self._dialog_near())
-        _run_card_modal(dlg, self.win)
+        dlg.bind("<Escape>", lambda _e: close())
+        return ui
+
+    def _open_worklog_dialog(self) -> None:
+        self._worklog_tick(force=True)
+        ui = self._ensure_worklog_ui()
+        ui["stop"] = False
+        ui["fg"] = layered_win.user32.GetForegroundWindow()
+        ui["err"].set("")
+        ui["anchor"] = date.today()
+        self._fill_worklog(ui)
+        _reveal_card(ui["dlg"], min_w=560, min_h=480, near=self._dialog_near())
+        _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
         """当前主界面项：(标题, 剩余秒, 是否到点, 是否空闲未设)。"""
@@ -2252,26 +2477,73 @@ class WorkTimer:
         _run_card_modal(dlg, self.win)
         return result[0]
 
+    def _ensure_schedule_ui(self) -> dict:
+        ui = self._schedule_ui
+        if ui is not None:
+            try:
+                if ui["dlg"].winfo_exists():
+                    return ui
+            except tk.TclError:
+                pass
+        ui = self._build_schedule_list()
+        self._schedule_ui = ui
+        return ui
+
     def _open_schedule_list(self) -> None:
         if self._schedule_list_open:
             self._need_close_schedule_list = True
             return
         schedules.ensure_fields(self.cfg)
         memos.ensure_fields(self.cfg)
-        near = self._dialog_near()
-        dlg = _card_dialog(self._tk_root(), near=near, width=480, height=560)
-        closed = {"v": False}
-        tab = {"name": "schedules"}
+        ui = self._ensure_schedule_ui()
+        dlg, closed = ui["dlg"], ui["closed"]
+        closed["v"] = False
+        ui["fg"] = layered_win.user32.GetForegroundWindow()
         self._schedule_list_open = True
         self._need_close_schedule_list = False
         self._last_key = ""
+        if ui["search_var"].get():
+            ui["search_var"].set("")
+        ui["show_tab"]("schedules")
+        _fit_card(dlg, min_w=480, min_h=560, near=self._dialog_near())
+        close = ui["close"]
+        try:
+            while not closed["v"]:
+                try:
+                    if not dlg.winfo_exists():
+                        break
+                    if self._need_close_schedule_list:
+                        close()
+                        break
+                    if self._menu_pos is not None:
+                        sx, sy = self._menu_pos
+                        self._menu_pos = None
+                        self._handle_menu(sx, sy)
+                        if closed["v"] or self._need_close_schedule_list:
+                            close()
+                            break
+                    dlg.update()
+                    self.win.pump()
+                    self._paint()
+                except Exception:
+                    break
+                time.sleep(0.02)
+        finally:
+            ui["unbind_wheel"]()
+            self._schedule_list_open = False
+            self._need_close_schedule_list = False
+            self._last_key = ""
+
+    def _build_schedule_list(self) -> dict:
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=560)
+        closed = {"v": False}
+        tab = {"name": "schedules"}
+        ui: dict = {"dlg": dlg, "closed": closed, "fg": 0}
 
         def close() -> None:
             closed["v"] = True
-            try:
-                dlg.destroy()
-            except Exception:
-                pass
+            _unbind_wheel()
+            _park_card(dlg, ui["fg"])
 
         # 底栏先占位，保证「新增 / 关闭」永远在窗口里
         foot = tk.Frame(dlg, bg=_CARD_BG)
@@ -2326,13 +2598,18 @@ class WorkTimer:
         mid = tk.Frame(dlg, bg=_CARD_BG)
         mid.pack(side="top", fill="both", expand=True, padx=16, pady=4)
 
-        canvas = tk.Canvas(mid, bg=_CARD_BG, highlightthickness=0, bd=0, height=320)
+        # 窗口还没显示时 canvas 宽度是 1。若按 1 排文字，打开会先挤成一列再弹开。
+        list_w = 448
+        canvas = tk.Canvas(mid, bg=_CARD_BG, highlightthickness=0, bd=0, width=list_w, height=320)
         rows = tk.Frame(canvas, bg=_CARD_BG)
-        win_id = canvas.create_window((0, 0), window=rows, anchor="nw")
+        win_id = canvas.create_window((0, 0), window=rows, anchor="nw", width=list_w)
 
         def _sync(_e=None) -> None:
-            canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, 0, 0))
-            canvas.itemconfigure(win_id, width=max(1, canvas.winfo_width()))
+            width = canvas.winfo_width()
+            if width < 50:
+                width = list_w
+            canvas.itemconfigure(win_id, width=width)
+            canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, width, 0))
 
         def _wheel(e) -> None:
             canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
@@ -2372,9 +2649,10 @@ class WorkTimer:
             if self._need_close_schedule_list:
                 close()
 
+        # 列表结构没变时只改「剩余时间」那行字；整排销毁重建 + 重新排版要几十毫秒
+        cards: dict = {"key": None, "whens": []}
+
         def rebuild() -> None:
-            for child in rows.winfo_children():
-                child.destroy()
             now = datetime.now()
             q = search_var.get()
             items: list[tuple[str, str, str, str, bool, int]] = []
@@ -2411,6 +2689,21 @@ class WorkTimer:
                 can_del = not festival.is_locked(sid)
                 items.append((sid, str(s.get("title") or "日程"), rem, when, can_del, attachments.count(s)))
 
+            aid = schedules.active_id(self.cfg)
+            key = tuple(
+                (sid, title, when, can_del, nimg, schedules.is_pinned(self.cfg, sid), aid == sid)
+                for sid, title, _rem, when, can_del, nimg in items
+            )
+            if items and key == cards["key"]:
+                for lbl, (_sid, _title, rem, when, _del, nimg) in zip(cards["whens"], items):
+                    extra = f"  ·  {nimg}图" if nimg else ""
+                    lbl.configure(text=f"{when}  ·  {rem}{extra}")
+                return
+            for child in rows.winfo_children():
+                child.destroy()
+            cards["key"] = key if items else None
+            cards["whens"] = []
+
             if not items:
                 tk.Label(
                     rows,
@@ -2437,6 +2730,7 @@ class WorkTimer:
                     font=("Microsoft YaHei UI", 9), anchor="w",
                 )
                 when_lbl.pack(fill="x")
+                cards["whens"].append(when_lbl)
                 btns = tk.Frame(inner, bg="#222733")
                 btns.pack(fill="x", pady=(8, 0), anchor="w")
                 pinned = schedules.is_pinned(self.cfg, sid)
@@ -2477,6 +2771,7 @@ class WorkTimer:
             _sync()
 
         def rebuild_memos() -> None:
+            cards["key"] = None
             for child in rows.winfo_children():
                 child.destroy()
             q = search_var.get()
@@ -2627,34 +2922,8 @@ class WorkTimer:
             return "break"
 
         dlg.bind("<Control-f>", focus_search)
-        show_tab("schedules")
-        _fit_card(dlg, min_w=480, min_h=560, near=near)
-        try:
-            while not closed["v"]:
-                try:
-                    if not dlg.winfo_exists():
-                        break
-                    if self._need_close_schedule_list:
-                        close()
-                        break
-                    if self._menu_pos is not None:
-                        sx, sy = self._menu_pos
-                        self._menu_pos = None
-                        self._handle_menu(sx, sy)
-                        if closed["v"] or self._need_close_schedule_list:
-                            close()
-                            break
-                    dlg.update()
-                    self.win.pump()
-                    self._paint()
-                except Exception:
-                    break
-                time.sleep(0.02)
-        finally:
-            _unbind_wheel()
-            self._schedule_list_open = False
-            self._need_close_schedule_list = False
-            self._last_key = ""
+        ui.update(close=close, show_tab=show_tab, search_var=search_var, unbind_wheel=_unbind_wheel)
+        return ui
 
     def _handle_menu(self, sx: int, sy: int) -> None:
         op = self.win.popup_menu(
@@ -3218,6 +3487,7 @@ class WorkTimer:
         self._paint()
         self._maybe_show_whats_new()
         last_save = time.monotonic()
+        booted = time.monotonic()
         was_dragging = False
         was_resizing = False
         while self.running and not self.win.closed:
@@ -3300,6 +3570,18 @@ class WorkTimer:
                     # active_pin 是易失状态，轮播切换不值得每 5s 写一次盘
                     self._last_pin_rotate = now_m
                     self._last_key = ""
+                if (
+                    not self._ui_prewarmed
+                    and now_m - booted > 0.8
+                    and not dragging
+                    and not resizing
+                ):
+                    # 失败也只试一次，避免每帧重试把主循环卡死
+                    self._ui_prewarmed = True
+                    try:
+                        self._prewarm_ui()
+                    except Exception as e:  # noqa: BLE001
+                        store.log_exception("ui-prewarm", e)
                 self._worklog_tick()
                 self._refresh_surface()
                 self._paint()
@@ -3331,7 +3613,7 @@ class WorkTimer:
                 store.log_exception("loop", e)
                 time.sleep(0.05)
         try:
-            self._worklog_tick(force=True)
+            self._worklog_tick(force=True, flush=True)
         except Exception as e:  # noqa: BLE001
             store.log_exception("worklog-quit", e)
         self._persist_pos()

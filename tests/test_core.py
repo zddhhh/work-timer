@@ -1033,6 +1033,13 @@ class WorklogTests(unittest.TestCase):
         done = worklog.row(cfg, self.D.date(), today=self.LATER)
         self.assertFalse(done["live"])
         self.assertEqual(done["diff"], -250)
+        late = worklog.row(cfg, self.D.date(), today=self.D.date())
+        # 14:00 还没到 18:10，差额仍隐藏
+        self.assertIsNone(late["diff"])
+        worklog.heartbeat(cfg, self.at(18, 30), active=True, target_hm=(18, 10))
+        overtime = worklog.row(cfg, self.D.date(), today=self.D.date())
+        self.assertTrue(overtime["live"])
+        self.assertEqual(overtime["diff"], 20)
 
     def test_flex_arrival_then_heartbeat_extends_out(self):
         cfg = {}
@@ -1108,10 +1115,41 @@ class WorklogTests(unittest.TestCase):
         s = worklog.summarize(rows)
         self.assertEqual((s["days"], s["total"], s["avg"], s["diff"]), (2, 1140, 570, 30))
         self.assertIn("共 19:00", worklog.summary_text("本周", s))
+        self.assertEqual(worklog.fmt_elapsed(9 * 3600 + 52 * 60 + 8), "9:52:08")
         csv_text = worklog.to_csv(cfg, worklog.month_dates(2026, 10))
         lines = csv_text.strip().splitlines()
         self.assertEqual(len(lines), 3)
         self.assertIn("2026-10-08,周四,9:00,18:30,9:30,18:00,30,手改", lines[1])
+
+    def test_out_uses_last_input_not_poll_clock(self):
+        cfg = {}
+        worklog.heartbeat(
+            cfg, self.at(18, 14), active=True, target_hm=(19, 0), activity_min=18 * 60 + 10
+        )
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 18 * 60 + 10)
+        worklog.heartbeat(cfg, self.at(18, 14), active=True, target_hm=(19, 0))
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 18 * 60 + 14)
+        worklog.heartbeat(
+            cfg, self.at(18, 14), active=True, target_hm=(19, 0), activity_min=18 * 60 + 10
+        )
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 18 * 60 + 10)
+
+    def test_idle_seals_without_moving_out_and_early_leave_stays(self):
+        cfg = {}
+        tgt = (18, 0)
+        worklog.heartbeat(cfg, self.at(18, 10), active=True, target_hm=tgt)
+        self.assertTrue(worklog.heartbeat(cfg, self.at(20, 0), active=False, target_hm=tgt))
+        r = worklog.row(cfg, self.D.date())
+        self.assertEqual(r["out"], 18 * 60 + 10)
+        self.assertTrue(r["closed"])
+
+        cfg = {}
+        worklog.heartbeat(cfg, self.at(16, 0), active=True, target_hm=tgt)
+        self.assertFalse(worklog.heartbeat(cfg, self.at(21, 0), active=False, target_hm=tgt))
+        r = worklog.row(cfg, self.D.date())
+        self.assertEqual(r["out"], 16 * 60)
+        self.assertFalse(r["closed"])
+        self.assertIsNone(worklog.last_active_minute(self.at(0, 10), 20 * 60))
 
     def test_ensure_fields_prunes_garbage_and_old(self):
         cfg = {

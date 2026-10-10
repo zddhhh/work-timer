@@ -19,6 +19,8 @@ IDLE_LIMIT_SEC = 300
 # 只有最后活动落在应下班前 CLOSE_LEAD_MIN 内（或之后）才封账，下午开长会回来继续干不会被截断。
 CLOSE_GAP_MIN = 90
 CLOSE_LEAD_MIN = 60
+# 采样把「离开」写成轮询时刻时，最多偏这么多分钟，下一笔用真实最后输入收回来。
+SNAP_MIN = IDLE_LIMIT_SEC // 60
 WEEKDAY_CN = "一二三四五六日"
 
 
@@ -38,6 +40,14 @@ def fmt_clock(minutes: int | None) -> str:
     return f"{minutes // 60}:{minutes % 60:02d}"
 
 
+def fmt_elapsed(seconds: int) -> str:
+    """当天已过时长，带秒，给正在记录的那一行用。"""
+    total = max(0, int(seconds))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
 def fmt_span(minutes: int | None, *, signed: bool = False) -> str:
     if minutes is None:
         return ""
@@ -46,6 +56,29 @@ def fmt_span(minutes: int | None, *, signed: bool = False) -> str:
         sign = "+" if minutes > 0 else ("-" if minutes < 0 else "±")
     m = abs(int(minutes))
     return f"{sign}{m // 60}:{m % 60:02d}"
+
+
+def fmt_hms(total_seconds: int) -> str:
+    total = max(0, int(total_seconds))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+def live_elapsed(r: dict, now: datetime, idle_sec: float) -> str | None:
+    """进行中的时长，精确到秒。已经封账或不是今天则返回 None。"""
+    if not r.get("live") or r.get("in") is None:
+        return None
+    start = datetime.combine(r["date"], datetime.min.time()) + timedelta(minutes=int(r["in"]))
+    if idle_sec < IDLE_LIMIT_SEC:
+        end = now - timedelta(seconds=max(0.0, float(idle_sec)))
+    elif r.get("out") is not None:
+        end = datetime.combine(r["date"], datetime.min.time()) + timedelta(minutes=int(r["out"]))
+    else:
+        end = start
+    if end < start:
+        end = start
+    return fmt_hms(int((end - start).total_seconds())) + " 记录中"
 
 
 def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
@@ -110,28 +143,45 @@ def record_arrival(cfg: dict, now: datetime, hm: tuple[int, int]) -> None:
         item.pop("out", None)
 
 
+def last_active_minute(now: datetime, idle_sec: float) -> int | None:
+    """最后一次键鼠落在哪一分钟。跨过零点则不算今天。"""
+    if idle_sec < 0:
+        idle_sec = 0.0
+    last = now - timedelta(seconds=float(idle_sec))
+    if last.date() != now.date():
+        return None
+    return last.hour * 60 + last.minute
+
+
 def heartbeat(
     cfg: dict,
     now: datetime,
     *,
     active: bool,
     target_hm: tuple[int, int] | None,
+    activity_min: int | None = None,
 ) -> bool:
-    """有键鼠活动时把当天离开时刻推到现在。返回是否改了账本。"""
-    if not active:
-        return False
+    """离开时刻记最后一次键鼠所在的分钟，不记轮询时刻。
+
+    空闲时只更新应下班、必要时封账，不把「现在」写成离开。
+    activity_min 缺省时用 now 的分钟（测试）。返回是否改了账本。
+    """
     book = _days(cfg)
-    k = _key(now.date())
-    item = book.get(k)
+    item = book.get(_key(now.date()))
     if isinstance(item, dict) and (item.get("manual") or item.get("closed")):
         return False
-    cur = now.hour * 60 + now.minute
+    now_min = now.hour * 60 + now.minute
+    mark = now_min if activity_min is None else activity_min
+    if isinstance(mark, bool) or not isinstance(mark, int) or not (0 <= mark < 24 * 60):
+        mark = now_min
+    target = None if target_hm is None else int(target_hm[0]) * 60 + int(target_hm[1])
     changed = False
     if not isinstance(item, dict):
-        item = {"in": cur, "src": "seen"}
-        book[k] = item
+        if not active:
+            return False
+        item = {"in": mark, "src": "seen"}
+        book[_key(now.date())] = item
         changed = True
-    target = None if target_hm is None else int(target_hm[0]) * 60 + int(target_hm[1])
     if target is not None and item.get("target") != target:
         item["target"] = target
         changed = True
@@ -140,18 +190,27 @@ def heartbeat(
     if (
         last is not None
         and tgt is not None
-        and cur >= tgt
+        and now_min >= tgt
         and last >= tgt - CLOSE_LEAD_MIN
-        and cur - last > CLOSE_GAP_MIN
+        and now_min - last > CLOSE_GAP_MIN
     ):
         item["closed"] = True
         return True
+    if not active:
+        return changed
     if "in" not in item:
-        item["in"] = cur
+        item["in"] = mark
         item["src"] = "seen"
         changed = True
-    if (last is None or cur > last) and cur >= item["in"]:
-        item["out"] = cur
+    arrived = _as_min(item.get("in"))
+    if arrived is None or mark < arrived:
+        return changed
+    if last is None or mark > last:
+        item["out"] = mark
+        changed = True
+    elif 0 < last - mark <= SNAP_MIN:
+        # 上一笔把离开写成了采样时刻，收回真实最后输入
+        item["out"] = mark
         changed = True
     return changed
 
@@ -190,9 +249,10 @@ def row(cfg: dict, d: date, *, today: date | None = None) -> dict:
     item = get_day(cfg, d) or {}
     mi, mo, mt = _as_min(item.get("in")), _as_min(item.get("out")), _as_min(item.get("target"))
     dur = mo - mi if mi is not None and mo is not None else None
-    # 今天还在记录中：离开时刻只是「最后一次活动」，算差额会显示成大段早退
+    # 还没到应下班就用「离开-应下班」，下午会显示成大段早退。过了应下班再显示差额。
     live = d == (today or date.today()) and mo is not None and not (item.get("closed") or item.get("manual"))
-    diff = mo - mt if mo is not None and mt is not None and not live else None
+    show_diff = mo is not None and mt is not None and (not live or mo >= mt)
+    diff = (mo - mt) if show_diff else None
     return {
         "date": d,
         "in": mi,
