@@ -2529,7 +2529,6 @@ class WorkTimer:
                     break
                 time.sleep(0.02)
         finally:
-            ui["unbind_wheel"]()
             self._schedule_list_open = False
             self._need_close_schedule_list = False
             self._last_key = ""
@@ -2542,7 +2541,6 @@ class WorkTimer:
 
         def close() -> None:
             closed["v"] = True
-            _unbind_wheel()
             _park_card(dlg, ui["fg"])
 
         # 底栏先占位，保证「新增 / 关闭」永远在窗口里
@@ -2611,19 +2609,29 @@ class WorkTimer:
             canvas.itemconfigure(win_id, width=width)
             canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, width, 0))
 
-        def _wheel(e) -> None:
-            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        # 绑在整个弹窗上，别用画布 <Enter>/<Leave> 切 bind_all：鼠标移到日程卡片上画布就收到 <Leave>。
+        # 按像素滚、余量累积：一格（delta 120）≈60px，触控板的小 delta 也能平滑走。
+        canvas.configure(yscrollincrement=1)
+        wheel = {"acc": 0.0}
 
-        def _bind_wheel(_e=None) -> None:
-            canvas.bind_all("<MouseWheel>", _wheel)
-
-        def _unbind_wheel(_e=None) -> None:
-            canvas.unbind_all("<MouseWheel>")
+        def _wheel(e) -> str:
+            region = canvas.bbox("all")
+            if not region or region[3] - region[1] <= canvas.winfo_height():
+                wheel["acc"] = 0.0
+                return "break"
+            px = -e.delta / 2
+            if (px > 0) != (wheel["acc"] > 0):
+                wheel["acc"] = 0.0
+            wheel["acc"] += px
+            step = int(wheel["acc"])
+            if step:
+                wheel["acc"] -= step
+                canvas.yview_scroll(step, "units")
+            return "break"
 
         rows.bind("<Configure>", _sync)
         canvas.bind("<Configure>", _sync)
-        canvas.bind("<Enter>", _bind_wheel)
-        canvas.bind("<Leave>", _unbind_wheel)
+        dlg.bind("<MouseWheel>", _wheel)
         canvas.pack(fill="both", expand=True)
 
         def _panel_cover() -> tuple[int, int, int, int] | None:
@@ -2822,7 +2830,6 @@ class WorkTimer:
 
         def add_schedule() -> None:
             hint.set("")
-            _unbind_wheel()
             item = self._ask_new_schedule(cover=_panel_cover())
             if item is not None:
                 schedules.add_schedule(self.cfg, item)
@@ -2841,7 +2848,6 @@ class WorkTimer:
 
         def edit_schedule(sid: str) -> None:
             hint.set("")
-            _unbind_wheel()
             item = self._ask_new_schedule(schedule_id=sid, cover=_panel_cover())
             if item is not None:
                 schedules.replace_schedule(self.cfg, item)
@@ -2851,7 +2857,6 @@ class WorkTimer:
 
         def edit_memo(mid: str | None = None) -> None:
             hint.set("")
-            _unbind_wheel()
             data = self._ask_memo_edit(mid, cover=_panel_cover())
             if data is not None:
                 attach = data.get("attach") or _new_attach_state()
@@ -2922,7 +2927,7 @@ class WorkTimer:
             return "break"
 
         dlg.bind("<Control-f>", focus_search)
-        ui.update(close=close, show_tab=show_tab, search_var=search_var, unbind_wheel=_unbind_wheel)
+        ui.update(close=close, show_tab=show_tab, search_var=search_var)
         return ui
 
     def _handle_menu(self, sx: int, sy: int) -> None:
