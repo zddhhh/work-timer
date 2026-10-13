@@ -121,9 +121,10 @@ def main() -> None:
     print(f"版本 {ver} / {tag}")
     for p in setups:
         print(" ", p.name, p.stat().st_size, "sha256:", digests[p.name])
-    # 新客户端按 `sha256(<附件名>): <hex>` 校验；老客户端只认第一个 `sha256: <hex>`，它们下的是主包
-    sha_lines = "\n".join(f"sha256({n}): {h}" for n, h in digests.items())
-    body = f"WorkTimer {ver}\n\n{RELEASE_NOTE}\n\n{sha_lines}\n\nsha256: {digests[setups[0].name]}\n"
+    # 行首加 #：给人看的更新说明会整行丢掉，校验仍然认得出。
+    # 新客户端按 `sha256(<附件名>): <hex>` 校验；老客户端只认第一个 `sha256: <hex>`，它们下的是主包。
+    sha_lines = "\n".join(f"# sha256({n}): {h}" for n, h in digests.items())
+    body = f"WorkTimer {ver}\n\n{RELEASE_NOTE}\n\n{sha_lines}\n\n# sha256: {digests[setups[0].name]}\n"
     try:
         api(
             "POST",

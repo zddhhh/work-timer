@@ -55,6 +55,11 @@ class VersionTests(unittest.TestCase):
         body = f"note\n\nsha256(WorkTimer-Setup.exe): {a}\nsha256(WorkTimer-Win7-Setup.exe): {b}\n\nsha256: {a}\n"
         self.assertEqual(updater._sha256_from_body(body, "WorkTimer-Setup.exe"), a)
         self.assertEqual(updater._sha256_from_body(body, "workTimer-win7-setup.EXE"), b)
+        hidden = f"# sha256(WorkTimer-Setup.exe): {a}\n# sha256: {a}\n"
+        self.assertEqual(updater._sha256_from_body(hidden, "WorkTimer-Setup.exe"), a)
+        import changelog
+
+        self.assertEqual(changelog.highlights(hidden), [])
         # 有按附件列的哈希但没列这个附件：宁可不校验，也不能拿别的包的哈希去比
         self.assertEqual(updater._sha256_from_body(body, "Other.exe"), "")
 
