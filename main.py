@@ -3668,6 +3668,7 @@ class WorkTimer:
                 if resizing:
                     was_resizing = True
                     self._sync_layout_from_window()
+                    self._meow.resizing(True, time.monotonic())
                     self._paint()
                     time.sleep(0.001)
                     continue
@@ -3678,6 +3679,7 @@ class WorkTimer:
                     time.sleep(0.001)
                     continue
                 if was_resizing or resized:
+                    self._meow.resizing(False, time.monotonic())
                     self.win.ensure_visible()
                     self._sync_layout_from_window()
                     self._persist_size()

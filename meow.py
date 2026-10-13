@@ -17,6 +17,8 @@ INK = (43, 29, 34, 255)
 WHITE = (255, 255, 255, 255)
 SW = 1.3
 SS = 3
+# 精灵按这个步长分档缓存：拖动时相邻尺寸共用一张画好的猫，再等比缩放到当前大小
+_SCALE_STEP = 0.05
 
 SHOW_A = 0.55
 SHOW_T = 0.46
@@ -908,6 +910,7 @@ class Troupe:
         self._wave_id = "taotao"
         self._cache: OrderedDict[tuple, Image.Image] = OrderedDict()
         self._pose = Pose(False)
+        self._resize_at: float | None = None
 
     # ---- 交互 ----
     def _expire(self, now: float) -> None:
@@ -954,6 +957,14 @@ class Troupe:
     def marching_done(self, now: float) -> bool:
         return self.done_at is None or now - self.done_at < DONE_MARCH_SEC
 
+    def resizing(self, on: bool, now: float) -> None:
+        """拖边拉伸期间把小动作定格，尺寸变化就不再叠着眨眼挥手一起抖。"""
+        if on:
+            if self._resize_at is None:
+                self._resize_at = now
+        else:
+            self._resize_at = None
+
     def fps(self, stage: str, now: float, *, drinking: bool = False) -> int:
         self._expire(now)
         if self.show_at is not None or self.cheer_at is not None:
@@ -995,16 +1006,26 @@ class Troupe:
         return _clamp(min(x / 0.25, (1.8 - x) / 0.25), 0.0, 1.0)
 
     def _sprite(self, cid: str, P: Pose, k: float) -> Image.Image:
-        key = (cid, round(k, 3)) + P.quantize()
+        """按姿势取精灵。k 落到最近的档位上画，再缩到需要的尺寸。
+
+        描边是矢量里最贵的一步，拖动时尺寸连续变化，档位让相邻尺寸共用一张画好的猫。
+        """
+        base = _SCALE_STEP * max(1, round(k / _SCALE_STEP))
+        key = (cid, round(base, 4)) + P.quantize()
         got = self._cache.get(key)
-        if got is not None:
+        if got is None:
+            got = render_cat(cid, P, base)
+            while len(self._cache) >= 420:
+                self._cache.popitem(last=False)
+            self._cache[key] = got
+        else:
             self._cache.move_to_end(key)
+        if abs(base - k) < 1e-3:
             return got
-        got = render_cat(cid, P, k)
-        while len(self._cache) >= 420:
-            self._cache.popitem(last=False)
-        self._cache[key] = got
-        return got
+        ratio = k / base
+        w = max(1, int(round(got.width * ratio)))
+        h = max(1, int(round(got.height * ratio)))
+        return got.resize((w, h), Image.Resampling.BILINEAR)
 
     # ---- 绘制 ----
     def paint(
@@ -1044,7 +1065,8 @@ class Troupe:
             drinker = "taotao" if "taotao" in ids else next(c["id"] for c in cats if not c.get("leader"))
         drinker_x = xs[[c["id"] for c in cats].index(drinker)] if drinker else 0.0
         marching = stage == "done" and self.marching_done(now)
-        t = now
+        # 拖边时尺寸每帧都变，小动作也跟着变就会两边一起抖；定格到按下那一刻，松手再继续
+        t = self._resize_at if self._resize_at is not None else now
         P = self._pose
         for i, (c, x) in enumerate(zip(cats, xs)):
             cid = c["id"]

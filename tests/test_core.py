@@ -270,6 +270,32 @@ class MeowTests(unittest.TestCase):
         self.assertEqual(t.callout(20.2), "喝过啦，真乖")
         self.assertEqual(t.fps("idle", 30.0), 10)
 
+    def test_resize_freezes_motion_and_reuses_sprites(self):
+        import meow
+
+        t = meow.Troupe(seed=1)
+        from PIL import ImageFont
+
+        f = ImageFont.load_default()
+        theme = next(th for th in themes._bundled_themes() if th.id == "meow")
+
+        def frame(w: int, now: float) -> None:
+            h = round(w * 92 / 248)
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            themes.paint_card(
+                img, w, h, theme, "距离下班", "2时15分30秒", "", theme.title, f, f, f,
+                stage="run", meow_troupe=t,
+            )
+
+        frame(260, 5.0)
+        t.resizing(True, 5.0)
+        before = len(t._cache)
+        for w in range(262, 300, 2):
+            frame(w, 9.0)
+        # 定格后姿势不变，二十来个尺寸只落到少数几档，不会一只猫一个尺寸各画一张
+        self.assertLess(len(t._cache) - before, 20)
+        t.resizing(False, 9.0)
+
 
 class RenderTests(unittest.TestCase):
     def test_rgba_to_bgra_premultiplied(self):
