@@ -224,6 +224,53 @@ class ThemeTests(unittest.TestCase):
         self.assertEqual(next(t for t in merged if t.id == "ghost").fill, ghost.fill)
 
 
+class MeowTests(unittest.TestCase):
+    def test_catalog_has_meow_but_json_does_not(self):
+        import meow
+
+        self.assertTrue(ornaments.has_skin(meow.KIND))
+        self.assertTrue(ornaments.is_animated(meow.KIND))
+        self.assertIn("meow", [t.id for t in themes._bundled_themes()])
+        # 老版本不认识 meow 会退成玻璃，所以只写在代码里
+        self.assertNotIn("meow", [t.id for t in themes._load_json_file(ROOT / "themes.json")])
+        self.assertLessEqual(len(themes._bundled_themes()), 16)
+        self.assertIn("meow", [t.id for t in themes.menu_sections()["fancy"]])
+
+    def test_paint_all_stages_and_sizes(self):
+        import meow
+
+        theme = next(t for t in themes._bundled_themes() if t.id == "meow")
+        from PIL import ImageFont
+
+        f = ImageFont.load_default()
+        for w, h in ((148, 55), (260, 96), (420, 156)):
+            for stage, big in (("idle", "点我开始"), ("run", "2时15分30秒"),
+                               ("warn", "18分30秒"), ("done", "已到点")):
+                troupe = meow.Troupe(seed=1)
+                img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                themes.paint_card(
+                    img, w, h, theme, "距离下班", big, "", theme.title, f, f, f,
+                    stage=stage, meow_troupe=troupe, meow_mins=18,
+                    meow_drinking=stage == "run",
+                )
+                self.assertGreater(img.getpixel((w // 2, h // 2))[3], 200)
+
+    def test_poke_show_and_cheer(self):
+        import meow
+
+        t = meow.Troupe(seed=1)
+        self.assertIsNone(t.callout(0.0))
+        self.assertEqual(t.poke(1.0), "show")
+        self.assertEqual(t.callout(1.1), "预备——")
+        self.assertEqual(t.poke(1.2), "busy")
+        self.assertGreaterEqual(t.fps("run", 1.5), 30)
+        self.assertIsNone(t.callout(1.0 + meow.SHOW_E + 0.1))
+        self.assertLessEqual(t.fps("run", 1.0 + meow.SHOW_E + 0.1), 12)
+        t.cheer(20.0)
+        self.assertEqual(t.callout(20.2), "喝过啦，真乖")
+        self.assertEqual(t.fps("idle", 30.0), 10)
+
+
 class RenderTests(unittest.TestCase):
     def test_rgba_to_bgra_premultiplied(self):
         import main

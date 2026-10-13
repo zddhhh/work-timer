@@ -1899,6 +1899,7 @@ def _paint_flap_half(
     scale_y: float,
     panel_alpha: int = 255,
     bare: bool = False,
+    sticker: bool = False,
 ) -> None:
     """绘制翻牌的上/下半片（scale_y 模拟翻转透视）。"""
     if w < 2 or h < 2 or scale_y < 0.03:
@@ -1912,7 +1913,7 @@ def _paint_flap_half(
     tx = (w - cw) // 2
     ty = (h - chh) // 2 - (1 if top else 0)
     if bare:
-        _draw_flip_digit(cd, tx, ty, ch, font, color, stroke=True)
+        _draw_flip_digit(cd, tx, ty, ch, font, color, stroke=True, sticker=sticker)
     else:
         cd.text((tx, ty), ch, font=font, fill=color)
     mid = h // 2
@@ -1928,6 +1929,9 @@ def _paint_flap_half(
         target.alpha_composite(piece, (x, y + mid))
 
 
+STICKER_SHADOW = (244, 163, 187, 255)
+
+
 def _flip_text_has_digits(text: str) -> bool:
     return bool(text) and any(c.isdigit() for c in text)
 
@@ -1941,8 +1945,19 @@ def _draw_flip_digit(
     color: tuple[int, int, int, int],
     *,
     stroke: bool,
+    sticker: bool = False,
+    bold: bool = True,
 ) -> None:
-    """翻牌数字/单位：加描边提升叠层与缩窗下的可读性。"""
+    """翻牌数字/单位：加描边提升叠层与缩窗下的可读性。sticker：贴纸字（粉影 + 白边 + 加粗）。"""
+    if sticker:
+        size = int(getattr(font, "size", 16) or 16)
+        heavy = 1 if (bold and size >= 13) else 0
+        rim = 2 if size >= 12 else 1
+        drop = max(1, size // 14)
+        d.text((x, y + drop), ch, font=font, fill=STICKER_SHADOW, stroke_width=rim + heavy, stroke_fill=STICKER_SHADOW)
+        d.text((x, y), ch, font=font, fill=(255, 255, 255, 255), stroke_width=rim + heavy, stroke_fill=(255, 255, 255, 255))
+        d.text((x, y), ch, font=font, fill=color, stroke_width=heavy, stroke_fill=color)
+        return
     if not stroke:
         d.text((x, y), ch, font=font, fill=color)
         return
@@ -1971,6 +1986,7 @@ def _paint_flap_cell(
     panel_alpha: int = 255,
     overlay: bool = False,
     bare: bool = False,
+    sticker: bool = False,
 ) -> None:
     d = ImageDraw.Draw(layer)
     if not bare:
@@ -1983,7 +1999,7 @@ def _paint_flap_cell(
         cw, chh = _char_bbox(font, shown)
         tx = x + (w - cw) // 2
         ty = y + (h - chh) // 2
-        _draw_flip_digit(d, tx, ty, shown, font, digit_color, stroke=digit_stroke)
+        _draw_flip_digit(d, tx, ty, shown, font, digit_color, stroke=digit_stroke, sticker=sticker)
         return
     p = max(0.0, min(1.0, progress))
     if p < 0.5:
@@ -1991,22 +2007,22 @@ def _paint_flap_cell(
         sy = max(0.04, abs(math.cos(ang)))
         _paint_flap_half(
             layer, x, y, w, h, from_ch, font, digit_color, panel,
-            top=True, scale_y=sy, panel_alpha=panel_alpha, bare=bare,
+            top=True, scale_y=sy, panel_alpha=panel_alpha, bare=bare, sticker=sticker,
         )
         _paint_flap_half(
             layer, x, y, w, h, from_ch, font, digit_color, panel,
-            top=False, scale_y=1.0, panel_alpha=panel_alpha, bare=bare,
+            top=False, scale_y=1.0, panel_alpha=panel_alpha, bare=bare, sticker=sticker,
         )
     else:
         ang = p * math.pi
         sy = max(0.04, abs(math.cos(ang)))
         _paint_flap_half(
             layer, x, y, w, h, shown, font, digit_color, panel,
-            top=True, scale_y=1.0, panel_alpha=panel_alpha, bare=bare,
+            top=True, scale_y=1.0, panel_alpha=panel_alpha, bare=bare, sticker=sticker,
         )
         _paint_flap_half(
             layer, x, y, w, h, shown, font, digit_color, panel,
-            top=False, scale_y=sy, panel_alpha=panel_alpha, bare=bare,
+            top=False, scale_y=sy, panel_alpha=panel_alpha, bare=bare, sticker=sticker,
         )
 
 
@@ -2032,6 +2048,7 @@ def paint_flip_row(
 ) -> None:
     """翻牌数字行；anims[digit_idx]=(start, old, new)。bare_digits=True 时只画数字翻动，无牌面底块。"""
     groups = _flip_groups(text)
+    sticker = skin_kind == "meow"
     if bare_digits:
         panel, hinge, panel_alpha = (0, 0, 0), (0, 0, 0), 0
         _digit_rgb, unit_rgb = _flip_palette(stage, light=light)[2:4]
@@ -2115,6 +2132,7 @@ def paint_flip_row(
                 panel_alpha=panel_alpha,
                 overlay=overlay,
                 bare=bare_digits,
+                sticker=sticker,
             )
             if hit_rects is not None:
                 hit_rects.append((int(cx), cy, w, h, d_idx))
@@ -2126,7 +2144,7 @@ def paint_flip_row(
             uy = cy + (cell_h - chh) // 2
             _draw_flip_digit(
                 d_probe, int(cx), uy, unit, unit_font, unit_color,
-                stroke=True,
+                stroke=True, sticker=sticker,
             )
             cx += d_probe.textlength(unit, font=unit_font)
 

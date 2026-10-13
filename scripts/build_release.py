@@ -21,7 +21,7 @@ ISS = ROOT / "installer" / "WorkTimer.iss"
 HIDDEN_IMPORTS = [
     "themes", "changelog", "backdrop", "ornaments", "schedules", "memos", "worklog", "attachments",
     "PIL.ImageTk", "autostart", "desktop_shortcut", "single_instance", "key_hide", "uninstall", "store",
-    "layered_win", "festival", "kinetic", "flex_time", "hydrate", "feedback", "updater", "win_drop", "tkinterdnd2",
+    "layered_win", "festival", "kinetic", "meow", "flex_time", "hydrate", "feedback", "updater", "win_drop", "tkinterdnd2",
     "version",
 ]
 

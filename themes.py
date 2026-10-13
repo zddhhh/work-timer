@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 import festival
 import fx
+import meow
 import ornaments
 import store
 
@@ -30,8 +31,25 @@ INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow"})
 _KINDS = frozenset(
     {
         "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", meow.KIND,
     }
+)
+# 新 kind 的皮写在代码里、不进在线 themes.json：旧版不认识的 kind 会回落成玻璃皮
+_BUILTIN_EXTRA: tuple[dict, ...] = (
+    {
+        "id": "meow",
+        "name": "喵喵仪仗队",
+        "kind": meow.KIND,
+        "fill": [255, 236, 242, 250],
+        "outline": [239, 157, 182, 210],
+        "title": [176, 96, 122, 255],
+        "big": [74, 44, 53, 255],
+        "sub": [160, 110, 128, 230],
+        "idle": [160, 100, 122, 255],
+        "warn": [232, 80, 48, 255],
+        "done": [236, 66, 112, 255],
+        "radius": 16,
+    },
 )
 # 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
 _REMOVED_IDS = frozenset({"auto", "sky", "blink", "flysword"})
@@ -126,6 +144,8 @@ def _skin_base_rgba(
         return (24, 26, 32, 200) if skin_light else (16, 18, 24, 178)
     if kind == "thunder":
         return (238, 244, 254, 168) if skin_light else (8, 9, 18, 132)
+    if kind == meow.KIND:
+        return (255, 241, 246, 255)
     if kind == "glass":
         return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
     return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
@@ -332,8 +352,21 @@ def _load_json_file(path: Path) -> list[Theme]:
         return []
 
 
+def _bundled_themes() -> list[Theme]:
+    items = _load_json_file(_bundled_path())
+    if not items:
+        return []
+    have = {t.id for t in items}
+    for raw in _BUILTIN_EXTRA:
+        th = _parse_theme(raw)
+        if th is not None and th.id not in have and len(items) < 16:
+            items.append(th)
+            have.add(th.id)
+    return items
+
+
 def _fallback() -> list[Theme]:
-    bundled = _load_json_file(_bundled_path())
+    bundled = _bundled_themes()
     if bundled:
         return bundled
     return [
@@ -424,7 +457,7 @@ def consume_updated() -> bool:
 _PREFER_BUNDLED = frozenset(
     {
         "ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", "meow",
     }
 )
 
@@ -452,7 +485,7 @@ def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme
 
 
 def load_local_catalog() -> None:
-    bundled = _load_json_file(_bundled_path())
+    bundled = _bundled_themes()
     cached = _load_json_file(_cache_path())
     items = _merge_with_bundled(cached, bundled) if cached else (bundled or _fallback())
     _set_catalog(items, notify=False)
@@ -493,7 +526,7 @@ def refresh_from_repo(cfg: dict, *, timeout: float = 4.0) -> bool:
             items = _parse_catalog(json.loads(raw))
             if not items:
                 continue
-            items = _merge_with_bundled(items, _load_json_file(_bundled_path()))
+            items = _merge_with_bundled(items, _bundled_themes())
             _set_catalog(items)
             try:
                 _cache_path().write_text(
@@ -557,6 +590,14 @@ def _halo_text(
     d.text((x, y), text, font=font, fill=fill)
 
 
+def card_box(w: int, h: int) -> tuple[int, int, int, int]:
+    if h < 72 or w < 200:
+        return (2, 2, w - 3, h - 3)
+    if h >= 104 or w >= 320:
+        return (3, 3, w - 4, h - 4)
+    return (4, 4, w - 5, h - 5)
+
+
 def paint_card(
     img: Image.Image,
     w: int,
@@ -582,19 +623,20 @@ def paint_card(
     flip_anims: dict[int, tuple[float, str, str]] | None = None,
     flip_now: float = 0.0,
     flip_hit_rects: list[tuple[int, int, int, int, int]] | None = None,
+    meow_troupe: meow.Troupe | None = None,
+    meow_mins: int = 30,
+    meow_drinking: bool = False,
 ) -> None:
     d = ImageDraw.Draw(img)
     kind = theme.kind
     compact_chrome = h < 72 or w < 200
     large_chrome = h >= 104 or w >= 320
+    box = card_box(w, h)
     if compact_chrome:
-        box = (2, 2, w - 3, h - 3)
         r = min(theme.radius, max(4, h // 8))
     elif large_chrome:
-        box = (3, 3, w - 4, h - 4)
         r = min(theme.radius, max(10, h // 7))
     else:
-        box = (4, 4, w - 5, h - 5)
         r = min(theme.radius, max(8, h // 5))
     pad_x = max(10, min(22, w // 12))
     title_y = max(8, int(h * 0.11))
@@ -678,15 +720,31 @@ def paint_card(
     ghost = kind == "ghost"
     compact_text = h < 72
     show_flip = use_flip_display(kind, big, h=h)
+    # 仪仗队皮：底部留给小猫，标题和数字整体上移
+    meow_lay = meow.layout(box) if kind == meow.KIND else None
+    if meow_lay is not None:
+        title_y = meow_lay.title_y
+        if big:
+            font_big = meow.big_font(int(round(22 * meow_lay.s)), font_big) or font_big
+            bb = d.textbbox((0, 0), big, font=font_big)
+            big_y = int(round(meow_lay.cy + 1.5 * meow_lay.s - (bb[1] + bb[3]) / 2.0))
     if show_flip:
         title_y, flip_pad, row_y, row_w, row_h = fx.flip_row_layout(
             w, h, title_h=title_h, has_sub=bool(sub),
         )
+        if meow_lay is not None:
+            title_y, row_y, row_h = meow_lay.title_y, meow_lay.row_y, meow_lay.row_h
     title_x = _centered_text_x(d, title, font_title, w)
-    _halo_text(
-        d, (title_x, title_y), title, font_title, title_fill,
-        ghost=ghost, compact=compact_text,
-    )
+    if meow_lay is not None and title:
+        d.text(
+            (title_x, title_y), title, font=font_title, fill=title_fill,
+            stroke_width=1 if compact_text else 2, stroke_fill=(255, 255, 255, 255),
+        )
+    else:
+        _halo_text(
+            d, (title_x, title_y), title, font_title, title_fill,
+            ghost=ghost, compact=compact_text,
+        )
     if show_flip:
         fx.paint_flip_row(
             img,
@@ -706,16 +764,26 @@ def paint_card(
             skin_kind=kind,
             wallpaper_light=ctx.wallpaper_light,
         )
+    elif big and meow_lay is not None:
+        fx._draw_flip_digit(
+            d, _centered_text_x(d, big, font_big, w), big_y, big, font_big, accent_fill,
+            stroke=True, sticker=True, bold=False,
+        )
     elif big:
         big_x = _centered_text_x(d, big, font_big, w)
         _halo_text(
             d, (big_x, big_y), big, font_big, accent_fill,
             ghost=ghost, glow=(stage == "done" and not compact_text), compact=compact_text,
         )
-    if sub:
+    if sub and meow_lay is None:
         _halo_text(
             d, (pad_x, int(h * 0.78)), sub, font_sub, sub_fill,
             ghost=ghost, compact=compact_text,
+        )
+    if meow_lay is not None:
+        (meow_troupe or meow.default_troupe()).paint(
+            img, box, radius=r, stage=stage, now=now,
+            mins_left=meow_mins, drinking=meow_drinking,
         )
 
 

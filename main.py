@@ -27,6 +27,7 @@ import key_hide
 import kinetic
 import layered_win
 import memos
+import meow
 import ornaments
 import schedules
 import single_instance
@@ -928,6 +929,7 @@ class WorkTimer:
         self._neon_planets = ornaments.create_neon_planets()
         self._mouse_lx = -1
         self._mouse_ly = -1
+        self._meow = meow.Troupe()
         self._worklog_at = 0.0
         self._worklog_dirty = False
         self._worklog_save_at = 0.0
@@ -1377,6 +1379,8 @@ class WorkTimer:
             if drank:
                 hydrate.reset_anchor(self.cfg, datetime.now())
                 store.save_config(self.cfg)
+                if self._theme().kind == meow.KIND:
+                    self._meow.cheer(time.monotonic())
             self._last_key = ""
             return
         self._maybe_skin_interact(lx, ly)
@@ -1415,7 +1419,7 @@ class WorkTimer:
             self._last_key = ""
 
     def _maybe_skin_interact(self, lx: int, ly: int) -> None:
-        """特效皮点击互动：霹雳狂潮落雷 / 墨水落墨 / 霓虹射击 / 翻牌拨动。"""
+        """特效皮点击互动：霹雳狂潮落雷 / 墨水落墨 / 霓虹射击 / 翻牌拨动 / 仪仗队踢正步。"""
         kind = self._theme().kind
         now = time.monotonic()
         if themes.use_flip_display(kind, self._flip_last_big, self.cfg, h=self._win_h):
@@ -1442,6 +1446,9 @@ class WorkTimer:
                 self._thunder_quote_step = nxt
         elif kind == "inkpulse":
             self._ink_hits = ornaments.register_ink_hit(self._ink_hits, now, int(lx), int(ly))
+        elif kind == meow.KIND:
+            self._meow.poke(now)
+            self._last_key = ""
         elif kind == "neonflow":
             rr = min(self._theme().radius, max(8, self._win_h // 5))
             ornaments.neon_try_fire(
@@ -3404,10 +3411,20 @@ class WorkTimer:
             env = self._env_rgb
             if env is not None:
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
+            shown_title = title if not idle else "距离下班"
+            meow_on = theme.kind == meow.KIND
+            drinking = meow_on and self._hydrate_showing and kinetic.playing(self._kinetic, phase)
+            if meow_on:
+                call = self._meow.callout(phase)
+                if call:
+                    shown_title = call
+                    key = f"{key}-m{call}"
             if ornaments.has_skin(theme.kind):
                 if theme.kind == "thunder":
                     # 落雷那半秒要满帧，平时只有雨在下
                     fps = ornaments.thunder_fps(stage, phase)
+                elif meow_on:
+                    fps = max(self._meow.fps(stage, phase, drinking=drinking), 60 if self._flip_anims else 0)
                 elif themes.use_flip_display(theme.kind, big, self.cfg, h=h):
                     fps = 60 if self._flip_anims else (14 if stage in ("idle", "done") else 20)
                 elif theme.kind in ("neonflow", "inkpulse"):
@@ -3494,6 +3511,9 @@ class WorkTimer:
                     flip_anims=self._flip_anims if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
                     flip_now=phase,
                     flip_hit_rects=self._flip_hit_rects if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
+                    meow_troupe=self._meow,
+                    meow_mins=total // 60,
+                    meow_drinking=drinking,
                 )
                 kinetic.paint(
                     img,
@@ -3502,6 +3522,7 @@ class WorkTimer:
                     accent,
                     phase,
                     ghost=theme.kind == "ghost",
+                    center_y=meow.layout(themes.card_box(w, h)).cy if meow_on else None,
                 )
             else:
                 if self._kinetic is not None:
@@ -3511,7 +3532,7 @@ class WorkTimer:
                     w,
                     h,
                     theme,
-                    title if not idle else "距离下班",
+                    shown_title,
                     big,
                     sub,
                     accent,
@@ -3529,6 +3550,9 @@ class WorkTimer:
                     flip_anims=self._flip_anims if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
                     flip_now=phase,
                     flip_hit_rects=self._flip_hit_rects if themes.use_flip_display(theme.kind, big, self.cfg, h=h) else None,
+                    meow_troupe=self._meow,
+                    meow_mins=total // 60,
+                    meow_drinking=drinking,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:

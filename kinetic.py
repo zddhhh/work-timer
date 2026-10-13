@@ -168,6 +168,7 @@ def paint(
     now: float,
     *,
     ghost: bool = False,
+    center_y: float | None = None,
 ) -> None:
     if show.skipped:
         return
@@ -190,7 +191,7 @@ def paint(
     gap = max(2, int(round(max(advances) * 0.08)))
     total = sum(advances) + gap * (n - 1)
     x0 = (w - total) / 2.0
-    cy = h * 0.52
+    cy = h * 0.52 if center_y is None else float(center_y)
     drop = h * (0.22 if phrase in _COUNTDOWN_SET else 0.28)
 
     slots: list[float] = []
