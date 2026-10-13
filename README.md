@@ -27,7 +27,7 @@ python main.py
 | `release\WorkTimer-Setup.exe` | Windows 8.1 / 10 / 11（64 位） | `.venv`，Python 3.12 |
 | `release\WorkTimer-Win7-Setup.exe` | Windows 7 SP1（64 位） | `.venv38`，Python 3.8 |
 
-都是按用户安装到 `%LOCALAPPDATA%\Programs\WorkTimer`，不要管理员权限，控制面板里能卸载。`dist\` 不覆盖，留给本机旧版测 OTA。
+默认装到 `%LOCALAPPDATA%\Programs\WorkTimer`，安装向导可以改文件夹。不要管理员权限，控制面板里能卸载。检查更新会装回上次选的位置。`dist\` 不覆盖，留给本机旧版测 OTA。
 
 打包前提（一次性）：
 

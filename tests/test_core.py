@@ -817,19 +817,19 @@ class FxTests(unittest.TestCase):
     def test_friendly_update_errors(self):
         """弹窗不该把 HTTPError 原文甩给用户。"""
         cases = {
-            "HTTP 404": "更新源上还没有发布版本",
-            "HTTP 403": "更新服务器拒绝了请求",
-            "HTTP 502": "更新服务器暂时故障",
-            "网络错误：[Errno 11001] getaddrinfo failed": "连不上更新服务器",
-            "连接超时": "连不上更新服务器",
-            "sha256 校验失败": "下载的文件没通过校验",
+            "HTTP 404": "暂时还没有新版本",
+            "HTTP 403": "现在没法更新",
+            "HTTP 502": "更新这边有点忙",
+            "网络错误：[Errno 11001] getaddrinfo failed": "现在连不上网",
+            "连接超时": "现在连不上网",
+            "sha256 校验失败": "下载的文件不完整",
+            "新版本 1.3.37 还没有上传 WorkTimer-Win7-Setup.exe": "新版本还在准备",
         }
         for raw, head in cases.items():
             self.assertEqual(updater.friendly_error(raw)[0], head, raw)
-        # 兜底也得有标题，且不能把原文丢掉
         head, hint = updater.friendly_error("something exploded")
-        self.assertTrue(head)
-        self.assertIn("exploded", hint)
+        self.assertEqual(head, "这次没更新成功")
+        self.assertNotIn("exploded", hint)
 
     def test_menu_sections_cover_catalog(self):
         secs = themes.menu_sections()

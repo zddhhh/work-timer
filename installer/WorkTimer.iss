@@ -41,7 +41,9 @@ VersionInfoProductVersion={#AppVersion}
 VersionInfoCopyright=© mdslanruo
 PrivilegesRequired=lowest
 DefaultDirName={autopf}\WorkTimer
-DisableDirPage=auto
+; 手动安装给人选文件夹；检查更新是静默的，会沿用上次装的位置
+DisableDirPage=no
+DisableWelcomePage=yes
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
 UsePreviousAppDir=yes
@@ -68,8 +70,12 @@ MinVersion=6.3
 [Languages]
 Name: "chs"; MessagesFile: "ChineseSimplified.isl"
 
-#ifndef Win7
 [Messages]
+chs.WizardSelectDir=安装到哪里
+chs.SelectDirDesc=可以改成你想放的文件夹。以后检查更新还会装回这里。
+chs.SelectDirLabel3=默认装在当前用户自己的目录，不需要管理员。请不要选「程序文件」或 Program Files（那个要管理员权限）。
+chs.SelectDirBrowseLabel=用这个位置就点「下一步」，想换地方点「浏览」。
+#ifndef Win7
 chs.WindowsVersionNotSupported=这个安装包需要 Windows 8.1 或更高版本。%n%nWindows 7 请到发布页下载 WorkTimer-Win7-Setup.exe。
 #endif
 

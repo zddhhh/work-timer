@@ -3104,11 +3104,11 @@ class WorkTimer:
         btn_row.pack(side="bottom", fill="x", padx=16, pady=(8, 16))
 
         if known is not None:
-            status = tk.StringVar(value=f"新版本 {known.version}")
-            detail = tk.StringVar(value=f"你现在用的是 {APP_VERSION}")
+            status = tk.StringVar(value="有新版本可以用")
+            detail = tk.StringVar(value=f"你现在是 {APP_VERSION}，可以升到 {known.version}")
         else:
-            status = tk.StringVar(value="正在检查更新…")
-            detail = tk.StringVar(value=f"当前版本 {APP_VERSION}")
+            status = tk.StringVar(value="正在看看有没有新版本…")
+            detail = tk.StringVar(value="")
 
         tk.Label(
             dlg, textvariable=status, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
@@ -3184,7 +3184,7 @@ class WorkTimer:
             if not alive():
                 return
             if updater.current_exe_path() is None:
-                finish_idle("源码运行时不能自动更新", "打包成 exe 之后才能用", error=True)
+                finish_idle("开发模式不能在线更新", "用安装好的程序才能检查更新", error=True)
                 return
             state["phase"] = "download"
             state["cancel"] = False
@@ -3193,8 +3193,8 @@ class WorkTimer:
                 notes_box.pack_forget()
             except Exception:
                 pass
-            status.set(f"正在下载 {info.version}")
-            detail.set("下载完会自动重启，设置和日程都会留着")
+            status.set("正在下载新版本…")
+            detail.set("下完会自己装上。日程、备忘和设置都还在。")
             set_btns([("取消", on_close, False)])
             # 更新要点清掉了，窗口得跟着缩回去，不然底下一大片空白
             _fit_card(dlg, min_w=300, min_h=120, near=near)
@@ -3247,14 +3247,14 @@ class WorkTimer:
                             pct = max(0, min(100, int(done * 100 / total)))
                             bar.configure(value=pct)
                             detail.set(
-                                f"已下载 {done / (1024 * 1024):.1f} MB / 共 {total / (1024 * 1024):.1f} MB"
+                                f"已下 {done / (1024 * 1024):.1f} MB，一共 {total / (1024 * 1024):.1f} MB"
                             )
                         else:
-                            detail.set(f"已下载 {done / (1024 * 1024):.1f} MB")
+                            detail.set(f"已下 {done / (1024 * 1024):.1f} MB")
                     elif kind == "ok":
                         path = done_box[0][1]
-                        status.set("正在安装，马上重启")
-                        detail.set("这就好，别关窗口")
+                        status.set("正在安装，马上就好")
+                        detail.set("窗口会关一下再打开，日程和设置不会丢。")
                         bar.configure(value=100)
                         dlg.update_idletasks()
                         try:
@@ -3294,9 +3294,9 @@ class WorkTimer:
                 bar.pack_forget()
             except Exception:
                 pass
-            status.set(f"新版本 {info.version}")
+            status.set("有新版本可以用")
             # 换行写死：Tk 不在中文里断词，一长串跟在空格后面会把前面那一小截甩成孤行
-            detail.set(f"从 {APP_VERSION} 升到 {info.version}\n装完自动重启，设置和日程都会留着")
+            detail.set(f"你现在是 {APP_VERSION}，可以升到 {info.version}。\n点更新后窗口会关一下再打开，日程和设置都还在。")
             clear_notes()
             try:
                 notes = changelog.highlights(info.body)
@@ -3305,7 +3305,7 @@ class WorkTimer:
                 notes = []
             if notes:
                 tk.Label(
-                    notes_box, text="这一版改了什么", fg=_CARD_FG, bg=_CARD_BG,
+                    notes_box, text="这一版有什么变化", fg=_CARD_FG, bg=_CARD_BG,
                     font=("Microsoft YaHei UI", 9, "bold"), anchor="w",
                 ).pack(anchor="w", pady=(10, 3))
                 for item in notes:
@@ -3318,7 +3318,7 @@ class WorkTimer:
             def go(inf=info) -> None:
                 state["pending_dl"] = inf
 
-            set_btns([("现在更新", go, True), ("以后再说", on_close, False)])
+            set_btns([("立即更新", go, True), ("暂不", on_close, False)])
             _fit_card(dlg, min_w=300, min_h=170, near=near)
 
         if known is not None:
@@ -3338,15 +3338,15 @@ class WorkTimer:
                 if result_box:
                     st, info = result_box[0]
                     if st == "no_repo":
-                        finish_idle("这个版本不带自动更新", "去项目主页手动下载最新版", error=True)
+                        finish_idle("这个版本不能在线更新", "请到官网手动下载安装包", error=True)
                     elif st.startswith("error:"):
                         fail(st[6:])
                     elif st == "latest":
-                        finish_idle("已经是最新版了", f"当前 {APP_VERSION}")
+                        finish_idle("已经是最新的了", f"当前是 {APP_VERSION}，不用更新")
                     elif st == "available" and info is not None:
                         show_available(info)
                     else:
-                        finish_idle("暂时没有新版本", f"当前 {APP_VERSION}")
+                        finish_idle("暂时没有新版本", f"当前是 {APP_VERSION}")
                     break
                 try:
                     dlg.update()
