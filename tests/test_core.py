@@ -884,12 +884,15 @@ class FxTests(unittest.TestCase):
         """Release 正文要能变成给人看的几条：版本号标题、sha256、行首标记都得去掉。"""
         import changelog
 
+        digest = "a" * 64
         body = (
             "WorkTimer 1.2.2\n\n"
             "- 墨水涟漪的落墨点移到大数字右边\n"
             "* 更新提示改成人话\n"
             "\n"
-            "sha256: 634fdfeb2db5a675de54bfdff8241661\n"
+            f"sha256(WorkTimer-Setup.exe): {digest}\n"
+            f"sha256(WorkTimer-Win7-Setup.exe): {digest}\n"
+            f"sha256: {digest}\n"
         )
         got = changelog.highlights(body)
         self.assertEqual(got, ["墨水涟漪的落墨点移到大数字右边", "更新提示改成人话"])

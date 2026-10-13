@@ -8,7 +8,11 @@ import store
 import updater
 
 _HEADING = re.compile(r"^##\s+(\d+\.\d+\.\d+)\s*$")
-_NOISE = re.compile(r"^\s*(sha256|md5|sha1)\s*[:：]", re.IGNORECASE)
+# 老格式 `sha256: <hex>`，以及按安装包写的 `sha256(WorkTimer-Setup.exe): <hex>`
+_NOISE = re.compile(
+    r"^\s*(?:sha256|md5|sha1)(?:\s*\([^)]*\))?\s*[:：]",
+    re.IGNORECASE,
+)
 
 
 def highlights(body: str, *, limit: int = 4) -> list[str]:

@@ -3134,8 +3134,13 @@ class WorkTimer:
         ).pack(pady=(16, 6), padx=18, anchor="w")
         tk.Label(
             dlg, textvariable=detail, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
-            wraplength=270, justify="left", anchor="w",
-        ).pack(padx=18, anchor="w")
+            wraplength=284, justify="left", anchor="w",
+        ).pack(fill="x", padx=18, anchor="w")
+        progress = tk.StringVar(value="")
+        progress_lbl = tk.Label(
+            dlg, textvariable=progress, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            anchor="w",
+        )
         # 更新前先让用户看到这版改了什么，别让人闭着眼点「现在更新」
         notes_box = tk.Frame(dlg, bg=_CARD_BG)
         notes_box.pack(fill="x", padx=18, anchor="w")
@@ -3190,6 +3195,11 @@ class WorkTimer:
             except Exception:
                 pass
             clear_notes()
+            progress.set("")
+            try:
+                progress_lbl.pack_forget()
+            except Exception:
+                pass
             status.set(msg)
             detail.set(short(sub))
             set_btns([("好", on_close, False)])
@@ -3214,18 +3224,23 @@ class WorkTimer:
                 pass
             status.set("正在下载新版本…")
             detail.set("下完会自己装上。日程、备忘和设置都还在。")
+            progress.set("")
             set_btns([("取消", on_close, False)])
-            # 更新要点清掉了，窗口得跟着缩回去，不然底下一大片空白
-            _fit_card(dlg, min_w=300, min_h=120, near=near)
             try:
                 bar.stop()
             except Exception:
                 pass
             bar.configure(mode="determinate", maximum=100, value=0)
+            # 进度条和说明都就位后再量高度，不然条会压到「日程不会丢」那一行上
             try:
-                bar.pack(pady=(12, 4), padx=18)
+                progress_lbl.pack(fill="x", padx=18, pady=(6, 0), anchor="w")
             except Exception:
                 pass
+            try:
+                bar.pack(pady=(8, 4), padx=18)
+            except Exception:
+                pass
+            _fit_card(dlg, min_w=320, min_h=168, near=near)
 
             done_box: list[object] = []
 
@@ -3265,17 +3280,19 @@ class WorkTimer:
                         if total > 0:
                             pct = max(0, min(100, int(done * 100 / total)))
                             bar.configure(value=pct)
-                            detail.set(
+                            progress.set(
                                 f"已下 {done / (1024 * 1024):.1f} MB，一共 {total / (1024 * 1024):.1f} MB"
                             )
                         else:
-                            detail.set(f"已下 {done / (1024 * 1024):.1f} MB")
+                            progress.set(f"已下 {done / (1024 * 1024):.1f} MB")
                     elif kind == "ok":
                         path = done_box[0][1]
                         status.set("正在安装，马上就好")
                         detail.set("窗口会关一下再打开，日程和设置不会丢。")
+                        progress.set("下载完成")
                         bar.configure(value=100)
-                        dlg.update_idletasks()
+                        _fit_card(dlg, min_w=320, min_h=168, near=near)
+                        dlg.update()
                         try:
                             updater.apply_update_and_restart(path)  # type: ignore[arg-type]
                             updater.force_exit_for_update()
