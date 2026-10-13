@@ -223,6 +223,16 @@ class ThemeTests(unittest.TestCase):
         merged = themes._merge_with_bundled([tampered], bundled)
         self.assertEqual(next(t for t in merged if t.id == "ghost").fill, ghost.fill)
 
+    def test_font_size_tracks_window(self):
+        base = ornaments.layout_for(248, 92)
+        self.assertEqual(base, (15.0, 28.0, 12.0))
+        # 加宽 8 像素：以前要凑满约 16 像素才跳一整号，现在只跟着大一点点
+        grown = ornaments.layout_for(256, 95)
+        self.assertGreater(grown[0], base[0])
+        self.assertLess(grown[0] - base[0], 1.0)
+        self.assertGreater(grown[1], base[1])
+        self.assertLess(grown[1] - base[1], 2.0)
+
 
 class MeowTests(unittest.TestCase):
     def test_catalog_has_meow_but_json_does_not(self):

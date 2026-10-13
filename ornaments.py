@@ -69,12 +69,12 @@ def _resized(name: str, src: Image.Image, tw: int, th: int) -> Image.Image:
     return out
 
 
-def layout_for(w: int, h: int) -> tuple[int, int, int]:
-    """按窗口尺寸算字体。"""
+def layout_for(w: int, h: int) -> tuple[float, float, float]:
+    """按窗口尺寸算字体。小数点字号，拉伸时字跟着卡片一起变，不再整号跳。"""
     scale = min(max(w, 1) / 248.0, max(h, 1) / 92.0)
-    ft = max(10, min(26, int(round(15 * scale))))
-    fb = max(16, min(44, int(round(28 * scale))))
-    fs = max(8, min(18, int(round(12 * scale))))
+    ft = max(10.0, min(26.0, 15.0 * scale))
+    fb = max(16.0, min(44.0, 28.0 * scale))
+    fs = max(8.0, min(18.0, 12.0 * scale))
     return ft, fb, fs
 
 

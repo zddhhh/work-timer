@@ -740,17 +740,17 @@ class Layout:
         self.s = bh / 92.0
         self.k = 0.5 * self.s
         self.gy = y0 + bh - 6.5 * self.s
-        self.title_y = int(round(y0 + 3.5 * self.s))
+        self.title_y = y0 + 3.5 * self.s
         self.cy = y0 + 36.0 * self.s
-        self.row_h = max(16, int(round(37.0 * self.s)))
-        self.row_y = int(round(self.cy - self.row_h / 2.0))
+        self.row_h = max(16.0, 37.0 * self.s)
+        self.row_y = self.cy - self.row_h / 2.0
 
 
 def layout(box: tuple[int, int, int, int]) -> Layout:
     return Layout(box)
 
 
-_FONT_CACHE: dict[int, object] = {}
+_FONT_CACHE: dict[float, object] = {}
 
 
 def big_font(size: int, fallback=None):
@@ -760,7 +760,8 @@ def big_font(size: int, fallback=None):
 
     from PIL import ImageFont
 
-    size = max(10, min(40, int(size)))
+    size = max(10.0, min(40.0, float(size)))
+    size = round(size * 4.0) / 4.0
     got = _FONT_CACHE.get(size)
     if got is not None:
         return got

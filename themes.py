@@ -725,7 +725,7 @@ def paint_card(
     if meow_lay is not None:
         title_y = meow_lay.title_y
         if big:
-            font_big = meow.big_font(int(round(22 * meow_lay.s)), font_big) or font_big
+            font_big = meow.big_font(22.0 * meow_lay.s, font_big) or font_big
             bb = d.textbbox((0, 0), big, font=font_big)
             big_y = int(round(meow_lay.cy + 1.5 * meow_lay.s - (bb[1] + bb[3]) / 2.0))
     if show_flip:
@@ -738,7 +738,8 @@ def paint_card(
     if meow_lay is not None and title:
         d.text(
             (title_x, title_y), title, font=font_title, fill=title_fill,
-            stroke_width=1 if compact_text else 2, stroke_fill=(255, 255, 255, 255),
+            stroke_width=1 if compact_text else max(1, int(round(2.0 * meow_lay.s))),
+            stroke_fill=(255, 255, 255, 255),
         )
     else:
         _halo_text(

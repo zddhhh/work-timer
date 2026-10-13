@@ -1551,15 +1551,21 @@ def paint_neon_active_shots(
 FLIP_ANIM_SEC = 0.36
 FLIP_TAP_SEC = 0.32
 
-_FLIP_FONT_CACHE: dict[int, ImageFont.ImageFont] = {}
-_FLIP_UNIT_FONT_CACHE: dict[int, ImageFont.ImageFont] = {}
+_FLIP_FONT_CACHE: dict[float, ImageFont.ImageFont] = {}
+_FLIP_UNIT_FONT_CACHE: dict[float, ImageFont.ImageFont] = {}
 
 
-def _flip_font(size: int) -> ImageFont.ImageFont:
+def _font_px(size: float, lo: float, hi: float) -> float:
+    """字号收到 0.25 像素一档，拉伸时连续，缓存也不会无限涨。"""
+    size = max(lo, min(hi, float(size)))
+    return round(size * 4.0) / 4.0
+
+
+def _flip_font(size: float) -> ImageFont.ImageFont:
     import os
     from pathlib import Path
 
-    size = max(10, min(40, size))
+    size = _font_px(size, 10, 40)
     got = _FLIP_FONT_CACHE.get(size)
     if got is not None:
         return got
@@ -1576,11 +1582,11 @@ def _flip_font(size: int) -> ImageFont.ImageFont:
     return font
 
 
-def _flip_unit_font(size: int) -> ImageFont.ImageFont:
+def _flip_unit_font(size: float) -> ImageFont.ImageFont:
     import os
     from pathlib import Path
 
-    size = max(9, min(22, size))
+    size = _font_px(size, 9, 22)
     got = _FLIP_UNIT_FONT_CACHE.get(size)
     if got is not None:
         return got
@@ -1846,7 +1852,7 @@ def _flip_row_metrics(
     digit_gap = max(2.0, cell_h * 0.04)
     group_gap = max(6.0, cell_h * 0.16)
     unit_gap = max(3.0, cell_h * 0.08)
-    unit_fs = max(12, int(cell_h * 0.56))
+    unit_fs = max(12.0, cell_h * 0.56)
     unit_font = _flip_unit_font(unit_fs)
 
     def total_width(scale: float) -> float:
@@ -1873,7 +1879,7 @@ def _flip_row_metrics(
         digit_gap * scale,
         group_gap * scale,
         unit_gap * scale,
-        max(9, int(unit_fs * scale)),
+        max(9.0, unit_fs * scale),
         unit_font,
         scale,
     )
@@ -2088,7 +2094,7 @@ def paint_flip_row(
         d = ImageDraw.Draw(img)
         d.text((x, y), text, font=font_fallback, fill=digit_color)
         return
-    fs = max(12 if cell_h < 26 else 11, int(cell_h * 0.70))
+    fs = max(12.0 if cell_h < 26 else 11.0, cell_h * 0.70)
     font = _flip_font(fs)
     unit_font = _flip_unit_font(unit_fs)
     d_probe = ImageDraw.Draw(img)

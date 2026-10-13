@@ -45,14 +45,26 @@ IDLE_FPS = 30
 _LEGACY_SIZES = {"s": (248, 92), "m": (320, 118), "l": (400, 148)}
 
 
-def _font(size: int) -> ImageFont.ImageFont:
+_FONT_CACHE: dict[float, ImageFont.ImageFont] = {}
+
+
+def _font(size: float) -> ImageFont.ImageFont:
+    """字号按 0.25 像素一档缓存。拉伸时字连续变大，又不用每帧重新读字体文件。"""
+    key = round(float(size) * 4.0) / 4.0
+    got = _FONT_CACHE.get(key)
+    if got is not None:
+        return got
     windir = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     for name in ("msyhbd.ttc", "msyh.ttc", "msyh.ttf", "simhei.ttf"):
         try:
-            return ImageFont.truetype(str(windir / name), size)
+            got = ImageFont.truetype(str(windir / name), key)
+            break
         except OSError:
             continue
-    return ImageFont.load_default()
+    if got is None:
+        got = ImageFont.load_default()
+    _FONT_CACHE[key] = got
+    return got
 
 
 def _kinetic_font(w: int, n: int) -> ImageFont.ImageFont:
