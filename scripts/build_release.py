@@ -1,19 +1,45 @@
-# 一键打包：产物进 release/，不碰 dist/（dist 留给本机旧版做 OTA 测试）
-# 用法: .\.venv\Scripts\python.exe scripts\build_release.py
+# 一键打包：PyInstaller 目录版 + Inno Setup 安装包，产物进 release/，不碰 dist/（dist 留给本机旧版做 OTA 测试）
+# 用法: .\.venv\Scripts\python.exe scripts\build_release.py            主包 + Win7 包
+#       .\.venv\Scripts\python.exe scripts\build_release.py main       只打主包（.venv，Python 3.12，Win8.1+）
+#       .\.venv\Scripts\python.exe scripts\build_release.py win7       只打 Win7 包（.venv38，Python 3.8）
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VENV_PY = ROOT / ".venv" / "Scripts" / "python.exe"
 DIST_NAME = "WorkTimer"
 OUT_DIR = ROOT / "release"
-EXE_PATH = OUT_DIR / f"{DIST_NAME}.exe"
+ISS = ROOT / "installer" / "WorkTimer.iss"
+
+HIDDEN_IMPORTS = [
+    "themes", "changelog", "backdrop", "ornaments", "schedules", "memos", "worklog", "attachments",
+    "PIL.ImageTk", "autostart", "desktop_shortcut", "single_instance", "key_hide", "uninstall", "store",
+    "layered_win", "festival", "kinetic", "flex_time", "feedback", "updater", "win_drop", "tkinterdnd2",
+    "version",
+]
+
+
+def _version_ns() -> dict:
+    ns: dict = {}
+    exec((ROOT / "version.py").read_text(encoding="utf-8"), ns)
+    return ns
+
+
+VARIANTS = {
+    "main": {"venv": ROOT / ".venv", "asset": _version_ns()["MAIN_SETUP"], "win7": False},
+    "win7": {"venv": ROOT / ".venv38", "asset": _version_ns()["WIN7_SETUP"], "win7": True},
+}
+
+
+def setup_path(variant: str) -> Path:
+    return OUT_DIR / VARIANTS[variant]["asset"]
 
 
 def _bundle_update_defaults() -> Path:
@@ -33,96 +59,136 @@ def _bundle_update_defaults() -> Path:
     return out
 
 
-def main() -> None:
-    py = str(VENV_PY if VENV_PY.exists() else sys.executable)
-    for p in (ROOT / "build", OUT_DIR, ROOT / f"{DIST_NAME}.spec"):
-        if p.is_dir():
-            shutil.rmtree(p, ignore_errors=True)
-        elif p.is_file():
-            p.unlink(missing_ok=True)
+def _version_file() -> Path:
+    """exe 属性里的产品名/公司/版本。没有这些元数据的 PyInstaller 包更容易被杀软启发式判可疑。"""
+    ver = str(_version_ns()["APP_VERSION"])
+    nums = [int(x) for x in ver.split(".")[:4] if x.isdigit()]
+    nums += [0] * (4 - len(nums))
+    tup = tuple(nums)
+    dotted = ".".join(str(n) for n in tup)
+    fields = {
+        "CompanyName": "mdslanruo",
+        "FileDescription": "WorkTimer 下班倒计时",
+        "FileVersion": dotted,
+        "InternalName": DIST_NAME,
+        "LegalCopyright": "© mdslanruo",
+        "OriginalFilename": f"{DIST_NAME}.exe",
+        "ProductName": "WorkTimer 下班倒计时",
+        "ProductVersion": ver,
+    }
+    strings = ",\n".join(f"            StringStruct({k!r}, {v!r})" for k, v in fields.items())
+    text = f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={tup}, prodvers={tup}, mask=0x3f, flags=0x0, OS=0x40004,
+                    fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([
+        StringTable('080404b0', [
+{strings}
+        ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [2052, 1200])])
+  ]
+)
+"""
+    out = ROOT / "build" / "_bundle" / "version_info.txt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    return out
 
-    bundled_defaults = _bundle_update_defaults()
+
+def _check_bootloader(venv: Path, py: Path) -> None:
+    """官方预编译 bootloader 被大量恶意样本复用，杀软误报多；必须是 build_bootloader.py 编的。"""
+    runw = subprocess.check_output(
+        [str(py), "-c", "import PyInstaller,os;print(os.path.join(os.path.dirname(PyInstaller.__file__),"
+         "'bootloader','Windows-64bit-intel','runw.exe'))"],
+        text=True,
+    ).strip()
+    got = hashlib.sha256(Path(runw).read_bytes()).hexdigest()
+    marker = venv / "wt_bootloader.sha256"
+    want = marker.read_text(encoding="ascii").strip() if marker.exists() else ""
+    if got != want:
+        raise SystemExit(
+            f"{venv.name} 里的 bootloader 不是自编译的（升级过 PyInstaller？）\n"
+            f"先跑: python scripts\\build_bootloader.py {venv.name}"
+        )
+
+
+def _iscc() -> Path:
+    found = shutil.which("ISCC")
+    if found:
+        return Path(found)
+    for base in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles(x86)", ""), os.environ.get("ProgramFiles", "")):
+        for p in (Path(base) / "Programs" / "Inno Setup 6" / "ISCC.exe", Path(base) / "Inno Setup 6" / "ISCC.exe"):
+            if p.exists():
+                return p
+    raise SystemExit("找不到 ISCC.exe：winget install JRSoftware.InnoSetup")
+
+
+def build(variant: str) -> Path:
+    cfg = VARIANTS[variant]
+    venv: Path = cfg["venv"]
+    py = venv / "Scripts" / "python.exe"
+    if not py.exists():
+        raise SystemExit(f"没有 {py}")
+    _check_bootloader(venv, py)
+    work = ROOT / "build" / variant
+    app_dir = work / "dist"
+    shutil.rmtree(work, ignore_errors=True)
+    (ROOT / f"{DIST_NAME}.spec").unlink(missing_ok=True)
+
     cmd = [
-        py,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--windowed",
-        "--onefile",
-        "--icon",
-        str(ROOT / "assets" / "app.ico"),
-        "--name",
-        DIST_NAME,
-        "--distpath",
-        str(OUT_DIR),
-        "--workpath",
-        str(ROOT / "build"),
-        "--add-data",
-        f"{bundled_defaults};.",
-        "--add-data",
-        "themes.json;.",
-        "--add-data",
-        "assets;assets",
-        "--add-data",
-        "docs/更新说明.md;docs",
-        "--hidden-import",
-        "themes",
-        "--hidden-import",
-        "changelog",
-        "--hidden-import",
-        "backdrop",
-        "--hidden-import",
-        "ornaments",
-        "--hidden-import",
-        "schedules",
-        "--hidden-import",
-        "memos",
-        "--hidden-import",
-        "worklog",
-        "--hidden-import",
-        "attachments",
-        "--hidden-import",
-        "PIL.ImageTk",
-        "--hidden-import",
-        "autostart",
-        "--hidden-import",
-        "desktop_shortcut",
-        "--hidden-import",
-        "single_instance",
-        "--hidden-import",
-        "key_hide",
-        "--hidden-import",
-        "uninstall",
-        "--hidden-import",
-        "store",
-        "--hidden-import",
-        "layered_win",
-        "--hidden-import",
-        "festival",
-        "--hidden-import",
-        "kinetic",
-        "--hidden-import",
-        "flex_time",
-        "--hidden-import",
-        "feedback",
-        "--hidden-import",
-        "updater",
-        "--hidden-import",
-        "win_drop",
-        "--hidden-import",
-        "tkinterdnd2",
-        "--collect-all",
-        "tkinterdnd2",
-        "--hidden-import",
-        "version",
-        "main.py",
+        str(py), "-m", "PyInstaller",
+        "--noconfirm", "--clean", "--windowed",
+        # 目录版：单文件版每次启动要往 %TEMP% 解压一整套 Python 再执行，是杀软最敏感的行为之一
+        "--onedir",
+        "--noupx",
+        "--version-file", str(_version_file()),
+        "--icon", str(ROOT / "assets" / "app.ico"),
+        "--name", DIST_NAME,
+        "--distpath", str(app_dir),
+        "--workpath", str(work / "pyi"),
+        "--specpath", str(work),
+        "--add-data", f"{_bundle_update_defaults()};.",
+        "--add-data", f"{ROOT / 'themes.json'};.",
+        "--add-data", f"{ROOT / 'assets'};assets",
+        "--add-data", f"{ROOT / 'docs' / '更新说明.md'};docs",
+        "--collect-all", "tkinterdnd2",
     ]
+    for mod in HIDDEN_IMPORTS:
+        cmd += ["--hidden-import", mod]
+    cmd.append(str(ROOT / "main.py"))
     subprocess.check_call(cmd, cwd=ROOT)
-    size_mb = EXE_PATH.stat().st_size / (1024 * 1024)
-    print(f"\nOK: {EXE_PATH}")
-    print(f"大小约 {size_mb:.1f} MB")
-    print("已写入 release/，未改动 dist/。请上传 GitCode 后用 dist 里的旧 exe 测 OTA。")
+
+    OUT_DIR.mkdir(exist_ok=True)
+    out = setup_path(variant)
+    out.unlink(missing_ok=True)
+    iscc = [
+        str(_iscc()), "/Q",
+        f"/DAppVersion={_version_ns()['APP_VERSION']}",
+        f"/DSourceDir={app_dir / DIST_NAME}",
+        f"/DOutputDir={OUT_DIR}",
+        f"/DOutputName={out.stem}",
+    ]
+    if cfg["win7"]:
+        iscc.append("/DWin7")
+    iscc.append(str(ISS))
+    subprocess.check_call(iscc, cwd=ISS.parent)
+    print(f"OK: {out}  {out.stat().st_size / (1024 * 1024):.1f} MB")
+    return out
+
+
+def main() -> None:
+    which = sys.argv[1:] or list(VARIANTS)
+    bad = [w for w in which if w not in VARIANTS]
+    if bad:
+        raise SystemExit(f"不认识的包：{bad}，可选 {list(VARIANTS)}")
+    try:
+        (OUT_DIR / f"{DIST_NAME}.exe").unlink(missing_ok=True)  # 单文件时代的产物
+    except OSError:
+        pass
+    for w in which:
+        build(w)
+    print("已写入 release/，未改动 dist/。")
 
 
 if __name__ == "__main__":

@@ -866,14 +866,14 @@ class WorkTimer:
                 ctypes.windll.user32.SetProcessDPIAware()
             except Exception:
                 pass
-        if updater.maybe_relaunch_from_stable_install():
-            updater.force_exit_for_update()
-        if updater.resume_pending_update():
-            updater.force_exit_for_update()
         if not single_instance.claim():
             os._exit(0)  # 已有实例在跑：唤起窗口并提示后退出
         updater.cleanup_update_artifacts()
-        updater.stamp_stable_install_version()
+        threading.Thread(
+            target=updater.cleanup_legacy_install,
+            args=(_arg_path("--legacy-cleanup"),),
+            daemon=True,
+        ).start()
         self.cfg = store.load_config()
         try:
             if desktop_shortcut.ensure_all(self.cfg):
@@ -912,7 +912,7 @@ class WorkTimer:
         self._hide_key_held = False
         self._hide_key_chord = False
         self._hide_key_down_at = 0.0
-        self._hide_key_scan_at = 0.0
+        self._hide_key_input_tick: int | None = None
         self._done_seen: dict[str, bool] = {}
         self._celebrate_start = 0.0
         self._celebrate_until = 0.0
@@ -1541,15 +1541,6 @@ class WorkTimer:
         self.win.hide()
         self._esc_hidden = True
 
-    def _hide_other_key_down(self, hide_vk: int) -> bool:
-        ignore = {hide_vk, 0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}
-        for vk in range(0x08, 0xA6):
-            if vk in ignore:
-                continue
-            if layered_win.user32.GetAsyncKeyState(vk) & 0x8000:
-                return True
-        return False
-
     def _poll_key_hide(self) -> None:
         self._poll_clock_skew()
         if not self._key_hide_on() and not self._esc_hidden:
@@ -1557,18 +1548,16 @@ class WorkTimer:
             return
         hide_vk = key_hide.vk(self.cfg)
         down = bool(layered_win.user32.GetAsyncKeyState(hide_vk) & 0x8000)
+        # 修饰键单按才隐藏：按住期间系统「最后输入时刻」变了，就是又按了别的键/动了鼠标（Ctrl+C 等组合）。
+        # 不逐个扫全键盘 GetAsyncKeyState，那是键盘记录器的典型行为，杀软会盯。
         if down and not self._hide_key_held:
-            self._hide_key_chord = (
-                self._hide_other_key_down(hide_vk) if key_hide.is_modifier(hide_vk) else False
-            )
+            self._hide_key_chord = False
             self._hide_key_down_at = time.monotonic()
-            self._hide_key_scan_at = self._hide_key_down_at
-        elif down and not self._hide_key_chord:
-            t = time.monotonic()
-            if t - self._hide_key_scan_at >= 0.05:
-                self._hide_key_scan_at = t
-                if self._hide_other_key_down(hide_vk):
-                    self._hide_key_chord = True
+            self._hide_key_input_tick = worklog.last_input_tick() if key_hide.is_modifier(hide_vk) else None
+        elif down and not self._hide_key_chord and self._hide_key_input_tick is not None:
+            tick = worklog.last_input_tick()
+            if tick is not None and tick != self._hide_key_input_tick:
+                self._hide_key_chord = True
         if (not down) and self._hide_key_held:
             held = time.monotonic() - self._hide_key_down_at
             if (
@@ -3170,7 +3159,7 @@ class WorkTimer:
             # 取消后尽量清掉残留临时包，避免下次提示文件被占用
             state["cancel"] = True
             try:
-                updater.cleanup_update_artifacts(keep_pending=True)
+                updater.cleanup_update_artifacts()
             except Exception:
                 pass
 
@@ -3629,12 +3618,18 @@ class WorkTimer:
             self._tk.destroy()
 
 
+def _arg_path(flag: str) -> Path | None:
+    argv = sys.argv[1:]
+    if flag in argv:
+        i = argv.index(flag)
+        if i + 1 < len(argv) and argv[i + 1].strip():
+            return Path(argv[i + 1].strip().strip('"'))
+    return None
+
+
 def main() -> None:
     sys.excepthook = lambda *args: store.append_log("".join(__import__("traceback").format_exception(*args)))
-    if uninstall.run_if_requested():
-        return
-    if updater.run_ota_replace_if_requested():
-        return
+    updater.patch_legacy_proxy()
     try:
         WorkTimer().run()
     except Exception as e:  # noqa: BLE001

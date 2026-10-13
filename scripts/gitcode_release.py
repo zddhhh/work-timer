@@ -1,8 +1,9 @@
-r"""创建 GitCode Release 并上传 WorkTimer.exe。
+r"""创建 GitCode Release 并上传主安装包和 Win7 安装包。
 
 用法:
   $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
-  .\.venv\Scripts\python.exe scripts\gitcode_release.py
+  .\.venv\Scripts\python.exe scripts\gitcode_release.py              先打包再发
+  .\.venv\Scripts\python.exe scripts\gitcode_release.py --no-build   直接发 release/ 里已测过的包
 """
 from __future__ import annotations
 
@@ -58,13 +59,18 @@ def api(method: str, path: str, tok: str, data: dict | None = None):
         raise SystemExit(f"API 失败 {method} {path}: {e.code} {err}") from e
 
 
-def ensure_exe() -> Path:
-    exe = ROOT / "release" / "WorkTimer.exe"
-    print("打包 exe 到 release/（不碰 dist/）…")
-    subprocess.check_call([sys.executable, str(ROOT / "scripts" / "build_release.py")], cwd=ROOT)
-    if not exe.exists():
-        raise SystemExit("找不到 release/WorkTimer.exe")
-    return exe
+def ensure_setups(build: bool) -> list[Path]:
+    """主包在前：1.3.34 及更早的客户端找不到 WorkTimer.exe 时取第一个 .exe 附件。"""
+    ns: dict = {}
+    exec((ROOT / "version.py").read_text(encoding="utf-8"), ns)
+    setups = [ROOT / "release" / ns["MAIN_SETUP"], ROOT / "release" / ns["WIN7_SETUP"]]
+    if build:
+        print("打包安装包到 release/（不碰 dist/）…")
+        subprocess.check_call([sys.executable, str(ROOT / "scripts" / "build_release.py")], cwd=ROOT)
+    missing = [p.name for p in setups if not p.exists()]
+    if missing:
+        raise SystemExit(f"release/ 里缺 {missing}")
+    return setups
 
 
 def upload_asset(tok: str, tag: str, exe: Path) -> None:
@@ -94,7 +100,11 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修日程列表滚轮：鼠标停在卡片上也能滚，滚动平滑，触控板轻滑有反应，列表不满一屏不再晃"
+    "- 支持 Windows 7：Win7 用户请下载 WorkTimer-Win7-Setup.exe（解决缺少 api-ms-win-core-path-l1-1-0.dll / python312.dll 打不开）\n"
+    "- Windows 8.1 / 10 / 11 下载 WorkTimer-Setup.exe\n"
+    "- 改为安装包发布以减少杀软误报：不需要管理员权限，控制面板可卸载；exe 带版本信息、自编译启动器、"
+    "更新改为静默运行安装包、卸载不再用隐藏 cmd、按键隐藏不再扫描全键盘\n"
+    "- 旧版右键「检查更新」可直接升级，日程/备忘/设置保留"
 )
 
 
@@ -109,10 +119,14 @@ def sha256_of(path: Path) -> str:
 def main() -> None:
     tok = token()
     ver, tag = version_tag()
-    exe = ensure_exe()
-    digest = sha256_of(exe)
+    setups = ensure_setups(build="--no-build" not in sys.argv[1:])
+    digests = {p.name: sha256_of(p) for p in setups}
     print(f"版本 {ver} / {tag}")
-    print("exe:", exe, exe.stat().st_size, "sha256:", digest)
+    for p in setups:
+        print(" ", p.name, p.stat().st_size, "sha256:", digests[p.name])
+    # 新客户端按 `sha256(<附件名>): <hex>` 校验；老客户端只认第一个 `sha256: <hex>`，它们下的是主包
+    sha_lines = "\n".join(f"sha256({n}): {h}" for n, h in digests.items())
+    body = f"WorkTimer {ver}\n\n{RELEASE_NOTE}\n\n{sha_lines}\n\nsha256: {digests[setups[0].name]}\n"
     try:
         api(
             "POST",
@@ -121,8 +135,7 @@ def main() -> None:
             {
                 "tag_name": tag,
                 "name": f"WorkTimer {tag}",
-                # 客户端 updater 会读 `sha256: <hex>` 做下载校验
-                "body": f"WorkTimer {ver}\n\n{RELEASE_NOTE}\n\nsha256: {digest}\n",
+                "body": body,
                 "prerelease": False,
                 "target_commitish": "main",
             },
@@ -131,7 +144,8 @@ def main() -> None:
     except SystemExit as e:
         print("创建 Release 返回:", e)
 
-    upload_asset(tok, tag, exe)
+    for p in setups:
+        upload_asset(tok, tag, p)
     print(f"完成：https://gitcode.com/{OWNER}/{REPO}/releases")
 
 

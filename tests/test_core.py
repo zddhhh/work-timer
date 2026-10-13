@@ -1,6 +1,7 @@
 """纯函数回归：不开窗、不联网。运行：.\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v"""
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -48,6 +49,25 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(updater._sha256_from_body("no hash here"), "")
         self.assertEqual(updater._sha256_from_body(f"sha256：{h}"), h)
 
+    def test_sha256_per_asset(self):
+        a, b = "a" * 64, "b" * 64
+        body = f"note\n\nsha256(WorkTimer-Setup.exe): {a}\nsha256(WorkTimer-Win7-Setup.exe): {b}\n\nsha256: {a}\n"
+        self.assertEqual(updater._sha256_from_body(body, "WorkTimer-Setup.exe"), a)
+        self.assertEqual(updater._sha256_from_body(body, "workTimer-win7-setup.EXE"), b)
+        # 有按附件列的哈希但没列这个附件：宁可不校验，也不能拿别的包的哈希去比
+        self.assertEqual(updater._sha256_from_body(body, "Other.exe"), "")
+
+    def test_normalize_proxies(self):
+        got = updater._normalize_proxies({"http": "http://127.0.0.1:1", "https": "https://127.0.0.1:1"})
+        self.assertEqual(got["https"], "http://127.0.0.1:1")
+        self.assertEqual(got["http"], "http://127.0.0.1:1")
+        self.assertEqual(updater._normalize_proxies({}), {})
+
+    def test_pick_asset_exact_only(self):
+        assets = [{"name": "WorkTimer-Setup.exe"}, {"name": "WorkTimer-Win7-Setup.exe"}]
+        self.assertEqual(updater._pick_asset(assets, "WorkTimer-Win7-Setup.exe")["name"], "WorkTimer-Win7-Setup.exe")
+        self.assertIsNone(updater._pick_asset(assets, "WorkTimer.exe"))
+
     def test_looks_like_exe(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "x.bin"
@@ -60,24 +80,6 @@ class VersionTests(unittest.TestCase):
         msg = updater._safe_error(RuntimeError("bad https://x/y?access_token=abc end"))
         self.assertNotIn("access_token", msg)
         self.assertIn("<url>", msg)
-
-
-class ReplaceOnceTests(unittest.TestCase):
-    def test_retry_keeps_backup(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            cur, staged, old = root / "a.exe", root / "a.exe.new", root / "a.exe.old"
-            cur.write_bytes(b"OLD")
-            staged.write_bytes(b"NEW")
-            updater._replace_once(cur, staged, old)
-            self.assertEqual(cur.read_bytes(), b"NEW")
-            self.assertEqual(old.read_bytes(), b"OLD")
-            # 模拟第一次只完成了 cur→old、staged 尚未就位时的重试：备份不能被删
-            cur.unlink()
-            staged.write_bytes(b"NEW2")
-            updater._replace_once(cur, staged, old)
-            self.assertEqual(cur.read_bytes(), b"NEW2")
-            self.assertEqual(old.read_bytes(), b"OLD")
 
 
 class FestivalScheduleTests(unittest.TestCase):
@@ -369,8 +371,43 @@ class UninstallTests(unittest.TestCase):
     def test_summary_has_warning(self):
         self.assertTrue(any("不可恢复" in line for line in uninstall.summary_lines()))
 
-    def test_run_if_requested_false(self):
-        self.assertFalse(uninstall.run_if_requested(["WorkTimer.exe"]))
+    def test_manifest_has_data_and_legacy_only(self):
+        got = {os.path.normcase(str(p)) for p in uninstall.build_manifest()}
+        self.assertIn(os.path.normcase(str(store.user_data_dir())), got)
+        self.assertIn(os.path.normcase(str(store.legacy_install_dir())), got)
+        self.assertFalse(any(p.endswith(".exe") for p in got))
+
+    def test_legacy_cleanup_noop_from_source(self):
+        # 源码运行（非安装版）不能去删 LocalAppData 里的东西
+        updater.cleanup_legacy_install(Path("C:/nope/WorkTimer.exe"), wait_sec=0)
+
+    def test_legacy_cleanup_installed(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            app = root / "Programs" / "WorkTimer"
+            app.mkdir(parents=True)
+            (app / "WorkTimer.exe").write_bytes(b"MZ")
+            (app / "unins000.exe").write_bytes(b"MZ")
+            legacy = root / "legacy"
+            legacy.mkdir()
+            for n in ("WorkTimer.exe", "WorkTimer.exe.old", "installed_version.txt"):
+                (legacy / n).write_text("x")
+            old = root / "Desktop" / "WorkTimer.exe"
+            old.parent.mkdir()
+            old.write_text("x")
+            keep = root / "Desktop" / "notes.txt"
+            keep.write_text("x")
+            with mock.patch.object(updater, "current_exe_path", return_value=app / "WorkTimer.exe"), \
+                    mock.patch.object(store, "legacy_install_dir", return_value=legacy):
+                updater.cleanup_legacy_install(old, wait_sec=0)
+                # 新安装目录里的 exe 绝不能被当成老版本删掉
+                updater.cleanup_legacy_install(app / "WorkTimer.exe", wait_sec=0)
+            self.assertFalse(legacy.exists())
+            self.assertFalse(old.exists())
+            self.assertTrue(keep.exists())
+            self.assertTrue((app / "WorkTimer.exe").exists())
 
 
 class KeyHideTests(unittest.TestCase):

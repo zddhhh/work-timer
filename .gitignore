@@ -1,4 +1,6 @@
 .venv/
+.venv38/
+build_tools/
 __pycache__/
 *.pyc
 .DS_Store

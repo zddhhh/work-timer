@@ -20,7 +20,20 @@ python main.py
 .\.venv\Scripts\python.exe scripts\build_release.py
 ```
 
-产物：`release\WorkTimer.exe`（给 GitCode 上传）。`dist\` 不覆盖，留给本机旧版测 OTA。
+产物（给 GitCode 上传）：
+
+| 安装包 | 适用系统 | 打包环境 |
+|---|---|---|
+| `release\WorkTimer-Setup.exe` | Windows 8.1 / 10 / 11（64 位） | `.venv`，Python 3.12 |
+| `release\WorkTimer-Win7-Setup.exe` | Windows 7 SP1（64 位） | `.venv38`，Python 3.8 |
+
+都是按用户安装到 `%LOCALAPPDATA%\Programs\WorkTimer`，不要管理员权限，控制面板里能卸载。`dist\` 不覆盖，留给本机旧版测 OTA。
+
+打包前提（一次性）：
+
+- Inno Setup 6：`winget install JRSoftware.InnoSetup`
+- 自编译 PyInstaller bootloader（官方预编译的 bootloader 被大量恶意样本复用，杀软误报多）：装 MinGW（`winget install BrechtSanders.WinLibs.POSIX.MSVCRT`）后跑 `python scripts\build_bootloader.py .venv` 和 `.venv38` 各一次。升级 PyInstaller 后要重跑，否则 `build_release.py` 会拒绝打包。
+- Win7 环境：Python 3.8.10 建 `.venv38`，装 `Pillow<11`、`pyinstaller<7`、`pyinstaller-hooks-contrib`、`tkinterdnd2==0.6.2`。本机开了系统代理时，3.8 的 pip 要先设 `$env:HTTPS_PROXY="http://127.0.0.1:端口"`。
 
 ## 操作
 
@@ -36,7 +49,7 @@ python main.py
 | 右键 → 设置 → 按键隐藏 | 开关，默认关；可设自定义按键（默认 `` ` ``），单击隐藏/再按显示 |
 | 右键 → 设置 → 设置隐藏按键… | 改隐藏用的键位 |
 | 右键 → 设置 → 开机自启动 | 开关；用「启动」文件夹快捷方式，不写注册表 |
-| 右键 → 设置 → 卸载本程序… | 删除快捷方式、配置与 exe，不可恢复 |
+| 右键 → 设置 → 卸载本程序… | 删除快捷方式与配置，再调系统卸载程序删程序文件，不可恢复；也可在控制面板卸载 |
 | 右键 → 关于… | 版本号、打开官方仓库、提交用户反馈（需留联系方式） |
 | 右键 → 检查更新 | GitCode OTA |
 | 右键 → 退出 | 退出 |
@@ -53,9 +66,11 @@ python main.py
 
 ## 自动更新
 
-右键「检查更新」读 GitCode Release，下载 `WorkTimer.exe`，校验 PE 头与 Release 说明里的 `sha256:`，再由新版自己替换重启（不走 PowerShell）。
+右键「检查更新」读 GitCode Release，按当前系统下载对应安装包（Win7 版下 `WorkTimer-Win7-Setup.exe`，其余下 `WorkTimer-Setup.exe`），校验 PE 头与 Release 说明里的 `sha256(<附件名>):`，然后退出并静默运行安装包覆盖安装，装完由安装包拉起新版。
 
-发版：改 `version.py` 的 `APP_VERSION` → `scripts\gitcode_release.py`（打包到 `release/`、创建 Release、把 sha256 写进说明、上传附件）。
+1.3.34 及更早的单文件版只认 `WorkTimer.exe`，找不到时取第一个 `.exe` 附件、校验第一行 `sha256:`，并把它当新 exe 带 `--ota-replace` 参数拉起。所以：主安装包必须先上传、文件名排序在前，说明里要保留一行主包的 `sha256:`；安装包认出这种拉起方式后会转成静默安装，新版启动后删掉老 exe 和 `%LOCALAPPDATA%\WorkTimer` 里的旧副本。
+
+发版：改 `version.py` 的 `APP_VERSION` → `scripts\gitcode_release.py`（打包两个安装包到 `release/`、创建 Release、把两个包的 sha256 写进说明、按顺序上传）。本地已打包测过的用 `--no-build` 直接发。
 
 测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests -v`。待办见 [`docs/优化清单.md`](docs/优化清单.md)。
 

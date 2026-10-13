@@ -332,6 +332,18 @@ class _LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
 
+def last_input_tick() -> int | None:
+    """最后一次键鼠输入的系统 tick（GetTickCount 口径）；拿不到时 None。"""
+    try:
+        info = _LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return None
+        return int(info.dwTime)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def idle_seconds() -> float:
     """距最后一次键鼠输入的秒数；拿不到时当作正在用。"""
     try:
