@@ -45,6 +45,7 @@ def load_config() -> dict:
         "win_w": 248,
         "win_h": 92,
         "key_hide": {"enabled": False, "vk": 0xC0},
+        "hydrate": {"enabled": False, "interval_min": 45, "anchor": "", "pending": False},
         "session_stale": False,
         "last_wall": "",
         "auto_start": False,
@@ -82,10 +83,12 @@ def load_config() -> dict:
         merged.update(data)
         if not (merged.get("gitcode_repo") or "").strip():
             merged["gitcode_repo"] = defaults.get("gitcode_repo", "")
+        import hydrate
         import key_hide
         import skin_settings
 
         key_hide.migrate_legacy(merged, data)
+        merged["hydrate"] = hydrate.merge(merged.get("hydrate"))
         merged.pop("ctrl_hide", None)
         merged.pop("esc_disguise", None)
         merged["skin_settings"] = skin_settings.merge(merged.get("skin_settings"))

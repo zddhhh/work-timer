@@ -27,6 +27,7 @@ NATIONAL_PHRASES: tuple[str, ...] = (
     "山河无恙",
 )
 OFFWORK_PHRASES: tuple[str, ...] = ("下班啦",)
+HYDRATE_PHRASES: tuple[str, ...] = ("该喝水了",)
 _COUNTDOWN_SET = frozenset(COUNTDOWN)
 
 _GLYPH_CACHE: OrderedDict[tuple, Image.Image] = OrderedDict()

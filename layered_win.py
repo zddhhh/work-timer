@@ -86,6 +86,8 @@ ID_CREATE_DESKTOP_SHORTCUT = 15
 ID_KEY_HIDE_SETTINGS = 16
 ID_UNINSTALL = 17
 ID_WORKLOG = 18
+ID_HYDRATE = 19
+ID_HYDRATE_SETTINGS = 9
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
@@ -764,6 +766,8 @@ class LayeredPetWindow:
         *,
         key_hide_enabled: bool = False,
         key_hide_settings_label: str = "设置隐藏按键…",
+        hydrate_enabled: bool = False,
+        hydrate_settings_label: str = "设置喝水间隔…",
         auto_start: bool = False,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
@@ -809,6 +813,13 @@ class LayeredPetWindow:
             "按键隐藏",
         )
         user32.AppendMenuW(hset, MF_STRING, ID_KEY_HIDE_SETTINGS, key_hide_settings_label)
+        user32.AppendMenuW(
+            hset,
+            MF_STRING | (MF_CHECKED if hydrate_enabled else 0),
+            ID_HYDRATE,
+            "喝水提醒",
+        )
+        user32.AppendMenuW(hset, MF_STRING, ID_HYDRATE_SETTINGS, hydrate_settings_label)
         user32.AppendMenuW(
             hset,
             MF_STRING | (MF_CHECKED if auto_start else 0),
@@ -872,6 +883,10 @@ class LayeredPetWindow:
             return "toggle_key_hide"
         if cmd == ID_KEY_HIDE_SETTINGS:
             return "key_hide_settings"
+        if cmd == ID_HYDRATE:
+            return "toggle_hydrate"
+        if cmd == ID_HYDRATE_SETTINGS:
+            return "hydrate_settings"
         if cmd == ID_AUTO_START:
             return "toggle_auto_start"
         if cmd == ID_FMT_HMS:

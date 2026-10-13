@@ -100,11 +100,8 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 支持 Windows 7：Win7 用户请下载 WorkTimer-Win7-Setup.exe（解决缺少 api-ms-win-core-path-l1-1-0.dll / python312.dll 打不开）\n"
-    "- Windows 8.1 / 10 / 11 下载 WorkTimer-Setup.exe\n"
-    "- 改为安装包发布以减少杀软误报：不需要管理员权限，控制面板可卸载；exe 带版本信息、自编译启动器、"
-    "更新改为静默运行安装包、卸载不再用隐藏 cmd、按键隐藏不再扫描全键盘\n"
-    "- 旧版右键「检查更新」可直接升级，日程/备忘/设置保留"
+    "- 喝水提醒：右键 → 设置打开，默认关，间隔 30/45/60/90 分钟。到点卡片闪「该喝水了」，"
+    "点一下表示喝过了；离开座位、隐藏窗口、过了下班点不催"
 )
 
 

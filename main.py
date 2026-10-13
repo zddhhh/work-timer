@@ -22,6 +22,7 @@ import desktop_shortcut
 import festival
 import feedback
 import flex_time
+import hydrate
 import key_hide
 import kinetic
 import layered_win
@@ -959,6 +960,8 @@ class WorkTimer:
         self._font_big = _font(fb)
         self._font_sub = _font(fs)
         self._kinetic: kinetic.Show | None = None
+        self._hydrate_showing = False
+        self._hydrate_paused_at: datetime | None = None
         self._font_kinetic = self._font_big
         self._surface = "dark"
         self._force_surface_sample = True
@@ -977,6 +980,7 @@ class WorkTimer:
         except Exception:
             pass
         key_hide.ensure_fields(self.cfg)
+        hydrate.ensure_fields(self.cfg)
         self.cfg["remember_offwork"] = bool(self.cfg.get("remember_offwork", True))
         self.cfg["auto_start"] = bool(self.cfg.get("auto_start"))
         try:
@@ -1115,11 +1119,13 @@ class WorkTimer:
         if self._kinetic is not None:
             self._kinetic.skip()
             self._kinetic = None
+        self._hydrate_showing = False
         self._last_key = ""
 
     def _start_kinetic(self, phrases: tuple[str, ...] | None = None) -> None:
         phrases = phrases or kinetic.MIDAUTUMN_PHRASES
         self._kinetic = kinetic.Show(phrases, time.monotonic())
+        self._hydrate_showing = phrases == kinetic.HYDRATE_PHRASES
         self._font_kinetic = _kinetic_font(self._win_w, max(len(p) for p in phrases))
         self._last_key = ""
 
@@ -1364,8 +1370,13 @@ class WorkTimer:
         if self._esc_hidden:
             return
         if self._kinetic is not None:
+            drank = self._hydrate_showing
             self._kinetic.skip()
             self._kinetic = None
+            self._hydrate_showing = False
+            if drank:
+                hydrate.reset_anchor(self.cfg, datetime.now())
+                store.save_config(self.cfg)
             self._last_key = ""
             return
         self._maybe_skin_interact(lx, ly)
@@ -1454,6 +1465,60 @@ class WorkTimer:
         store.save_config(self.cfg)
         if not on and self._esc_hidden:
             self._show_after_esc()
+
+    def _hydrate_on(self) -> bool:
+        return hydrate.enabled(self.cfg)
+
+    def _set_hydrate(self, on: bool) -> None:
+        hydrate.set_enabled(self.cfg, on)
+        self._hydrate_paused_at = None
+        if not on and self._hydrate_showing:
+            self._stop_kinetic()
+        store.save_config(self.cfg)
+
+    def _hydrate_after_offwork(self, now: datetime | None = None) -> bool:
+        hm = self._off_hm()
+        if hm is None:
+            return False
+        now = now or datetime.now()
+        _, done = flex_time.remaining_parts(flex_time.remaining_to(now, hm[0], hm[1]))
+        return done
+
+    def _tick_hydrate(self, now_m: float) -> None:
+        if not hydrate.enabled(self.cfg):
+            self._hydrate_paused_at = None
+            return
+        if self._hydrate_showing and not kinetic.playing(self._kinetic, now_m):
+            self._hydrate_showing = False
+        if (
+            kinetic.playing(self._kinetic, now_m)
+            or self._esc_hidden
+            or self._update_dialog_open
+            or self._need_dialog
+            or self._schedule_list_open
+            or self.win.dragging
+            or self.win.resizing
+        ):
+            return
+        now = datetime.now()
+        if self._hydrate_after_offwork(now):
+            self._hydrate_paused_at = None
+            hydrate.decide(self.cfg, now, after_offwork=True)
+            return
+        idle = worklog.idle_seconds()
+        if idle >= worklog.IDLE_LIMIT_SEC:
+            if self._hydrate_paused_at is None:
+                self._hydrate_paused_at = now
+            return
+        if self._hydrate_paused_at is not None:
+            hydrate.shift_anchor(self.cfg, now - self._hydrate_paused_at)
+            self._hydrate_paused_at = None
+            store.save_config(self.cfg)
+        if hydrate.decide(self.cfg, now) != "fire":
+            return
+        hydrate.reset_anchor(self.cfg, now)
+        store.save_config(self.cfg)
+        self._start_kinetic(kinetic.HYDRATE_PHRASES)
 
     def _auto_start_on(self) -> bool:
         return bool(self.cfg.get("auto_start"))
@@ -1953,6 +2018,55 @@ class WorkTimer:
         _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
         _reveal_card(dlg, min_w=420, min_h=300, near=self._dialog_near())
         dlg.after(80, dlg.focus_force)
+        _run_card_modal(dlg, self.win)
+
+    def _open_hydrate_dialog(self) -> None:
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=420, height=300)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        tk.Label(
+            body, text="喝水提醒", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 4), anchor="w")
+        tk.Label(
+            body,
+            text="到点时卡片上闪一句「该喝水了」，不抢下班倒计时。离开座位、开会隐藏窗口、过了下班点都不会催。点一下卡片表示喝过了。",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), wraplength=360, justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+        interval_var = tk.IntVar(value=hydrate.interval_min(self.cfg))
+        box = tk.Frame(body, bg=_CARD_BG)
+        box.pack(anchor="w")
+        tk.Label(box, text="间隔", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(anchor="w")
+        row = tk.Frame(box, bg=_CARD_BG)
+        row.pack(anchor="w", pady=(4, 8))
+        for mins in hydrate.PRESETS:
+            tk.Radiobutton(
+                row, text=f"{mins} 分钟", variable=interval_var, value=mins,
+                fg=_CARD_FG, bg=_CARD_BG, selectcolor=_CARD_BTN, activebackground=_CARD_BG,
+                font=("Microsoft YaHei UI", 10),
+            ).pack(side="left", padx=(0, 10))
+        enabled_var = tk.BooleanVar(value=self._hydrate_on())
+        tk.Checkbutton(
+            body,
+            text="启用喝水提醒",
+            variable=enabled_var,
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            activebackground=_CARD_BG,
+            activeforeground=_CARD_FG,
+            selectcolor="#222733",
+            font=("Microsoft YaHei UI", 10),
+        ).pack(anchor="w", pady=(4, 0))
+
+        def save() -> None:
+            hydrate.set_interval(self.cfg, interval_var.get())
+            self._set_hydrate(bool(enabled_var.get()))
+            dlg.destroy()
+
+        _card_btn(bar, "保存", save, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        _reveal_card(dlg, min_w=420, min_h=280, near=self._dialog_near())
         _run_card_modal(dlg, self.win)
 
     def _prewarm_ui(self) -> None:
@@ -2927,6 +3041,8 @@ class WorkTimer:
             self._theme().id,
             key_hide_enabled=self._key_hide_on(),
             key_hide_settings_label=key_hide.menu_caption(self.cfg),
+            hydrate_enabled=self._hydrate_on(),
+            hydrate_settings_label=hydrate.menu_caption(self.cfg),
             auto_start=self._auto_start_on(),
         )
         if op == "quit":
@@ -2946,6 +3062,10 @@ class WorkTimer:
             self._set_key_hide(not self._key_hide_on())
         elif op == "key_hide_settings":
             self._open_key_hide_dialog()
+        elif op == "toggle_hydrate":
+            self._set_hydrate(not self._hydrate_on())
+        elif op == "hydrate_settings":
+            self._open_hydrate_dialog()
         elif op == "toggle_auto_start":
             self._set_auto_start(not self._auto_start_on())
         elif op == "about":
@@ -3551,6 +3671,7 @@ class WorkTimer:
                     was_dragging = False
                 now_m = time.monotonic()
                 self._tick_kinetic(now_m)
+                self._tick_hydrate(now_m)
                 today = self._today()
                 if today != self._fest_day:
                     self._fest_day = today

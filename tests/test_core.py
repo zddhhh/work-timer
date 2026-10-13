@@ -16,6 +16,7 @@ import feedback  # noqa: E402
 import festival  # noqa: E402
 import store  # noqa: E402
 import flex_time  # noqa: E402
+import hydrate  # noqa: E402
 import key_hide  # noqa: E402
 import uninstall  # noqa: E402
 import ornaments  # noqa: E402
@@ -408,6 +409,89 @@ class UninstallTests(unittest.TestCase):
             self.assertFalse(old.exists())
             self.assertTrue(keep.exists())
             self.assertTrue((app / "WorkTimer.exe").exists())
+
+
+class HydrateTests(unittest.TestCase):
+    def _cfg(self, **kwargs):
+        cfg: dict = {}
+        hydrate.ensure_fields(cfg)
+        cfg["hydrate"].update(kwargs)
+        hydrate.ensure_fields(cfg)
+        return cfg
+
+    def test_defaults_off(self):
+        cfg: dict = {}
+        hydrate.ensure_fields(cfg)
+        self.assertFalse(hydrate.enabled(cfg))
+        self.assertEqual(hydrate.interval_min(cfg), 45)
+        self.assertEqual(hydrate.menu_caption(cfg), "设置喝水间隔…")
+
+    def test_clamp_interval(self):
+        self.assertEqual(hydrate.clamp_interval(0), 15)
+        self.assertEqual(hydrate.clamp_interval(999), 180)
+        self.assertEqual(hydrate.clamp_interval("x"), 45)
+
+    def test_enable_starts_round_not_due(self):
+        cfg: dict = {}
+        now = datetime(2026, 10, 13, 10, 0, 0)
+        hydrate.set_enabled(cfg, True, now=now)
+        self.assertEqual(hydrate.decide(cfg, now), "none")
+        later = now.replace(minute=44, second=59)
+        self.assertEqual(hydrate.decide(cfg, later), "none")
+        due = now.replace(minute=45)
+        self.assertEqual(hydrate.decide(cfg, due), "fire")
+
+    def test_stale_cross_day_no_catchup(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-12T18:00:00")
+        now = datetime(2026, 10, 13, 9, 0, 0)
+        self.assertEqual(hydrate.decide(cfg, now), "none")
+        self.assertTrue(cfg["hydrate"]["anchor"].startswith("2026-10-13T09:00:00"))
+
+    def test_same_day_long_gap_fires_once(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00")
+        now = datetime(2026, 10, 13, 11, 0, 0)
+        self.assertEqual(hydrate.decide(cfg, now), "fire")
+
+    def test_hidden_queues_once(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00")
+        now = datetime(2026, 10, 13, 9, 50, 0)
+        self.assertEqual(hydrate.decide(cfg, now, hidden=True), "none")
+        self.assertTrue(cfg["hydrate"]["pending"])
+        self.assertEqual(hydrate.decide(cfg, now, hidden=False), "fire")
+
+    def test_after_offwork_silences(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00", pending=True)
+        now = datetime(2026, 10, 13, 18, 30, 0)
+        self.assertEqual(hydrate.decide(cfg, now, after_offwork=True), "none")
+        self.assertFalse(cfg["hydrate"]["pending"])
+
+    def test_shift_anchor_keeps_remaining(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00")
+        now = datetime(2026, 10, 13, 9, 10, 0)
+        left = hydrate.interval_sec(cfg) - hydrate.elapsed_sec(cfg, now)
+        from datetime import timedelta
+
+        hydrate.shift_anchor(cfg, timedelta(minutes=20))
+        later = datetime(2026, 10, 13, 9, 30, 0)
+        self.assertAlmostEqual(hydrate.interval_sec(cfg) - hydrate.elapsed_sec(cfg, later), left)
+
+    def test_click_reset_restarts_round(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00", pending=True)
+        now = datetime(2026, 10, 13, 9, 50, 0)
+        hydrate.reset_anchor(cfg, now)
+        self.assertEqual(hydrate.decide(cfg, now), "none")
+        self.assertFalse(cfg["hydrate"]["pending"])
+
+    def test_menu_caption_on(self):
+        cfg = self._cfg(enabled=True, interval_min=30)
+        self.assertIn("30", hydrate.menu_caption(cfg))
+
+    def test_disable_clears(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00", pending=True)
+        hydrate.set_enabled(cfg, False)
+        self.assertFalse(hydrate.enabled(cfg))
+        self.assertEqual(cfg["hydrate"]["anchor"], "")
+        self.assertEqual(hydrate.decide(cfg, datetime(2026, 10, 13, 10, 0, 0)), "none")
 
 
 class KeyHideTests(unittest.TestCase):
