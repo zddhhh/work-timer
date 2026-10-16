@@ -726,7 +726,12 @@ def _run_card_modal(
     on_frame=None,
     stop=None,
 ) -> None:
-    """与分层窗泵兼容的模态循环。默认 Esc 关闭；stop() 为真时只退出循环，不销毁窗口。"""
+    """与分层窗泵兼容的模态循环。默认 Esc 关闭；stop() 为真时只退出循环，不销毁窗口。
+
+    循环挡住主循环时，仍调用窗口上的 blocked_live，倒计时和动画继续走。
+    """
+    live = getattr(win, "blocked_live", None) if win is not None else None
+    note = getattr(win, "note_beat", None) if win is not None else None
     if stop is None:
         dlg.bind("<Escape>", lambda _e: dlg.destroy())
     while True:
@@ -738,8 +743,12 @@ def _run_card_modal(
             dlg.update()
             if win is not None:
                 win.pump()
+            if live is not None and on_frame is not live:
+                live()
             if on_frame is not None:
                 on_frame()
+            if note is not None:
+                note()
         except Exception:
             break
         time.sleep(0.02)
@@ -957,6 +966,8 @@ class WorkTimer:
         self._neon_planets = ornaments.create_neon_planets()
         self._mouse_lx = -1
         self._mouse_ly = -1
+        self._loop_beat = time.monotonic()
+        self._painting = False
         self._ghost_ptr: tuple[int, int] | None = None
         self._ghost_q: tuple[int, int] | None = None
         self._meow = meow.Troupe()
@@ -977,7 +988,6 @@ class WorkTimer:
         self.win.set_mouse_move_handler(self._on_mouse_move)
         self.win.set_mouse_leave_handler(self._on_mouse_leave)
         self.win.set_right_click_handler(self._request_menu)
-        self.win.set_menu_live(self._card_frame)
         self.win.set_request_show_handler(self._on_request_show)
         self._esc_hidden = False
 
@@ -996,6 +1006,9 @@ class WorkTimer:
         self._kinetic: kinetic.Show | None = None
         self._hydrate_showing = False
         self._hydrate_paused_at: datetime | None = None
+        self.win.blocked_live = self._card_frame
+        self.win.note_beat = self._note_beat
+        self.win.set_live_timer(self._on_live_timer)
         self._font_kinetic = self._font_big
         self._surface = "dark"
         self._force_surface_sample = True
@@ -1781,11 +1794,49 @@ class WorkTimer:
             self._worklog_dirty = False
             self._worklog_save_at = mono
 
-    def _card_frame(self) -> None:
-        """弹窗开着时主循环进不去，这里继续记工时并刷新倒计时，避免整窗卡死。"""
+    def _note_beat(self) -> None:
+        """主循环或自家弹窗循环还在转。定时器看到心跳新鲜就不动手。"""
+        self._loop_beat = time.monotonic()
+
+    def _on_live_timer(self) -> None:
+        """菜单、文件选择、系统提示框自己转消息循环，主循环进不去。"""
+        if self._painting:
+            return
+        if time.monotonic() - self._loop_beat < 0.07:
+            return
+        try:
+            self._tick_alive()
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("live-timer", e)
+
+    def _tick_alive(self) -> None:
+        """倒计时、动画、喝水提醒、日程轮播、工时。不采样桌面，避免在系统对话框里卡住。"""
+        now_m = time.monotonic()
+        self._tick_kinetic(now_m)
+        self._tick_hydrate(now_m)
+        today = self._today()
+        if today != self._fest_day:
+            self._fest_day = today
+            if schedules.sync_festival(self.cfg):
+                store.save_config(self.cfg)
+                self._last_key = ""
+        if not kinetic.playing(self._kinetic, now_m) and schedules.rotate_tick(
+            self.cfg, self._last_pin_rotate, now_m
+        ):
+            self._last_pin_rotate = now_m
+            self._last_key = ""
         self._worklog_tick()
-        self._refresh_worklog_live()
         self._paint()
+        self._prune_thunder_hits(now_m)
+        self._prune_ink_hits(now_m)
+
+    def _card_frame(self) -> None:
+        """自家弹窗循环里调用：比定时器多刷新工时账本那一行。"""
+        try:
+            self._tick_alive()
+            self._refresh_worklog_live()
+        except Exception as e:  # noqa: BLE001
+            store.log_exception("card-frame", e)
 
     def _worklog_dur_text(self, r: dict, now: datetime) -> str:
         """记录中的那一行按秒走；已经封账的仍用分钟。"""
@@ -2691,7 +2742,8 @@ class WorkTimer:
                             break
                     dlg.update()
                     self.win.pump()
-                    self._paint()
+                    self._card_frame()
+                    self._note_beat()
                 except Exception:
                     break
                 time.sleep(0.02)
@@ -3367,6 +3419,8 @@ class WorkTimer:
                 try:
                     dlg.update()
                     self.win.pump()
+                    self._card_frame()
+                    self._note_beat()
                 except Exception:
                     state["cancel"] = True
                     state["closed"] = True
@@ -3447,6 +3501,8 @@ class WorkTimer:
                 try:
                     dlg.update()
                     self.win.pump()
+                    self._card_frame()
+                    self._note_beat()
                 except Exception:
                     state["closed"] = True
                     break
@@ -3462,11 +3518,22 @@ class WorkTimer:
             try:
                 dlg.update()
                 self.win.pump()
+                self._card_frame()
+                self._note_beat()
             except Exception:
                 break
             time.sleep(0.03)
 
     def _paint(self) -> None:
+        if self._painting:
+            return
+        self._painting = True
+        try:
+            self._paint_now()
+        finally:
+            self._painting = False
+
+    def _paint_now(self) -> None:
         try:
             now = datetime.now()
             mode = self._display_mode()
@@ -3725,6 +3792,7 @@ class WorkTimer:
         was_resizing = False
         while self.running and not self.win.closed:
             try:
+                self._note_beat()
                 self.win.pump()
                 self._poll_key_hide()
                 if self._esc_hidden:

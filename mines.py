@@ -314,7 +314,8 @@ def open_games(
     show_list()
 
     def on_frame() -> None:
-        if live is not None:
+        # 弹窗循环已经在刷倒计时时，这里不要再刷一遍
+        if live is not None and getattr(win, "blocked_live", None) is not live:
             live()
         tick = state["tick"]
         if tick is not None:

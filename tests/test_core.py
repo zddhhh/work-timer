@@ -450,6 +450,31 @@ class GameDialogTests(unittest.TestCase):
         self.assertGreaterEqual(calls["n"], 3)
         root.destroy()
 
+    def test_modal_loop_refreshes_clock(self):
+        import tkinter as tk
+
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = tk.Toplevel(root)
+        dlg.withdraw()
+        hits = {"n": 0}
+
+        class Win:
+            def pump(self):
+                return None
+
+            def blocked_live(self):
+                hits["n"] += 1
+
+            def note_beat(self):
+                return None
+
+        main._run_card_modal(dlg, Win(), stop=lambda: hits["n"] >= 2)
+        self.assertGreaterEqual(hits["n"], 2)
+        root.destroy()
+
 
 class FeedbackTests(unittest.TestCase):
     def test_body_has_contact_and_roundtrip(self):
