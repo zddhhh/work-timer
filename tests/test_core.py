@@ -363,6 +363,88 @@ class DialogAnchorTests(unittest.TestCase):
         self.assertEqual((a[0], a[1]), (100, 200))
         self.assertTrue(a)
 
+    def test_first_map_stays_offscreen(self):
+        import main
+
+        self.assertEqual(main._offscreen_bounds("360x220+12+40"), "360x220+-20000+0")
+        self.assertEqual(main._offscreen_bounds("360x220"), "360x220+-20000+0")
+
+
+class GameDialogTests(unittest.TestCase):
+    def _walk(self, widget, text):
+        import tkinter as tk
+
+        if isinstance(widget, (tk.Label, tk.Button)) and widget.cget("text") == text:
+            return widget
+        for child in widget.winfo_children():
+            found = self._walk(child, text)
+            if found is not None:
+                return found
+        return None
+
+    def test_list_and_both_games_show_without_hiding_the_clock(self):
+        import time
+        import tkinter as tk
+
+        import main
+        import mines
+
+        root = tk.Tk()
+        root.withdraw()
+        calls = {"n": 0}
+
+        def shown(dlg) -> None:
+            self.assertGreaterEqual(float(dlg.attributes("-alpha")), 0.99)
+            self.assertGreater(dlg.winfo_x(), -1000)
+            self.assertTrue(dlg.winfo_viewable())
+
+        def click(dlg, text) -> None:
+            widget = self._walk(dlg, text)
+            self.assertIsNotNone(widget)
+            if isinstance(widget, tk.Button):
+                widget.invoke()
+            else:
+                widget.event_generate("<Button-1>")
+            dlg.update()
+            time.sleep(0.02)
+            dlg.update()
+
+        def modal(dlg, _win, on_frame=None):
+            dlg.update()
+            if on_frame:
+                on_frame()
+            shown(dlg)
+            self.assertIsNotNone(self._walk(dlg, "小游戏"))
+            click(dlg, "扫雷")
+            if on_frame:
+                on_frame()
+            shown(dlg)
+            self.assertIsNotNone(self._walk(dlg, "剩余 10"))
+            click(dlg, "返回")
+            if on_frame:
+                on_frame()
+            shown(dlg)
+            click(dlg, "高尔夫")
+            if on_frame:
+                on_frame()
+            shown(dlg)
+            self.assertIsNotNone(self._walk(dlg, "点亮边的牌接上，或点牌堆翻一张。"))
+            dlg.destroy()
+
+        mines.open_games(
+            root, (80, 80), None,
+            dialog=main._card_dialog,
+            button=main._card_btn,
+            reveal=main._reveal_card,
+            modal=modal,
+            bg=main._CARD_BG,
+            fg=main._CARD_FG,
+            muted=main._CARD_MUTED,
+            live=lambda: calls.__setitem__("n", calls["n"] + 1),
+        )
+        self.assertGreaterEqual(calls["n"], 3)
+        root.destroy()
+
 
 class FeedbackTests(unittest.TestCase):
     def test_body_has_contact_and_roundtrip(self):

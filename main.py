@@ -193,11 +193,23 @@ def _alpha(dlg: tk.Toplevel) -> float:
         return 1.0
 
 
+def _offscreen_bounds(bounds: str) -> str:
+    """保留宽高，挪到屏幕外。deiconify 那一帧经常不听透明度，不能在屏幕上映射。"""
+    size = bounds
+    for mark in ("+", "-"):
+        i = bounds.find(mark)
+        if i > 0:
+            size = bounds[:i]
+            break
+    return f"{size}+-20000+0"
+
+
 def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
-    """按内容把卡片撑开；藏着的卡片在全透明状态下映射并画完，再亮出来。
+    """按内容把卡片撑开；藏着的卡片在屏幕外画完，再挪回来亮出。
 
     update_idletasks 只排版、不处理 WM_PAINT。直接亮出会先看到空底板和白色按钮块，
     控件再分几次画上去。必须 update() 让控件真正画完。
+    第一次 deiconify 时 -alpha 经常还不生效，所以先在屏幕外映射，量准尺寸再挪进来。
     """
     try:
         withdrawn = dlg.state() == "withdrawn"
@@ -207,16 +219,19 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     if not visible:
         # 带着 WS_EX_TRANSPARENT 挪回屏幕会被当成「底下变了」整窗重画，必须先摘掉
         _click_through(dlg, False)
-    dlg.geometry(_card_bounds(dlg, min_w=min_w, min_h=min_h, near=near))
+    bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
     if visible:
+        dlg.geometry(bounds)
         return
     try:
-        # 已映射（_park_card 收起的）别再 deiconify：Tk 会整窗重显、所有控件重画一遍
+        dlg.attributes("-alpha", 0.0)
+        # 已映射（换页时先透明、或 _park_card 收起的）别再 deiconify：Tk 会整窗重显
         if withdrawn:
-            dlg.attributes("-alpha", 0.0)
+            dlg.geometry(_offscreen_bounds(bounds))
             dlg.deiconify()
-        dlg.update()
-        dlg.geometry(_card_bounds(dlg, min_w=min_w, min_h=min_h, near=near))
+            dlg.update()
+            bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
+        dlg.geometry(bounds)
         dlg.update()
         dlg.attributes("-alpha", 1.0)
         dlg.lift()
@@ -3119,6 +3134,7 @@ class WorkTimer:
                 fg=_CARD_FG,
                 muted=_CARD_MUTED,
                 poll_hide=self._games_hide_state,
+                live=self._card_frame,
             )
         elif op == "toggle_key_hide":
             self._set_key_hide(not self._key_hide_on())

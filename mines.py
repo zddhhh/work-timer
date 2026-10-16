@@ -113,9 +113,10 @@ class Board:
 
 
 def open_games(
-    parent, near, win, *, dialog, button, reveal, modal, bg: str, fg: str, muted: str, poll_hide=None,
+    parent, near, win, *, dialog, button, reveal, modal, bg: str, fg: str, muted: str,
+    poll_hide=None, live=None,
 ) -> None:
-    """右键「小游戏」：先列表。poll_hide 用和卡片一样的隐藏键，把这个窗口一起收起。"""
+    """右键「小游戏」：先列表。poll_hide 用和卡片一样的隐藏键。live 在弹窗挡住主循环时继续刷新倒计时。"""
     dlg = dialog(parent, near=near, width=360, height=460)
     # 整窗拖拽会把格子上的点击也当成挪窗口
     dlg.unbind("<ButtonPress-1>")
@@ -143,7 +144,17 @@ def open_games(
         for w in host.winfo_children():
             w.destroy()
 
+    def conceal() -> None:
+        """换页前先透明。清控件和改尺寸都发生在看不见的时候，避免空底板闪一下。"""
+        try:
+            if dlg.state() == "withdrawn":
+                return
+            dlg.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+
     def show_list() -> None:
+        conceal()
         clear()
         title = tk.Label(host, text="小游戏", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
         title.pack(anchor="w", padx=18, pady=(16, 4))
@@ -173,6 +184,7 @@ def open_games(
         reveal(dlg, min_w=320, min_h=220, near=near)
 
     def show_mines() -> None:
+        conceal()
         clear()
         board = Board()
         begun: list[float | None] = [None]
@@ -254,6 +266,7 @@ def open_games(
     def show_golf() -> None:
         import golf
 
+        conceal()
         clear()
         golf.mount(
             host, dlg,
@@ -266,6 +279,8 @@ def open_games(
     show_list()
 
     def on_frame() -> None:
+        if live is not None:
+            live()
         tick = state["tick"]
         if tick is not None:
             tick()
