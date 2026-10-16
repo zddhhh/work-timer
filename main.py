@@ -977,6 +977,7 @@ class WorkTimer:
         self.win.set_mouse_move_handler(self._on_mouse_move)
         self.win.set_mouse_leave_handler(self._on_mouse_leave)
         self.win.set_right_click_handler(self._request_menu)
+        self.win.set_menu_live(self._card_frame)
         self.win.set_request_show_handler(self._on_request_show)
         self._esc_hidden = False
 

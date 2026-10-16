@@ -39,6 +39,8 @@ WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
 WM_MOUSEMOVE = 0x0200
 WM_MOUSELEAVE = 0x02A3
+WM_TIMER = 0x0113
+_MENU_TIMER = 1
 TME_LEAVE = 0x00000002
 WM_NCHITTEST = 0x0084
 WM_SYSCOMMAND = 0x0112
@@ -307,6 +309,10 @@ user32.DestroyMenu.argtypes = [_HANDLE]
 user32.DestroyMenu.restype = wintypes.BOOL
 user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
 user32.PostMessageW.restype = wintypes.BOOL
+user32.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
+user32.SetTimer.restype = ctypes.c_size_t
+user32.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
+user32.KillTimer.restype = wintypes.BOOL
 user32.PeekMessageW.argtypes = [ctypes.POINTER(MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
 user32.PeekMessageW.restype = wintypes.BOOL
 user32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
@@ -351,6 +357,7 @@ class LayeredPetWindow:
         self._on_request_show: Callable[[], None] | None = None
         self._on_mouse_move: Callable[[int, int], None] | None = None
         self._on_mouse_leave: Callable[[], None] | None = None
+        self._menu_live: Callable[[], None] | None = None
         self._leave_armed = False
         self.corner_hit = EDGE
         self._dragging = False
@@ -499,6 +506,10 @@ class LayeredPetWindow:
     def set_mouse_leave_handler(self, fn: Callable[[], None] | None) -> None:
         """指针离开窗口。系统只通知一次，下次移入会重新登记。"""
         self._on_mouse_leave = fn
+
+    def set_menu_live(self, fn: Callable[[], None] | None) -> None:
+        """右键菜单自己转消息循环，主循环进不去。菜单开着时用这个继续刷新倒计时。"""
+        self._menu_live = fn
 
     def set_request_show_handler(self, fn: Callable[[], None] | None) -> None:
         """单实例再次启动时唤起窗口（含 Ctrl 隐藏后的恢复）。"""
@@ -682,6 +693,14 @@ class LayeredPetWindow:
             if self._on_mouse_move and 0 <= lx < self.width and 0 <= ly < self.height:
                 self._arm_mouse_leave()
                 self._on_mouse_move(lx, ly)
+        if msg == WM_TIMER and int(wparam) == _MENU_TIMER:
+            live = self._menu_live
+            if live is not None:
+                try:
+                    live()
+                except Exception:
+                    pass
+            return 0
         if msg == WM_MOUSELEAVE:
             self._leave_armed = False
             if self._on_mouse_leave:
@@ -890,15 +909,20 @@ class LayeredPetWindow:
         except Exception:
             pass
         user32.SetForegroundWindow(self.hwnd)
-        cmd = user32.TrackPopupMenu(
-            hmenu,
-            TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-            int(x),
-            int(y),
-            0,
-            self.hwnd,
-            None,
-        )
+        # TrackPopupMenu 不返回，主循环停着。定时器仍会进本窗口，倒计时才能继续走。
+        user32.SetTimer(self.hwnd, _MENU_TIMER, 100, None)
+        try:
+            cmd = user32.TrackPopupMenu(
+                hmenu,
+                TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                int(x),
+                int(y),
+                0,
+                self.hwnd,
+                None,
+            )
+        finally:
+            user32.KillTimer(self.hwnd, _MENU_TIMER)
         user32.PostMessageW(self.hwnd, 0, 0, 0)
         user32.DestroyMenu(hmenu)
         if cmd == ID_QUIT:

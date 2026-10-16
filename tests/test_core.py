@@ -420,6 +420,11 @@ class GameDialogTests(unittest.TestCase):
                 on_frame()
             shown(dlg)
             self.assertIsNotNone(self._walk(dlg, "剩余 10"))
+            click(dlg, "中级")
+            if on_frame:
+                on_frame()
+            shown(dlg)
+            self.assertIsNotNone(self._walk(dlg, "剩余 40"))
             click(dlg, "返回")
             if on_frame:
                 on_frame()
@@ -1464,6 +1469,19 @@ class MinesTests(unittest.TestCase):
 
         self.assertEqual(mines.GAMES[0]["id"], "mines")
         self.assertIn("扫雷", mines.GAMES[0]["name"])
+
+    def test_levels_and_cell_size(self):
+        import mines
+
+        easy, normal, hard = mines.LEVELS
+        self.assertEqual((easy["rows"], easy["cols"], easy["mines"]), (9, 9, 10))
+        self.assertEqual((normal["rows"], normal["cols"], normal["mines"]), (16, 16, 40))
+        self.assertEqual((hard["rows"], hard["cols"], hard["mines"]), (16, 30, 99))
+        self.assertEqual(mines.cell_side(9, 9), 28)
+        self.assertLess(mines.cell_side(30, 16), 28)
+        board = mines.Board(hard["rows"], hard["cols"], hard["mines"], seed=1)
+        self.assertEqual(board.reveal(0, 0), "ok")
+        self.assertFalse(board.mine[0][0])
 
     def test_first_click_is_safe_and_zero_floods(self):
         import mines

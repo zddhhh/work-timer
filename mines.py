@@ -5,13 +5,17 @@ import random
 import time
 import tkinter as tk
 
-ROWS = 9
-COLS = 9
-MINES = 10
-_CELL = 28
+LEVELS = (
+    {"id": "easy", "name": "初级", "rows": 9, "cols": 9, "mines": 10},
+    {"id": "normal", "name": "中级", "rows": 16, "cols": 16, "mines": 40},
+    {"id": "hard", "name": "高级", "rows": 16, "cols": 30, "mines": 99},
+)
+ROWS = LEVELS[0]["rows"]
+COLS = LEVELS[0]["cols"]
+MINES = LEVELS[0]["mines"]
 
 GAMES = (
-    {"id": "mines", "name": "扫雷", "blurb": "9×9，10 颗雷。左键翻开，右键插旗。"},
+    {"id": "mines", "name": "扫雷", "blurb": "左键翻开，右键插旗。初级、中级、高级都能选。"},
     {"id": "golf", "name": "高尔夫", "blurb": "只点不拖：牌面差 1 就能接，点牌堆翻一张。"},
 )
 
@@ -112,6 +116,11 @@ class Board:
         return sum(sum(1 for f in row if f) for row in self.flag)
 
 
+def cell_side(cols: int, rows: int) -> int:
+    """格子别大过初级的 28，也别小过能点中的 16。高级因此不用上百个控件。"""
+    return max(16, min(28, 520 // max(1, cols), 440 // max(1, rows)))
+
+
 def open_games(
     parent, near, win, *, dialog, button, reveal, modal, bg: str, fg: str, muted: str,
     poll_hide=None, live=None,
@@ -123,7 +132,7 @@ def open_games(
     dlg.unbind("<B1-Motion>")
     host = tk.Frame(dlg, bg=bg)
     host.pack(fill="both", expand=True)
-    state: dict = {"tick": None}
+    state: dict = {"tick": None, "level": LEVELS[0]}
 
     def drag_on(widget: tk.Misc) -> None:
         origin = {"x": 0, "y": 0}
@@ -186,22 +195,35 @@ def open_games(
     def show_mines() -> None:
         conceal()
         clear()
-        board = Board()
+        level = state["level"]
+        board = Board(level["rows"], level["cols"], level["mines"])
+        side = cell_side(board.cols, board.rows)
         begun: list[float | None] = [None]
-        status = tk.StringVar(value=f"剩余 {MINES}")
+        status = tk.StringVar(value=f"剩余 {board.mines}")
         clock = tk.StringVar(value="00:00")
         head = tk.Frame(host, bg=bg)
-        head.pack(fill="x", padx=16, pady=(14, 8))
+        head.pack(fill="x", padx=16, pady=(14, 6))
         title = tk.Label(head, text="扫雷", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
         title.pack(side="left")
         drag_on(title)
         tk.Label(head, textvariable=clock, fg=muted, bg=bg, font=("Consolas", 12)).pack(side="right")
         tk.Label(head, textvariable=status, fg=fg, bg=bg, font=("Microsoft YaHei UI", 10)).pack(side="right", padx=(0, 12))
 
-        grid = tk.Frame(host, bg=bg, width=COLS * _CELL + 8, height=ROWS * _CELL + 8)
-        grid.pack(pady=(0, 8))
-        grid.pack_propagate(False)
-        cells: dict[tuple[int, int], tk.Label] = {}
+        pick = tk.Frame(host, bg=bg)
+        pick.pack(fill="x", padx=16, pady=(0, 8))
+
+        def choose(lv: dict) -> None:
+            state["level"] = lv
+            dlg.after(1, show_mines)
+
+        for lv in LEVELS:
+            button(pick, lv["name"], lambda lv=lv: choose(lv), accent=lv["id"] == level["id"]).pack(side="left", padx=(0, 6))
+
+        width = board.cols * side + 8
+        height = board.rows * side + 8
+        canvas = tk.Canvas(host, width=width, height=height, bg=bg, highlightthickness=0)
+        canvas.pack(pady=(0, 8))
+        font_px = 11 if side >= 24 else 8
 
         def paint() -> None:
             left = board.mines - board.flags()
@@ -211,21 +233,30 @@ def open_games(
                 status.set("踩到了")
             else:
                 status.set(f"剩余 {left}")
+            canvas.delete("all")
             for r in range(board.rows):
                 for c in range(board.cols):
-                    lab = cells[(r, c)]
+                    x1 = 4 + c * side
+                    y1 = 4 + r * side
+                    x2, y2 = x1 + side - 2, y1 + side - 2
+                    text, fill, color = "", _HIDDEN, fg
                     if board.open[r][c]:
                         if board.mine[r][c]:
-                            lab.configure(text="●", fg="white", bg=_BOOM)
+                            text, fill, color = "●", _BOOM, "white"
                         else:
                             n = board.around(r, c)
-                            lab.configure(text="" if n == 0 else str(n), fg=_NUM.get(n, fg), bg=_OPEN)
+                            text = "" if n == 0 else str(n)
+                            fill, color = _OPEN, _NUM.get(n, fg)
                     elif board.dead and board.mine[r][c]:
-                        lab.configure(text="●", fg=_BOOM, bg=_HIDDEN)
+                        text, fill, color = "●", _HIDDEN, _BOOM
                     elif board.flag[r][c]:
-                        lab.configure(text="▲", fg=_FLAG, bg=_HIDDEN)
-                    else:
-                        lab.configure(text="", fg=fg, bg=_HIDDEN)
+                        text, fill, color = "▲", _HIDDEN, _FLAG
+                    canvas.create_rectangle(x1, y1, x2, y2, fill=fill, outline=fill)
+                    if text:
+                        canvas.create_text(
+                            (x1 + x2) / 2, (y1 + y2) / 2, text=text, fill=color,
+                            font=("Consolas", font_px, "bold"),
+                        )
 
         def tick() -> None:
             if begun[0] is None or board.dead or board.won:
@@ -233,35 +264,39 @@ def open_games(
             sec = int(time.monotonic() - begun[0])
             clock.set(f"{sec // 60:02d}:{sec % 60:02d}")
 
-        def on_reveal(r: int, c: int) -> None:
-            kind = board.reveal(r, c)
+        def cell_at(e) -> tuple[int, int] | None:
+            c = (e.x - 4) // side
+            r = (e.y - 4) // side
+            if 0 <= r < board.rows and 0 <= c < board.cols:
+                return r, c
+            return None
+
+        def on_reveal(e) -> None:
+            pos = cell_at(e)
+            if pos is None:
+                return
+            kind = board.reveal(*pos)
             if kind == "noop" or kind == "over":
                 return
             if begun[0] is None:
                 begun[0] = time.monotonic()
             paint()
 
-        def on_flag(r: int, c: int) -> None:
-            if board.toggle_flag(r, c) == "flag":
+        def on_flag(e) -> None:
+            pos = cell_at(e)
+            if pos is not None and board.toggle_flag(*pos) == "flag":
                 paint()
 
-        for r in range(ROWS):
-            for c in range(COLS):
-                lab = tk.Label(
-                    grid, text="", bg=_HIDDEN, fg=fg,
-                    font=("Consolas", 11, "bold"),
-                )
-                lab.place(x=4 + c * _CELL, y=4 + r * _CELL, width=_CELL - 2, height=_CELL - 2)
-                lab.bind("<Button-1>", lambda _e, rr=r, cc=c: on_reveal(rr, cc))
-                lab.bind("<Button-3>", lambda _e, rr=r, cc=c: on_flag(rr, cc))
-                cells[(r, c)] = lab
+        canvas.bind("<Button-1>", on_reveal)
+        canvas.bind("<Button-3>", on_flag)
+        paint()
 
         bar = tk.Frame(host, bg=bg)
         bar.pack(side="bottom", fill="x", pady=(4, 14))
         button(bar, "再来一局", lambda: dlg.after(1, show_mines), accent=True).pack(side="left", padx=(16, 6))
         button(bar, "返回", lambda: dlg.after(1, show_list)).pack(side="left", padx=6)
         state["tick"] = tick
-        reveal(dlg, min_w=340, min_h=400, near=near)
+        reveal(dlg, min_w=max(340, width + 36), min_h=max(280, height + 150), near=near)
 
     def show_golf() -> None:
         import golf
