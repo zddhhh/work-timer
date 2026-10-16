@@ -28,6 +28,7 @@ import kinetic
 import layered_win
 import memos
 import meow
+import mines
 import ornaments
 import schedules
 import single_instance
@@ -3077,6 +3078,19 @@ class WorkTimer:
                 self._open_schedule_list()
         elif op == "worklog":
             self._open_worklog_dialog()
+        elif op == "games":
+            mines.open_games(
+                self._tk_root(),
+                self._dialog_near(),
+                self.win,
+                dialog=_card_dialog,
+                button=_card_btn,
+                reveal=_reveal_card,
+                modal=_run_card_modal,
+                bg=_CARD_BG,
+                fg=_CARD_FG,
+                muted=_CARD_MUTED,
+            )
         elif op == "toggle_key_hide":
             self._set_key_hide(not self._key_hide_on())
         elif op == "key_hide_settings":

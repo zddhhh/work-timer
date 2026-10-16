@@ -87,6 +87,7 @@ ID_KEY_HIDE_SETTINGS = 16
 ID_UNINSTALL = 17
 ID_WORKLOG = 18
 ID_HYDRATE = 19
+ID_GAMES = 100
 ID_HYDRATE_SETTINGS = 9
 ID_THEME_BASE = 20
 
@@ -835,6 +836,7 @@ class LayeredPetWindow:
         user32.AppendMenuW(hmenu, MF_STRING, ID_SET_OFF, "设置下班时间…")
         user32.AppendMenuW(hmenu, MF_STRING, ID_SCHEDULES, "日程列表…")
         user32.AppendMenuW(hmenu, MF_STRING, ID_WORKLOG, "工时账本…")
+        user32.AppendMenuW(hmenu, MF_STRING, ID_GAMES, "小游戏…")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(hmenu, MF_POPUP, hset, "设置")
@@ -879,6 +881,8 @@ class LayeredPetWindow:
             return "schedules"
         if cmd == ID_WORKLOG:
             return "worklog"
+        if cmd == ID_GAMES:
+            return "games"
         if cmd == ID_DISGUISE:
             return "toggle_key_hide"
         if cmd == ID_KEY_HIDE_SETTINGS:

@@ -1376,5 +1376,52 @@ class WorklogTests(unittest.TestCase):
         self.assertEqual(cfg["worklog"], {"2026-10-08": {"in": 540, "src": "flex"}})
 
 
+class MinesTests(unittest.TestCase):
+    def test_list_starts_with_mines(self):
+        import mines
+
+        self.assertEqual(mines.GAMES[0]["id"], "mines")
+        self.assertIn("扫雷", mines.GAMES[0]["name"])
+
+    def test_first_click_is_safe_and_zero_floods(self):
+        import mines
+
+        board = mines.Board(seed=3)
+        self.assertEqual(board.reveal(4, 4), "ok")
+        self.assertFalse(board.mine[4][4])
+        self.assertTrue(board.open[4][4])
+        if board.around(4, 4) == 0:
+            opened = sum(sum(1 for cell in row if cell) for row in board.open)
+            self.assertGreater(opened, 1)
+
+    def test_flag_blocks_reveal_and_boom_ends_the_game(self):
+        import mines
+
+        board = mines.Board(seed=5)
+        board.reveal(0, 0)
+        mine = next((r, c) for r in range(board.rows) for c in range(board.cols) if board.mine[r][c])
+        self.assertEqual(board.toggle_flag(*mine), "flag")
+        self.assertEqual(board.reveal(*mine), "noop")
+        self.assertEqual(board.toggle_flag(*mine), "flag")
+        self.assertEqual(board.reveal(*mine), "boom")
+        self.assertTrue(board.dead)
+        self.assertEqual(board.reveal(0, 1), "over")
+
+    def test_clearing_safe_cells_wins(self):
+        import mines
+
+        board = mines.Board(rows=3, cols=3, mines=1, seed=1)
+        board.reveal(0, 0)
+        last = "win" if board.won else "ok"
+        for r in range(3):
+            for c in range(3):
+                if board.mine[r][c] or board.open[r][c] or board.won:
+                    continue
+                last = board.reveal(r, c)
+        self.assertTrue(board.won)
+        self.assertEqual(last, "win")
+        self.assertEqual(sum(sum(1 for m in row if m) for row in board.mine), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
