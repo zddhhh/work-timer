@@ -1,4 +1,4 @@
-"""小游戏：列表现在只有扫雷。规则在这里，不碰下班倒计时。"""
+"""小游戏列表。规则在这里，不碰下班倒计时。"""
 from __future__ import annotations
 
 import random
@@ -12,6 +12,7 @@ _CELL = 28
 
 GAMES = (
     {"id": "mines", "name": "扫雷", "blurb": "9×9，10 颗雷。左键翻开，右键插旗。"},
+    {"id": "golf", "name": "高尔夫", "blurb": "只点不拖：牌面差 1 就能接，点牌堆翻一张。"},
 )
 
 _NUM = {
@@ -111,8 +112,10 @@ class Board:
         return sum(sum(1 for f in row if f) for row in self.flag)
 
 
-def open_games(parent, near, win, *, dialog, button, reveal, modal, bg: str, fg: str, muted: str) -> None:
-    """右键「小游戏」：先列表，再进扫雷。倒计时窗口继续自己走。"""
+def open_games(
+    parent, near, win, *, dialog, button, reveal, modal, bg: str, fg: str, muted: str, poll_hide=None,
+) -> None:
+    """右键「小游戏」：先列表。poll_hide 用和卡片一样的隐藏键，把这个窗口一起收起。"""
     dlg = dialog(parent, near=near, width=360, height=460)
     # 整窗拖拽会把格子上的点击也当成挪窗口
     dlg.unbind("<ButtonPress-1>")
@@ -145,7 +148,7 @@ def open_games(parent, near, win, *, dialog, button, reveal, modal, bg: str, fg:
         title = tk.Label(host, text="小游戏", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
         title.pack(anchor="w", padx=18, pady=(16, 4))
         drag_on(title)
-        sub = tk.Label(host, text="先放一款，以后从这里进。", fg=muted, bg=bg, font=("Microsoft YaHei UI", 9))
+        sub = tk.Label(host, text="隐藏键同样把这个窗口收起来。", fg=muted, bg=bg, font=("Microsoft YaHei UI", 9))
         sub.pack(anchor="w", padx=18, pady=(0, 12))
         drag_on(sub)
         for game in GAMES:
@@ -159,6 +162,8 @@ def open_games(parent, near, win, *, dialog, button, reveal, modal, bg: str, fg:
             def go(_e=None, gid=game["id"]) -> None:
                 if gid == "mines":
                     dlg.after(1, show_mines)
+                elif gid == "golf":
+                    dlg.after(1, show_golf)
 
             for w in (row, name, blurb):
                 w.bind("<Button-1>", go)
@@ -246,11 +251,41 @@ def open_games(parent, near, win, *, dialog, button, reveal, modal, bg: str, fg:
         state["tick"] = tick
         reveal(dlg, min_w=340, min_h=400, near=near)
 
+    def show_golf() -> None:
+        import golf
+
+        clear()
+        golf.mount(
+            host, dlg,
+            button=button, reveal=reveal, drag_on=drag_on,
+            again=lambda: dlg.after(1, show_golf),
+            back=lambda: dlg.after(1, show_list),
+            bg=bg, fg=fg, muted=muted, near=near,
+        )
+
     show_list()
 
     def on_frame() -> None:
         tick = state["tick"]
         if tick is not None:
             tick()
+        if poll_hide is None:
+            return
+        try:
+            hidden = bool(poll_hide())
+            if not dlg.winfo_exists():
+                return
+            gone = dlg.state() == "withdrawn"
+        except tk.TclError:
+            return
+        if hidden and not gone:
+            dlg.withdraw()
+        elif not hidden and gone:
+            dlg.deiconify()
+            try:
+                dlg.attributes("-topmost", True)
+            except tk.TclError:
+                pass
+            dlg.lift()
 
     modal(dlg, win, on_frame=on_frame)

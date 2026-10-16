@@ -38,6 +38,8 @@ WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_RBUTTONUP = 0x0205
 WM_MOUSEMOVE = 0x0200
+WM_MOUSELEAVE = 0x02A3
+TME_LEAVE = 0x00000002
 WM_NCHITTEST = 0x0084
 WM_SYSCOMMAND = 0x0112
 WM_CAPTURECHANGED = 0x0215
@@ -194,6 +196,19 @@ class RECT(ctypes.Structure):
     ]
 
 
+class TRACKMOUSEEVENT(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("hwndTrack", wintypes.HWND),
+        ("dwHoverTime", wintypes.DWORD),
+    ]
+
+
+user32.TrackMouseEvent.argtypes = [ctypes.POINTER(TRACKMOUSEEVENT)]
+user32.TrackMouseEvent.restype = wintypes.BOOL
+
+
 class MONITORINFO(ctypes.Structure):
     _fields_ = [
         ("cbSize", wintypes.DWORD),
@@ -335,6 +350,9 @@ class LayeredPetWindow:
         self._on_left_click: Callable[[int, int], None] | None = None
         self._on_request_show: Callable[[], None] | None = None
         self._on_mouse_move: Callable[[int, int], None] | None = None
+        self._on_mouse_leave: Callable[[], None] | None = None
+        self._leave_armed = False
+        self.corner_hit = EDGE
         self._dragging = False
         self._resizing = False
         self._drag_moved = False
@@ -478,6 +496,10 @@ class LayeredPetWindow:
         """鼠标在客户区内移动，参数为窗口内坐标 (lx, ly)。"""
         self._on_mouse_move = fn
 
+    def set_mouse_leave_handler(self, fn: Callable[[], None] | None) -> None:
+        """指针离开窗口。系统只通知一次，下次移入会重新登记。"""
+        self._on_mouse_leave = fn
+
     def set_request_show_handler(self, fn: Callable[[], None] | None) -> None:
         """单实例再次启动时唤起窗口（含 Ctrl 隐藏后的恢复）。"""
         self._on_request_show = fn
@@ -606,13 +628,25 @@ class LayeredPetWindow:
 
     def _edge_hit(self, lx: int, ly: int) -> tuple[bool, bool, bool, bool]:
         """只认四角，保证斜向等比缩放。"""
-        left = lx < EDGE
-        right = lx >= self.width - EDGE
-        top = ly < EDGE
-        bottom = ly >= self.height - EDGE
+        edge = self.corner_hit
+        left = lx < edge
+        right = lx >= self.width - edge
+        top = ly < edge
+        bottom = ly >= self.height - edge
         if (left or right) and (top or bottom):
             return left, right, top, bottom
         return False, False, False, False
+
+    def _arm_mouse_leave(self) -> None:
+        if self._leave_armed or not self.hwnd:
+            return
+        tme = TRACKMOUSEEVENT()
+        tme.cbSize = ctypes.sizeof(tme)
+        tme.dwFlags = TME_LEAVE
+        tme.hwndTrack = self.hwnd
+        tme.dwHoverTime = 0
+        if user32.TrackMouseEvent(ctypes.byref(tme)):
+            self._leave_armed = True
 
     def _set_edge_cursor(self, left: bool, right: bool, top: bool, bottom: bool) -> None:
         if (left and top) or (right and bottom):
@@ -646,7 +680,13 @@ class LayeredPetWindow:
             else:
                 user32.SetCursor(user32.LoadCursorW(None, IDC_ARROW))
             if self._on_mouse_move and 0 <= lx < self.width and 0 <= ly < self.height:
+                self._arm_mouse_leave()
                 self._on_mouse_move(lx, ly)
+        if msg == WM_MOUSELEAVE:
+            self._leave_armed = False
+            if self._on_mouse_leave:
+                self._on_mouse_leave()
+            return 0
         if msg == WM_LBUTTONDOWN:
             if not self.drag_enabled:
                 return 0

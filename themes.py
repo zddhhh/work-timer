@@ -626,6 +626,7 @@ def paint_card(
     meow_troupe: meow.Troupe | None = None,
     meow_mins: int = 30,
     meow_drinking: bool = False,
+    ghost_ptr: tuple[int, int] | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
     kind = theme.kind
@@ -786,6 +787,28 @@ def paint_card(
             img, box, radius=r, stage=stage, now=now,
             mins_left=meow_mins, drinking=meow_drinking,
         )
+    if kind == "ghost" and ghost_ptr is not None:
+        _paint_ghost_grips(d, w, h, ghost_ptr, title_fill)
+
+
+def _paint_ghost_grips(d: ImageDraw.ImageDraw, w: int, h: int, ptr: tuple[int, int], color) -> None:
+    """鼠标停在卡片上时，四角露出一截同色折角。离开后什么都不画。"""
+    mx, my = ptr
+    arm = max(12, min(16, h // 6))
+    thick = 2 if min(w, h) >= 80 else 1
+    inset = 2
+    corners = (
+        (inset, inset, 1, 1),
+        (w - 1 - inset, inset, -1, 1),
+        (inset, h - 1 - inset, 1, -1),
+        (w - 1 - inset, h - 1 - inset, -1, -1),
+    )
+    rgb = tuple(color[:3])
+    for x, y, sx, sy in corners:
+        dist = math.hypot(mx - x, my - y)
+        col = (*rgb, 200 if dist < 36 else 78)
+        d.line((x, y, x + sx * arm, y), fill=col, width=thick)
+        d.line((x, y, x, y + sy * arm), fill=col, width=thick)
 
 
 load_local_catalog()

@@ -942,6 +942,8 @@ class WorkTimer:
         self._neon_planets = ornaments.create_neon_planets()
         self._mouse_lx = -1
         self._mouse_ly = -1
+        self._ghost_ptr: tuple[int, int] | None = None
+        self._ghost_q: tuple[int, int] | None = None
         self._meow = meow.Troupe()
         self._worklog_at = 0.0
         self._worklog_dirty = False
@@ -958,6 +960,7 @@ class WorkTimer:
         self.win = layered_win.LayeredPetWindow(w, h, "下班倒计时")
         self.win.set_left_click_handler(self._on_click)
         self.win.set_mouse_move_handler(self._on_mouse_move)
+        self.win.set_mouse_leave_handler(self._on_mouse_leave)
         self.win.set_right_click_handler(self._request_menu)
         self.win.set_request_show_handler(self._on_request_show)
         self._esc_hidden = False
@@ -1425,11 +1428,36 @@ class WorkTimer:
         return ornaments.neon_planets_animating(self._neon_planets, now)
 
     def _on_mouse_move(self, lx: int, ly: int) -> None:
-        if self._esc_hidden or self._theme().kind != "neonflow":
+        if self._esc_hidden:
+            return
+        kind = self._theme().kind
+        if kind == "ghost":
+            q = (lx // 16, ly // 16)
+            if q != self._ghost_q:
+                self._ghost_q = q
+                self._ghost_ptr = (lx, ly)
+                self._last_key = ""
+        elif self._ghost_ptr is not None:
+            self._ghost_ptr = None
+            self._ghost_q = None
+            self._last_key = ""
+        if kind != "neonflow":
             return
         if abs(lx - self._mouse_lx) > 2 or abs(ly - self._mouse_ly) > 2:
             self._mouse_lx, self._mouse_ly = lx, ly
             self._last_key = ""
+
+    def _on_mouse_leave(self) -> None:
+        if self._ghost_ptr is None and self._ghost_q is None:
+            return
+        self._ghost_ptr = None
+        self._ghost_q = None
+        self._last_key = ""
+
+    def _games_hide_state(self) -> bool:
+        """游戏窗口跟卡片用同一套隐藏键。"""
+        self._poll_key_hide()
+        return bool(self._esc_hidden)
 
     def _maybe_skin_interact(self, lx: int, ly: int) -> None:
         """特效皮点击互动：霹雳狂潮落雷 / 墨水落墨 / 霓虹射击 / 翻牌拨动 / 仪仗队踢正步。"""
@@ -3090,6 +3118,7 @@ class WorkTimer:
                 bg=_CARD_BG,
                 fg=_CARD_FG,
                 muted=_CARD_MUTED,
+                poll_hide=self._games_hide_state,
             )
         elif op == "toggle_key_hide":
             self._set_key_hide(not self._key_hide_on())
@@ -3479,6 +3508,7 @@ class WorkTimer:
                 key = f"{key}-a{int(phase * fps)}"
             elif theme.kind != "ghost":
                 key = f"{key}-p{int(phase * 6)}"
+            self.win.corner_hit = 22 if theme.kind == "ghost" else layered_win.EDGE
             if kinetic.playing(self._kinetic, phase):
                 key = (
                     f"kinetic-{self._kinetic.current_text(phase)}"
@@ -3515,6 +3545,9 @@ class WorkTimer:
                 key = f"{key}-n{neon_sig}"
             if theme.kind == "neonflow" and self._mouse_lx >= 0:
                 key = f"{key}-m{self._mouse_lx // 3}-{self._mouse_ly // 3}"
+            if theme.kind == "ghost" and self._ghost_ptr is not None:
+                gx, gy = self._ghost_ptr
+                key = f"{key}-gh{gx // 16}-{gy // 16}"
 
             if key == self._last_key:
                 return
@@ -3557,6 +3590,7 @@ class WorkTimer:
                     meow_troupe=self._meow,
                     meow_mins=total // 60,
                     meow_drinking=drinking,
+                    ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
                 )
                 kinetic.paint(
                     img,
@@ -3596,6 +3630,7 @@ class WorkTimer:
                     meow_troupe=self._meow,
                     meow_mins=total // 60,
                     meow_drinking=drinking,
+                    ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:

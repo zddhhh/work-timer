@@ -1423,5 +1423,70 @@ class MinesTests(unittest.TestCase):
         self.assertEqual(sum(sum(1 for m in row if m) for row in board.mine), 1)
 
 
+class GolfTests(unittest.TestCase):
+    def test_listed_after_mines(self):
+        import mines
+
+        ids = [g["id"] for g in mines.GAMES]
+        self.assertEqual(ids[0], "mines")
+        self.assertIn("golf", ids)
+
+    def test_deal_and_only_adjacent_ranks_play(self):
+        import golf
+
+        board = golf.Board(seed=2)
+        again = golf.Board(seed=2)
+        self.assertEqual(board.columns[0][0], again.columns[0][0])
+        self.assertEqual(len(board.columns), 7)
+        self.assertEqual(len(board.stock), 16)
+        self.assertEqual(len(board.waste), 1)
+        top = board.waste_top()
+        board.columns = [[golf.Card(0, top.rank)]]
+        self.assertFalse(board.can_play(0))
+        board.columns = [[golf.Card(0, 1)]]
+        board.waste = [golf.Card(1, 13)]
+        self.assertFalse(board.can_play(0))
+        board.waste = [golf.Card(1, 2)]
+        self.assertTrue(board.play(0))
+        self.assertEqual(board.waste[-1].rank, 1)
+        self.assertTrue(board.won)
+        self.assertEqual(golf.status_text(board), "接完了")
+
+    def test_draw_then_stuck(self):
+        import golf
+
+        board = golf.Board(seed=1)
+        board.columns = [[golf.Card(0, 5)] for _ in range(7)]
+        board.waste = [golf.Card(1, 5)]
+        board.stock = [golf.Card(2, 9)]
+        self.assertFalse(board.can_play(0))
+        self.assertTrue(board.draw())
+        self.assertFalse(board.stock)
+        self.assertTrue(board.stuck)
+        self.assertEqual(golf.status_text(board), "接不上了")
+        self.assertFalse(board.draw())
+
+
+class GhostGripTests(unittest.TestCase):
+    def test_corner_marks_only_while_pointer_is_over(self):
+        from PIL import ImageFont
+
+        theme = next(t for t in themes._bundled_themes() if t.kind == "ghost")
+        font = ImageFont.load_default()
+
+        def corner(ptr):
+            img = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+            themes.paint_card(
+                img, 248, 92, theme, "", "", "", theme.title, font, font, font,
+                stage="run", ghost_ptr=ptr,
+            )
+            px = img.load()
+            return max(px[x, y][3] for y in range(0, 14) for x in range(0, 14))
+
+        self.assertEqual(corner(None), 0)
+        self.assertGreater(corner((120, 46)), 40)
+        self.assertGreater(corner((4, 4)), corner((200, 70)))
+
+
 if __name__ == "__main__":
     unittest.main()
