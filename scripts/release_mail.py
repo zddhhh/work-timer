@@ -12,8 +12,10 @@
 """
 from __future__ import annotations
 
+import io
 import json
 import smtplib
+import zipfile
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -43,21 +45,33 @@ def load_smtp(path: Path | None = None) -> dict | None:
     }
 
 
+def _zip_setup(setup: Path) -> bytes:
+    """163 会拒收 exe 附件，压成 zip 再寄。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
+        zf.write(setup, setup.name)
+    return buf.getvalue()
+
+
 def build_message(
     version: str,
     note: str,
     setup: Path,
     digest: str,
     sender: str,
+    recipients: tuple[str, ...] | None = None,
 ) -> EmailMessage:
+    to = recipients if recipients is not None else RECIPIENTS
+    packed = f"WorkTimer-{version}.zip"
     msg = EmailMessage()
     msg["Subject"] = f"WorkTimer {version} 安装包"
     msg["From"] = sender
-    msg["To"] = ", ".join(RECIPIENTS)
+    msg["To"] = ", ".join(to)
     msg.set_content(
         "\n".join(
             [
-                f"WorkTimer {version} 安装包在附件里，双击 WorkTimer-Setup.exe 即可安装。",
+                f"WorkTimer {version} 安装包在附件的压缩包里。",
+                "解压后双击 WorkTimer-Setup.exe 即可安装。",
                 "",
                 note.strip(),
                 "",
@@ -67,10 +81,10 @@ def build_message(
         )
     )
     msg.add_attachment(
-        setup.read_bytes(),
+        _zip_setup(setup),
         maintype="application",
-        subtype="octet-stream",
-        filename=setup.name,
+        subtype="zip",
+        filename=packed,
     )
     return msg
 

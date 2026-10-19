@@ -1920,7 +1920,7 @@ class ReleaseMailTests(unittest.TestCase):
         self.assertEqual(msg["To"], "jun2.huang@sgmw.com.cn")
         self.assertIn("1.3.56", msg["Subject"])
         names = [part.get_filename() for part in msg.iter_attachments()]
-        self.assertEqual(names, ["WorkTimer-Setup.exe"])
+        self.assertEqual(names, ["WorkTimer-1.3.56.zip"])
 
     def test_smtp_secret_is_optional_until_the_file_is_complete(self):
         mail = self._mail()
