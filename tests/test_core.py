@@ -506,6 +506,16 @@ class GameDialogTests(unittest.TestCase):
         self.assertTrue(getattr(dlg, "_key_hidden", False))
         root.destroy()
 
+    def test_dismiss_popup_is_safe_without_a_menu(self):
+        import layered_win
+
+        self.assertTrue(callable(layered_win.user32.EndMenu))
+        win = layered_win.LayeredPetWindow(80, 40, visible=False)
+        try:
+            win.dismiss_popup()
+        finally:
+            win.destroy()
+
 
 class FeedbackTests(unittest.TestCase):
     def test_body_has_contact_and_roundtrip(self):

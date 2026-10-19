@@ -41,6 +41,7 @@ WM_MOUSEMOVE = 0x0200
 WM_MOUSELEAVE = 0x02A3
 WM_TIMER = 0x0113
 WM_INPUT = 0x00FF
+WM_CANCELMODE = 0x001F
 _LIVE_TIMER = 1
 RID_INPUT = 0x10000003
 RIDEV_INPUTSINK = 0x00000100
@@ -335,6 +336,8 @@ user32.TrackPopupMenu.argtypes = [
     _HANDLE, wintypes.UINT, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, ctypes.c_void_p,
 ]
 user32.TrackPopupMenu.restype = ctypes.c_int
+user32.EndMenu.argtypes = []
+user32.EndMenu.restype = wintypes.BOOL
 user32.DestroyMenu.argtypes = [_HANDLE]
 user32.DestroyMenu.restype = wintypes.BOOL
 user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
@@ -390,6 +393,7 @@ class LayeredPetWindow:
         self._live_tick: Callable[[], None] | None = None
         self._on_raw_input: Callable[[bytes], None] | None = None
         self._raw_listening = False
+        self._popup_open = False
         self._leave_armed = False
         self.corner_hit = EDGE
         self._dragging = False
@@ -548,6 +552,15 @@ class LayeredPetWindow:
     def set_raw_input_handler(self, fn: Callable[[bytes], None] | None) -> None:
         """WM_INPUT 原始缓冲，不解析键码。"""
         self._on_raw_input = fn
+
+    def dismiss_popup(self) -> None:
+        """关掉正在显示的右键菜单。没菜单时 EndMenu 会失败，忽略即可。"""
+        try:
+            user32.EndMenu()
+        except Exception:
+            pass
+        if self.hwnd:
+            user32.SendMessageW(self.hwnd, WM_CANCELMODE, 0, 0)
 
     def listen_raw_input(self, on: bool) -> None:
         if not self.hwnd or bool(on) == self._raw_listening:
@@ -982,15 +995,19 @@ class LayeredPetWindow:
         except Exception:
             pass
         user32.SetForegroundWindow(self.hwnd)
-        cmd = user32.TrackPopupMenu(
-            hmenu,
-            TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-            int(x),
-            int(y),
-            0,
-            self.hwnd,
-            None,
-        )
+        self._popup_open = True
+        try:
+            cmd = user32.TrackPopupMenu(
+                hmenu,
+                TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                int(x),
+                int(y),
+                0,
+                self.hwnd,
+                None,
+            )
+        finally:
+            self._popup_open = False
         user32.PostMessageW(self.hwnd, 0, 0, 0)
         user32.DestroyMenu(hmenu)
         if cmd == ID_QUIT:

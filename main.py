@@ -1756,6 +1756,7 @@ class WorkTimer:
         if self._esc_hidden:
             self._show_after_esc()
             return
+        self.win.dismiss_popup()
         self.win.hide()
         self._esc_hidden = True
 
@@ -1772,6 +1773,9 @@ class WorkTimer:
             self._hide_key_chord = False
             self._hide_key_down_at = time.monotonic()
             self._hide_key_input_tick = worklog.last_input_tick() if key_hide.is_modifier(hide_vk) else None
+            # 右键菜单自己占着消息循环，不先关掉会留在屏幕上
+            if self._key_hide_on() or self._esc_hidden:
+                self.win.dismiss_popup()
         elif down and not self._hide_key_chord and self._hide_key_input_tick is not None:
             tick = worklog.last_input_tick()
             if tick is not None and tick != self._hide_key_input_tick:
