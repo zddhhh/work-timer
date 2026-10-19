@@ -1828,6 +1828,43 @@ class PoolTests(unittest.TestCase):
         self.assertTrue(board.won)
         self.assertEqual(pool.status_text(board), "清台了")
 
+    def test_guide_shows_the_ball_and_a_cushion(self):
+        import math
+        import pool
+
+        board = pool.Board()
+        other = board.balls[1]
+        board.balls = [board.cue, other]
+        board.cue.x, board.cue.y = 80, 100
+        other.x, other.y = 200, 100
+        hit = board.guide(-50, 0)
+        self.assertIs(hit["ball"], other)
+        self.assertGreater(hit["object_dir"][0], 0.9)
+        self.assertAlmostEqual(math.hypot(*hit["object_dir"]), 1, places=3)
+
+        board.balls = [board.cue]
+        board.cue.x, board.cue.y = 80, 40
+        bank = board.guide(0, 30)
+        self.assertIsNone(bank["ball"])
+        self.assertGreaterEqual(len(bank["path"]), 2)
+        self.assertGreater(bank["path"][1][3], bank["path"][1][1])
+
+    def test_a_shot_rolls_to_a_stop_on_the_table(self):
+        import pool
+
+        board = pool.Board()
+        self.assertTrue(board.shoot(70, 12))
+        for _ in range(350):
+            board.step(0.02)
+            for ball in board.balls:
+                if not ball.alive:
+                    continue
+                self.assertGreaterEqual(ball.x, pool.R - 0.2)
+                self.assertLessEqual(ball.x, pool.TABLE_W - pool.R + 0.2)
+                self.assertGreaterEqual(ball.y, pool.R - 0.2)
+                self.assertLessEqual(ball.y, pool.TABLE_H - pool.R + 0.2)
+        self.assertFalse(board.moving)
+
 
 class GhostGripTests(unittest.TestCase):
     def test_corner_marks_only_while_pointer_is_over(self):
