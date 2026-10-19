@@ -2450,11 +2450,6 @@ class WorkTimer:
         ).pack(side="right")
         chart_lbl = tk.Label(body, bg=_CARD_BG, bd=0, highlightthickness=0)
         chart_lbl.pack(anchor="w")
-        chart_hint = tk.StringVar(value="")
-        tk.Label(
-            body, textvariable=chart_hint, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 8),
-            justify="left", wraplength=520,
-        ).pack(anchor="w", pady=(4, 0))
         ui = {
             "dlg": dlg,
             "stop": False,
@@ -2467,17 +2462,20 @@ class WorkTimer:
             "month_sum": month_sum,
             "act_on": act_on,
             "chart_lbl": chart_lbl,
-            "chart_hint": chart_hint,
             "chart_photo": None,
             "chart_hits": [],
             "chart_sig": None,
         }
 
         def on_chart_move(e) -> None:
-            chart_hint.set(activity_chart.hover_text(ui.get("chart_hits") or [], e.x, e.y))
+            ww = max(1, chart_lbl.winfo_width())
+            wh = max(1, chart_lbl.winfo_height())
+            x = int(e.x * activity_chart.W / ww)
+            y = int(e.y * activity_chart.H / wh)
+            activity_chart.apply_hover(ui, x, y)
 
         def on_chart_leave(_e) -> None:
-            chart_hint.set("")
+            activity_chart.apply_hover(ui, -1, -1)
 
         chart_lbl.bind("<Motion>", on_chart_move)
         chart_lbl.bind("<Leave>", on_chart_leave)

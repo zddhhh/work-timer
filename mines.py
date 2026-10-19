@@ -399,6 +399,7 @@ def open_games(
         bar.pack(side="bottom", fill="x", pady=(4, 14))
         button(bar, "再来一局", lambda: dlg.after(1, lambda: show_mines(reset=True)), accent=True).pack(side="left", padx=(16, 6))
         button(bar, "返回", lambda: dlg.after(1, show_list)).pack(side="left", padx=6)
+        button(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
         state["tick"] = tick
         reveal(dlg, min_w=max(340, width + 36), min_h=max(280, height + 150), near=near)
 
@@ -414,6 +415,7 @@ def open_games(
             button=button, reveal=reveal, drag_on=drag_on,
             again=lambda: dlg.after(1, lambda: show_golf(reset=True)),
             back=lambda: dlg.after(1, show_list),
+            close=dlg.destroy,
             bg=bg, fg=fg, muted=muted, near=near,
             board=golf_board(reset=reset),
         )

@@ -425,6 +425,7 @@ class GameDialogTests(unittest.TestCase):
                 on_frame()
             shown(dlg)
             self.assertIsNotNone(self._walk(dlg, "剩余 10"))
+            self.assertIsNotNone(self._walk(dlg, "关闭"))
             click(dlg, "中级")
             if on_frame:
                 on_frame()
@@ -439,6 +440,7 @@ class GameDialogTests(unittest.TestCase):
                 on_frame()
             shown(dlg)
             self.assertIsNotNone(self._walk(dlg, "点亮边的牌接上，或点牌堆翻一张。"))
+            self.assertIsNotNone(self._walk(dlg, "关闭"))
             dlg.destroy()
 
         mines.open_games(
@@ -1561,6 +1563,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(c["keys_h"][10], 1)
         self.assertEqual(c["clicks_h"][11], 1)
         self.assertEqual(c["hours"][11], 2)
+        self.assertEqual(c["wheels_h"][11], 1)
 
     def test_chart_series_and_render(self):
         import activity
@@ -1600,7 +1603,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(im.size, (activity_chart.W, activity_chart.H))
         sampled = {im.getpixel((x, y)) for x in range(0, im.width, 12) for y in range(0, im.height, 12)}
         self.assertGreater(len(sampled), 8)
-        self.assertTrue(any("点了" in h["text"] for h in hits))
+        self.assertTrue(any("鼠标" in h["text"] and "滚轮" in h["text"] for h in hits))
         off, off_hits = activity_chart.render(pack, days, enabled=False, this_week=True)
         self.assertEqual(off.size, im.size)
         self.assertEqual(off_hits, [])

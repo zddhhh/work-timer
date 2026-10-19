@@ -95,7 +95,7 @@ def status_text(board: Board) -> str:
     return "差 1 点就能接"
 
 
-def mount(host, dlg, *, button, reveal, again, back, drag_on, bg: str, fg: str, muted: str, near, board: Board | None = None) -> None:
+def mount(host, dlg, *, button, reveal, again, back, close, drag_on, bg: str, fg: str, muted: str, near, board: Board | None = None) -> None:
     """画在已经清空的 host 上。again / back 由外面安排到下一拍执行。传入 board 则接着玩。"""
     board = board if board is not None else Board()
     head = tk.Frame(host, bg=bg)
@@ -139,6 +139,7 @@ def mount(host, dlg, *, button, reveal, again, back, drag_on, bg: str, fg: str, 
     bar.pack(side="bottom", fill="x", pady=(4, 14))
     button(bar, "再来一局", again, accent=True).pack(side="left", padx=(16, 6))
     button(bar, "返回", back).pack(side="left", padx=6)
+    button(bar, "关闭", close).pack(side="left", padx=6)
     reveal(dlg, min_w=420, min_h=390, near=near)
 
 

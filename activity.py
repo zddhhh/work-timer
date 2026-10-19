@@ -63,6 +63,7 @@ def _clean_day(v: dict) -> dict:
         "hours": _hours24(v.get("hours")),
         "keys_h": _hours24(v.get("keys_h")),
         "clicks_h": _hours24(v.get("clicks_h")),
+        "wheels_h": _hours24(v.get("wheels_h")),
     }
 
 
@@ -83,14 +84,12 @@ def _day(cfg: dict, d: date) -> dict:
             "hours": [0] * 24,
             "keys_h": [0] * 24,
             "clicks_h": [0] * 24,
+            "wheels_h": [0] * 24,
         }
         days[k] = item
-    if not isinstance(item.get("hours"), list) or len(item["hours"]) != 24:
-        item["hours"] = [0] * 24
-    if not isinstance(item.get("keys_h"), list) or len(item["keys_h"]) != 24:
-        item["keys_h"] = [0] * 24
-    if not isinstance(item.get("clicks_h"), list) or len(item["clicks_h"]) != 24:
-        item["clicks_h"] = [0] * 24
+    for key in ("hours", "keys_h", "clicks_h", "wheels_h"):
+        if not isinstance(item.get(key), list) or len(item[key]) != 24:
+            item[key] = [0] * 24
     return item
 
 
@@ -111,6 +110,8 @@ def note(cfg: dict, kind: str, now: datetime | None = None) -> bool:
             item["keys_h"][h] = _n(item["keys_h"][h]) + 1
         elif kind == "click":
             item["clicks_h"][h] = _n(item["clicks_h"][h]) + 1
+        elif kind == "wheel":
+            item["wheels_h"][h] = _n(item["wheels_h"][h]) + 1
     return True
 
 
@@ -124,6 +125,7 @@ def counts(cfg: dict, d: date) -> dict:
             "hours": [0] * 24,
             "keys_h": [0] * 24,
             "clicks_h": [0] * 24,
+            "wheels_h": [0] * 24,
         }
     return _clean_day(item)
 
