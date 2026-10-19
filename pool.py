@@ -17,10 +17,14 @@ _POCKETS = (
     (TABLE_W - R, TABLE_H - R),
 )
 _COLORS = ("#f0c14a", "#5aa7e8", "#e25b5b", "#b48cff", "#f08a3c", "#5ecf8a")
-_FELT = "#0f6a45"
-_RAIL = "#163528"
+_FELT = "#127848"
+_FELT_DEEP = "#0c5e38"
+_WOOD = "#6a3b1f"
+_WOOD_EDGE = "#3e2414"
+_WOOD_LINE = "#8d5a34"
 _CUE = "#f4f1ea"
 _HINT = "按住白球往后拉，松开就打。"
+_SCALE = 1.42
 
 
 class Ball:
@@ -202,29 +206,68 @@ def mount(host, dlg, *, button, reveal, again, back, close, drag_on, bg, fg, mut
     hint.pack(anchor="w", padx=16, pady=(0, 6))
     drag_on(hint)
 
-    ox, oy = 20, 8
-    canvas = tk.Canvas(host, width=int(TABLE_W + 40), height=int(TABLE_H + 24), bg=bg, highlightthickness=0)
-    canvas.pack(padx=8, pady=(0, 6))
+    ox, oy = 36, 28
+    tw, th = TABLE_W * _SCALE, TABLE_H * _SCALE
+    canvas = tk.Canvas(host, width=int(tw + 72), height=int(th + 56), bg=bg, highlightthickness=0)
+    canvas.pack(padx=8, pady=(0, 4))
 
     def to_table(x: float, y: float) -> tuple[float, float]:
-        return x - ox, y - oy
+        return (x - ox) / _SCALE, (y - oy) / _SCALE
+
+    def _spot(x: float, y: float) -> tuple[float, float]:
+        return ox + x * _SCALE, oy + y * _SCALE
 
     def redraw() -> None:
         canvas.delete("all")
         status.set(status_text(board))
-        canvas.create_rectangle(ox - 10, oy - 8, ox + TABLE_W + 10, oy + TABLE_H + 8, fill=_RAIL, outline=_RAIL)
-        canvas.create_rectangle(ox, oy, ox + TABLE_W, oy + TABLE_H, fill=_FELT, outline=_FELT)
+        rail = 18
+        canvas.create_rectangle(ox - rail, oy - rail, ox + tw + rail, oy + th + rail, fill=_WOOD, outline=_WOOD_EDGE, width=2)
+        canvas.create_rectangle(ox - rail + 3, oy - rail + 3, ox + tw + rail - 3, oy + th + rail - 3, outline=_WOOD_LINE)
+        canvas.create_rectangle(ox, oy, ox + tw, oy + th, fill=_FELT, outline=_FELT)
+        cushion = 8
+        canvas.create_rectangle(ox + cushion, oy + cushion, ox + tw - cushion, oy + th - cushion, outline=_FELT_DEEP, width=3)
         for px, py in _POCKETS:
-            canvas.create_oval(ox + px - 9, oy + py - 9, ox + px + 9, oy + py + 9, fill="#0c0e12", outline="#0c0e12")
-        if board.aiming and not board.moving and not board.won:
+            cx, cy = _spot(px, py)
+            canvas.create_oval(cx - 13, cy - 13, cx + 13, cy + 13, fill="#1a120e", outline=_WOOD_LINE, width=2)
+            canvas.create_oval(cx - 8, cy - 8, cx + 8, cy + 8, fill="#07080c", outline="")
+        for i in (1, 3):
+            for yb in (oy - 10, oy + th + 10):
+                canvas.create_oval(ox + tw * i / 4 - 2, yb - 2, ox + tw * i / 4 + 2, yb + 2, fill="#e6d2a2", outline="")
+            for xb in (ox - 10, ox + tw + 10):
+                canvas.create_oval(xb - 2, oy + th * i / 4 - 2, xb + 2, oy + th * i / 4 + 2, fill="#e6d2a2", outline="")
+        if board.aiming and not board.moving and not board.won and board.cue.alive:
             ax, ay = board.aim
-            cx, cy = ox + board.cue.x, oy + board.cue.y
-            canvas.create_line(cx, cy, ax, ay, fill="#d7e0c8", width=2)
+            cx, cy = _spot(board.cue.x, board.cue.y)
+            dx, dy = ax - cx, ay - cy
+            dist = math.hypot(dx, dy)
+            if dist > 4:
+                ux, uy = dx / dist, dy / dist
+                rr = R * _SCALE
+                gap = rr + 3
+                reach = min(dist, 120)
+                canvas.create_line(
+                    cx + ux * gap, cy + uy * gap,
+                    cx + ux * (gap + reach), cy + uy * (gap + reach),
+                    fill="#ecd9b0", width=4, capstyle="round",
+                )
+                canvas.create_line(
+                    cx + ux * (gap + reach - 14), cy + uy * (gap + reach - 14),
+                    cx + ux * (gap + reach), cy + uy * (gap + reach),
+                    fill="#2c2418", width=5, capstyle="round",
+                )
+                aim = min(210.0, dist * 1.35)
+                canvas.create_line(
+                    cx - ux * rr, cy - uy * rr,
+                    cx - ux * (rr + aim), cy - uy * (rr + aim),
+                    fill="#d7f3e2", width=1, dash=(4, 3),
+                )
+        rr = R * _SCALE
         for b in board.balls:
             if not b.alive:
                 continue
-            x, y = ox + b.x, oy + b.y
-            canvas.create_oval(x - R, y - R, x + R, y + R, fill=b.color, outline="#10281c")
+            x, y = _spot(b.x, b.y)
+            canvas.create_oval(x - rr, y - rr, x + rr, y + rr, fill=b.color, outline="#10281c")
+            canvas.create_oval(x - rr * 0.45, y - rr * 0.55, x - rr * 0.05, y - rr * 0.15, fill="#ffffff", outline="")
 
     def on_press(e) -> None:
         if board.moving or board.won or not board.cue.alive:
@@ -268,4 +311,4 @@ def mount(host, dlg, *, button, reveal, again, back, close, drag_on, bg, fg, mut
     button(bar, "再来一局", again, accent=True).pack(side="left", padx=(16, 6))
     button(bar, "返回", back).pack(side="left", padx=6)
     button(bar, "关闭", close).pack(side="left", padx=6)
-    reveal(dlg, min_w=460, min_h=360, near=near)
+    reveal(dlg, min_w=680, min_h=470, near=near)
