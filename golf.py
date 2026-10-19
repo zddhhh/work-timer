@@ -39,6 +39,7 @@ class Board:
         self.columns: list[list[Card]] = []
         self.stock: list[Card] = []
         self.waste: list[Card] = []
+        self.moved = False
         self.deal()
 
     def deal(self) -> None:
@@ -48,6 +49,7 @@ class Board:
         rest = deck[35:]
         self.waste = [rest[0]]
         self.stock = rest[1:]
+        self.moved = False
 
     def waste_top(self) -> Card | None:
         return self.waste[-1] if self.waste else None
@@ -64,12 +66,14 @@ class Board:
         if not self.can_play(col):
             return False
         self.waste.append(self.columns[col].pop())
+        self.moved = True
         return True
 
     def draw(self) -> bool:
         if not self.stock:
             return False
         self.waste.append(self.stock.pop())
+        self.moved = True
         return True
 
     @property
@@ -91,9 +95,9 @@ def status_text(board: Board) -> str:
     return "差 1 点就能接"
 
 
-def mount(host, dlg, *, button, reveal, again, back, drag_on, bg: str, fg: str, muted: str, near) -> None:
-    """画在已经清空的 host 上。again / back 由外面安排到下一拍执行。"""
-    board = Board()
+def mount(host, dlg, *, button, reveal, again, back, drag_on, bg: str, fg: str, muted: str, near, board: Board | None = None) -> None:
+    """画在已经清空的 host 上。again / back 由外面安排到下一拍执行。传入 board 则接着玩。"""
+    board = board if board is not None else Board()
     head = tk.Frame(host, bg=bg)
     head.pack(fill="x", padx=16, pady=(14, 2))
     title = tk.Label(head, text="高尔夫", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))

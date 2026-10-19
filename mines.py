@@ -121,6 +121,92 @@ def cell_side(cols: int, rows: int) -> int:
     return max(16, min(28, 520 // max(1, cols), 440 // max(1, rows)))
 
 
+def reset_session() -> None:
+    """测试或主动清档。关掉窗口不会清，下一把还能接着玩。"""
+    _SAVE.clear()
+    _SAVE.update({"page": "list", "level": LEVELS[0]["id"], "mines": {}, "golf": None})
+
+
+_SAVE: dict = {}
+reset_session()
+
+
+def _level(lid: str | None = None) -> dict:
+    want = lid or _SAVE.get("level") or LEVELS[0]["id"]
+    for lv in LEVELS:
+        if lv["id"] == want:
+            return lv
+    return LEVELS[0]
+
+
+def mines_slot(level_id: str | None = None, *, reset: bool = False) -> dict:
+    lid = _level(level_id)["id"]
+    _SAVE["level"] = lid
+    bag = _SAVE.setdefault("mines", {})
+    slot = bag.get(lid)
+    lv = _level(lid)
+    if reset or not isinstance(slot, dict) or not isinstance(slot.get("board"), Board):
+        slot = {"board": Board(lv["rows"], lv["cols"], lv["mines"]), "elapsed": 0.0, "running_since": None}
+        bag[lid] = slot
+    return slot
+
+
+def mines_in_progress(level_id: str | None = None) -> bool:
+    if level_id is None:
+        return any(mines_in_progress(lv["id"]) for lv in LEVELS)
+    slot = _SAVE.get("mines", {}).get(level_id)
+    board = slot.get("board") if isinstance(slot, dict) else None
+    return isinstance(board, Board) and board.started and not board.dead and not board.won
+
+
+def mines_elapsed(level_id: str | None = None) -> float:
+    slot = _SAVE.get("mines", {}).get(level_id or _SAVE.get("level"))
+    if not isinstance(slot, dict):
+        return 0.0
+    total = float(slot.get("elapsed") or 0.0)
+    started = slot.get("running_since")
+    if isinstance(started, (int, float)):
+        total += max(0.0, time.monotonic() - started)
+    return total
+
+
+def pause_mines_clock(level_id: str | None = None) -> None:
+    slot = _SAVE.get("mines", {}).get(level_id or _SAVE.get("level"))
+    if not isinstance(slot, dict) or slot.get("running_since") is None:
+        return
+    slot["elapsed"] = mines_elapsed(level_id or _SAVE.get("level"))
+    slot["running_since"] = None
+
+
+def resume_mines_clock(level_id: str | None = None) -> None:
+    slot = mines_slot(level_id)
+    board = slot["board"]
+    if not board.started or board.dead or board.won:
+        return
+    if slot.get("running_since") is None:
+        slot["running_since"] = time.monotonic()
+
+
+def golf_board(*, reset: bool = False):
+    import golf
+
+    board = _SAVE.get("golf")
+    if reset or board is None:
+        board = golf.Board()
+        _SAVE["golf"] = board
+    return board
+
+
+def golf_in_progress() -> bool:
+    board = _SAVE.get("golf")
+    return board is not None and bool(getattr(board, "moved", False)) and not getattr(board, "won", False)
+
+
+def _clock_text(elapsed: float) -> str:
+    sec = max(0, int(elapsed))
+    return f"{sec // 60:02d}:{sec % 60:02d}"
+
+
 def open_games(
     parent, near, win, *, dialog, button, reveal, modal, bg: str, fg: str, muted: str,
     poll_hide=None, live=None,
@@ -132,7 +218,7 @@ def open_games(
     dlg.unbind("<B1-Motion>")
     host = tk.Frame(dlg, bg=bg)
     host.pack(fill="both", expand=True)
-    state: dict = {"tick": None, "level": LEVELS[0]}
+    state: dict = {"tick": None, "level_id": _SAVE.get("level") or LEVELS[0]["id"]}
 
     def drag_on(widget: tk.Misc) -> None:
         origin = {"x": 0, "y": 0}
@@ -163,27 +249,32 @@ def open_games(
             pass
 
     def show_list() -> None:
+        pause_mines_clock()
+        _SAVE["page"] = "list"
         conceal()
         clear()
         title = tk.Label(host, text="小游戏", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
         title.pack(anchor="w", padx=18, pady=(16, 4))
         drag_on(title)
-        sub = tk.Label(host, text="隐藏键同样把这个窗口收起来。", fg=muted, bg=bg, font=("Microsoft YaHei UI", 9))
+        sub = tk.Label(host, text="隐藏键同样把这个窗口收起来。没玩完的一局关了还能接着。", fg=muted, bg=bg, font=("Microsoft YaHei UI", 9))
         sub.pack(anchor="w", padx=18, pady=(0, 12))
         drag_on(sub)
         for game in GAMES:
+            going = (game["id"] == "mines" and mines_in_progress()) or (game["id"] == "golf" and golf_in_progress())
             row = tk.Frame(host, bg="#222733", cursor="hand2")
             row.pack(fill="x", padx=18, pady=(0, 8))
-            name = tk.Label(row, text=game["name"], fg=fg, bg="#222733", font=("Microsoft YaHei UI", 12, "bold"))
+            label = game["name"] + ("  · 继续" if going else "")
+            name = tk.Label(row, text=label, fg=fg, bg="#222733", font=("Microsoft YaHei UI", 12, "bold"))
             name.pack(anchor="w", padx=12, pady=(10, 0))
-            blurb = tk.Label(row, text=game["blurb"], fg=muted, bg="#222733", font=("Microsoft YaHei UI", 9))
+            blurb_text = "点这里接着上一次。" if going else game["blurb"]
+            blurb = tk.Label(row, text=blurb_text, fg=muted, bg="#222733", font=("Microsoft YaHei UI", 9))
             blurb.pack(anchor="w", padx=12, pady=(2, 10))
 
             def go(_e=None, gid=game["id"]) -> None:
                 if gid == "mines":
-                    dlg.after(1, show_mines)
+                    dlg.after(1, lambda: show_mines(reset=False))
                 elif gid == "golf":
-                    dlg.after(1, show_golf)
+                    dlg.after(1, lambda: show_golf(reset=False))
 
             for w in (row, name, blurb):
                 w.bind("<Button-1>", go)
@@ -192,15 +283,18 @@ def open_games(
         button(bar, "关闭", dlg.destroy).pack(side="left", padx=18)
         reveal(dlg, min_w=320, min_h=220, near=near)
 
-    def show_mines() -> None:
+    def show_mines(*, reset: bool = False) -> None:
         conceal()
         clear()
-        level = state["level"]
-        board = Board(level["rows"], level["cols"], level["mines"])
+        level = _level(state.get("level_id"))
+        state["level_id"] = level["id"]
+        slot = mines_slot(level["id"], reset=reset)
+        board = slot["board"]
+        _SAVE["page"] = "mines"
         side = cell_side(board.cols, board.rows)
-        begun: list[float | None] = [None]
+        was_hidden = [bool(getattr(dlg, "_key_hidden", False))]
         status = tk.StringVar(value=f"剩余 {board.mines}")
-        clock = tk.StringVar(value="00:00")
+        clock = tk.StringVar(value=_clock_text(mines_elapsed(level["id"])))
         head = tk.Frame(host, bg=bg)
         head.pack(fill="x", padx=16, pady=(14, 6))
         title = tk.Label(head, text="扫雷", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
@@ -213,8 +307,11 @@ def open_games(
         pick.pack(fill="x", padx=16, pady=(0, 8))
 
         def choose(lv: dict) -> None:
-            state["level"] = lv
-            dlg.after(1, show_mines)
+            if lv["id"] == level["id"]:
+                return
+            pause_mines_clock(level["id"])
+            state["level_id"] = lv["id"]
+            dlg.after(1, lambda: show_mines(reset=False))
 
         for lv in LEVELS:
             button(pick, lv["name"], lambda lv=lv: choose(lv), accent=lv["id"] == level["id"]).pack(side="left", padx=(0, 6))
@@ -259,10 +356,15 @@ def open_games(
                         )
 
         def tick() -> None:
-            if begun[0] is None or board.dead or board.won:
-                return
-            sec = int(time.monotonic() - begun[0])
-            clock.set(f"{sec // 60:02d}:{sec % 60:02d}")
+            hidden = bool(getattr(dlg, "_key_hidden", False))
+            if hidden or board.dead or board.won:
+                pause_mines_clock(level["id"])
+            elif board.started:
+                resume_mines_clock(level["id"])
+            if was_hidden[0] and not hidden:
+                paint()
+            was_hidden[0] = hidden
+            clock.set(_clock_text(mines_elapsed(level["id"])))
 
         def cell_at(e) -> tuple[int, int] | None:
             c = (e.x - 4) // side
@@ -278,8 +380,10 @@ def open_games(
             kind = board.reveal(*pos)
             if kind == "noop" or kind == "over":
                 return
-            if begun[0] is None:
-                begun[0] = time.monotonic()
+            if kind in ("boom", "win"):
+                pause_mines_clock(level["id"])
+            else:
+                resume_mines_clock(level["id"])
             paint()
 
         def on_flag(e) -> None:
@@ -293,25 +397,34 @@ def open_games(
 
         bar = tk.Frame(host, bg=bg)
         bar.pack(side="bottom", fill="x", pady=(4, 14))
-        button(bar, "再来一局", lambda: dlg.after(1, show_mines), accent=True).pack(side="left", padx=(16, 6))
+        button(bar, "再来一局", lambda: dlg.after(1, lambda: show_mines(reset=True)), accent=True).pack(side="left", padx=(16, 6))
         button(bar, "返回", lambda: dlg.after(1, show_list)).pack(side="left", padx=6)
         state["tick"] = tick
         reveal(dlg, min_w=max(340, width + 36), min_h=max(280, height + 150), near=near)
 
-    def show_golf() -> None:
+    def show_golf(*, reset: bool = False) -> None:
         import golf
 
+        pause_mines_clock()
         conceal()
         clear()
+        _SAVE["page"] = "golf"
         golf.mount(
             host, dlg,
             button=button, reveal=reveal, drag_on=drag_on,
-            again=lambda: dlg.after(1, show_golf),
+            again=lambda: dlg.after(1, lambda: show_golf(reset=True)),
             back=lambda: dlg.after(1, show_list),
             bg=bg, fg=fg, muted=muted, near=near,
+            board=golf_board(reset=reset),
         )
 
-    show_list()
+    page = _SAVE.get("page") or "list"
+    if page == "mines":
+        show_mines(reset=False)
+    elif page == "golf":
+        show_golf(reset=False)
+    else:
+        show_list()
 
     def on_frame() -> None:
         # 弹窗循环已经在刷倒计时、跟隐藏键时，这里不要再刷一遍

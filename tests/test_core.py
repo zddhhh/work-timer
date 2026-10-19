@@ -371,6 +371,11 @@ class DialogAnchorTests(unittest.TestCase):
 
 
 class GameDialogTests(unittest.TestCase):
+    def setUp(self):
+        import mines
+
+        mines.reset_session()
+
     def _walk(self, widget, text):
         import tkinter as tk
 
@@ -1676,6 +1681,39 @@ class MinesTests(unittest.TestCase):
         self.assertTrue(board.won)
         self.assertEqual(last, "win")
         self.assertEqual(sum(sum(1 for m in row if m) for row in board.mine), 1)
+
+    def test_session_keeps_board_until_new_game(self):
+        import mines
+
+        mines.reset_session()
+        easy = mines.mines_slot("easy")["board"]
+        self.assertFalse(mines.mines_in_progress())
+        easy.reveal(0, 0)
+        self.assertTrue(mines.mines_in_progress("easy"))
+        opened = sum(sum(1 for cell in row if cell) for row in easy.open)
+        self.assertIs(mines.mines_slot("easy")["board"], easy)
+        self.assertEqual(sum(sum(1 for cell in row if cell) for row in mines.mines_slot("easy")["board"].open), opened)
+        normal = mines.mines_slot("normal")["board"]
+        self.assertIsNot(normal, easy)
+        self.assertTrue(mines.mines_in_progress("easy"))
+        self.assertFalse(mines.mines_in_progress("normal"))
+        mines.resume_mines_clock("easy")
+        self.assertIsNotNone(mines.mines_slot("easy")["running_since"])
+        mines.pause_mines_clock("easy")
+        self.assertIsNone(mines.mines_slot("easy")["running_since"])
+        self.assertGreaterEqual(mines.mines_elapsed("easy"), 0)
+        mines.mines_slot("easy", reset=True)
+        self.assertIsNot(mines.mines_slot("easy")["board"], easy)
+        self.assertFalse(mines.mines_in_progress("easy"))
+        mines.reset_session()
+        b = mines.golf_board()
+        self.assertFalse(mines.golf_in_progress())
+        b.draw()
+        self.assertTrue(mines.golf_in_progress())
+        self.assertIs(mines.golf_board(), b)
+        mines.golf_board(reset=True)
+        self.assertIsNot(mines.golf_board(), b)
+        self.assertFalse(mines.golf_in_progress())
 
 
 class GolfTests(unittest.TestCase):
