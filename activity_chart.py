@@ -1,4 +1,4 @@
-"""工时账本里的键鼠次数图：大数字 + 今天按小时 + 这周每天。"""
+"""工时账本里的键鼠次数图：三个总数，下面按小时分成三行。"""
 from __future__ import annotations
 
 import math
@@ -9,11 +9,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 import activity
-import worklog
 
-W, H = 584, 360
+W, H = 584, 292
 IDLE_READOUT = "移到柱上，看这一小时各是多少"
-READOUT = (16, 214, 568, 238)
+READOUT = (16, 258, 568, 280)
 _FONT: dict[tuple, ImageFont.ImageFont] = {}
 
 _PAGE = (22, 26, 34, 255)
@@ -206,7 +205,7 @@ def render(
 
     inset = 18
     plot_l, plot_r = 62, w - inset
-    stats_y = 14
+    stats_y = 16
     items = (("键盘", today["keys"], _KEY), ("鼠标", today["clicks"], _CLICK), ("滚轮", today["wheels"], _WHEEL))
     col_w = (w - inset * 2) / 3
     for i, (name, val, color) in enumerate(items):
@@ -218,7 +217,7 @@ def render(
         _text(dr, (cx, stats_y + 42), activity.fmt_count(val), size=22, fill=_WHITE, anchor="ms", bold=True)
 
     cap = "今天还没记下次数" if today["mode"] == "empty" else _peak_caption(today)
-    _text(dr, (inset, 74), cap, size=11, fill=_MUTED, anchor="lm")
+    _text(dr, (inset, 78), cap, size=11, fill=_MUTED, anchor="lm")
 
     lo, hi = visible_span(today["hours"], today["keys_h"], today["clicks_h"], today["wheels_h"])
     n = hi - lo + 1
@@ -232,9 +231,9 @@ def render(
             ("键盘", today["keys_h"], _KEY),
             ("滚轮", today["wheels_h"], _WHEEL),
         )
-    row_h = 28
-    rows_top = 108
-    bar_room = 20
+    row_h = 42
+    rows_top = 96
+    bar_room = 30
 
     def x_center(hour: int) -> float:
         return plot_l + (hour - lo + 0.5) * slot
@@ -273,48 +272,6 @@ def render(
         )
 
     _paint_readout(im, IDLE_READOUT)
-
-    week_top, week_bot = 268, 308
-    week_word = "本周" if this_week else "这周"
-    _text(dr, (inset, week_top - 16), week_word, size=11, fill=_MUTED, anchor="lm")
-    week_max = max((row["total"] for row in days), default=0)
-    col = (plot_r - plot_l) / max(1, len(days))
-    bar_dw = max(8, int(col * 0.28))
-    bar_h = week_bot - week_top
-    for i, row in enumerate(days):
-        cx = plot_l + (i + 0.5) * col
-        x0 = int(cx - bar_dw / 2)
-        x1 = x0 + bar_dw
-        y = week_bot
-        total = row["total"]
-        if total and week_max:
-            for key, color in (("keys", _KEY), ("clicks", _CLICK), ("wheels", _WHEEL)):
-                part = int(bar_h * row[key] / week_max)
-                if part <= 0:
-                    continue
-                dr.rectangle((x0, y - part, x1, y), fill=color)
-                y -= part
-        wd = worklog.WEEKDAY_CN[row["date"].weekday()]
-        if row["today"]:
-            _round(dr, (cx - 10, week_bot + 6, cx + 10, week_bot + 20), (48, 56, 72, 255), radius=8)
-            fill = _TODAY
-        else:
-            fill = _DIM if row["weekend"] else _MUTED
-        _text(dr, (cx, week_bot + 13), wd, size=10, fill=fill, anchor="mm")
-        d = row["date"]
-        hits.append(
-            {
-                "x0": int(cx - col / 2),
-                "x1": int(cx + col / 2),
-                "y0": week_top - 4,
-                "y1": h - 6,
-                "text": (
-                    f"周{wd} {d.month}/{d.day}    键盘 {activity.fmt_count(row['keys'])}"
-                    f"    鼠标 {activity.fmt_count(row['clicks'])}"
-                    f"    滚轮 {activity.fmt_count(row['wheels'])}"
-                ),
-            }
-        )
     return im, hits
 
 

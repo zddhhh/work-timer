@@ -177,11 +177,10 @@ def _place_dialog(dlg: tk.Toplevel, near, *, min_w: int, min_h: int) -> None:
 
 def _card_bounds(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> str:
     dlg.update_idletasks()
-    w = max(min_w, int(dlg.winfo_reqwidth()) + 20)
-    h = max(min_h, int(dlg.winfo_reqheight()) + 24)
-    sw = max(min_w, int(dlg.winfo_screenwidth()) - 24)
-    sh = max(min_h, int(dlg.winfo_screenheight()) - 48)
-    w, h = min(w, sw), min(h, sh)
+    sw = max(320, int(dlg.winfo_screenwidth()) - 24)
+    sh = max(240, int(dlg.winfo_screenheight()) - 48)
+    w = min(sw, max(min(min_w, sw), int(dlg.winfo_reqwidth()) + 20))
+    h = min(sh, max(min(min_h, sh), int(dlg.winfo_reqheight()) + 24))
     if near:
         x, y = _resolve_near(near, w, h, sw, sh)
         return f"{w}x{h}+{x}+{y}"
@@ -2368,7 +2367,7 @@ class WorkTimer:
         )
 
     def _build_worklog_dialog(self) -> dict:
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=640, height=860)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=640, height=760)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         body = tk.Frame(dlg, bg=_CARD_BG)
@@ -2385,13 +2384,49 @@ class WorkTimer:
                 "「比该走」看你走的时候比下班点早还是晚。过了下班点再离开一个半小时就封上，晚上回家用电脑不算。时间能改，两格清空即删除这天。"
             ),
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(anchor="w", pady=(0, 6))
+
+        act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
+        head = tk.Frame(body, bg=_CARD_BG)
+        head.pack(fill="x", pady=(2, 4))
+        tk.Label(
+            head, text="今天敲了多少下", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(side="left")
+
+        def toggle_act() -> None:
+            on = bool(act_on.get())
+            activity.set_enabled(self.cfg, on)
+            self.win.listen_raw_input(on)
+            store.save_config(self.cfg)
+            self._paint_activity_chart(ui)
+
+        tk.Checkbutton(
+            head, text="记下次数", variable=act_on, command=toggle_act,
+            fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
+        ).pack(side="right")
+        chart_lbl = tk.Label(body, bg=_CARD_BG, bd=0, highlightthickness=0)
+        chart_lbl.pack(anchor="w", pady=(0, 8))
+
+        scroller = tk.Canvas(body, bg=_CARD_BG, highlightthickness=0, bd=0, height=220)
+        scroller.pack(fill="both", expand=True)
+        inner = tk.Frame(scroller, bg=_CARD_BG)
+        sc_win = scroller.create_window((0, 0), window=inner, anchor="nw")
+
+        def _fit_scroll(_event=None) -> None:
+            scroller.configure(scrollregion=scroller.bbox("all") or (0, 0, 0, 0))
+            width = scroller.winfo_width()
+            if width > 1:
+                scroller.itemconfigure(sc_win, width=width)
+
+        inner.bind("<Configure>", _fit_scroll)
+        scroller.bind("<Configure>", _fit_scroll)
 
         cell_bg = "#1e2430"
         week_var = tk.StringVar()
-        nav = tk.Frame(body, bg=_CARD_BG)
+        nav = tk.Frame(inner, bg=_CARD_BG)
         nav.pack(fill="x", pady=(0, 8))
-        table = tk.Frame(body, bg=cell_bg, highlightthickness=1, highlightbackground="#2a3140")
+        table = tk.Frame(inner, bg=cell_bg, highlightthickness=1, highlightbackground="#2a3140")
         table.pack(fill="x")
         for c, text in enumerate(("日期", "来了", "走了", "待了多久", "比该走")):
             tk.Label(
@@ -2423,33 +2458,22 @@ class WorkTimer:
         tk.Frame(table, bg=cell_bg, height=8).grid(row=8, column=0)
         week_sum = tk.StringVar()
         month_sum = tk.StringVar()
-        tk.Label(body, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10)).pack(
+        tk.Label(inner, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10)).pack(
             anchor="w", pady=(10, 0)
         )
-        tk.Label(body, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
-            anchor="w", pady=(2, 0)
+        tk.Label(inner, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
+            anchor="w", pady=(2, 8)
         )
-        act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
-        head = tk.Frame(body, bg=_CARD_BG)
-        head.pack(fill="x", pady=(16, 8))
-        tk.Label(
-            head, text="今天敲了多少下", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
-        ).pack(side="left")
 
-        def toggle_act() -> None:
-            on = bool(act_on.get())
-            activity.set_enabled(self.cfg, on)
-            self.win.listen_raw_input(on)
-            store.save_config(self.cfg)
-            self._paint_activity_chart(ui)
+        def _wheel(event) -> None:
+            scroller.yview_scroll(int(-event.delta / 120), "units")
 
-        tk.Checkbutton(
-            head, text="记下次数", variable=act_on, command=toggle_act,
-            fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
-            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
-        ).pack(side="right")
-        chart_lbl = tk.Label(body, bg=_CARD_BG, bd=0, highlightthickness=0)
-        chart_lbl.pack(anchor="w")
+        def _bind_wheel(widget) -> None:
+            widget.bind("<MouseWheel>", _wheel)
+            for child in widget.winfo_children():
+                _bind_wheel(child)
+
+        _bind_wheel(inner)
         ui = {
             "dlg": dlg,
             "stop": False,
@@ -2544,7 +2568,7 @@ class WorkTimer:
         ui["err"].set("")
         ui["anchor"] = date.today()
         self._fill_worklog(ui)
-        _reveal_card(ui["dlg"], min_w=620, min_h=800, near=self._dialog_near())
+        _reveal_card(ui["dlg"], min_w=620, min_h=620, near=self._dialog_near())
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:

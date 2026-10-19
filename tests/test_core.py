@@ -441,6 +441,16 @@ class GameDialogTests(unittest.TestCase):
             shown(dlg)
             self.assertIsNotNone(self._walk(dlg, "点亮边的牌接上，或点牌堆翻一张。"))
             self.assertIsNotNone(self._walk(dlg, "关闭"))
+            click(dlg, "返回")
+            if on_frame:
+                on_frame()
+            shown(dlg)
+            click(dlg, "台球")
+            if on_frame:
+                on_frame()
+            shown(dlg)
+            self.assertIsNotNone(self._walk(dlg, "按住白球往后拉，松开就打。"))
+            self.assertIsNotNone(self._walk(dlg, "关闭"))
             dlg.destroy()
 
         mines.open_games(
@@ -1717,6 +1727,15 @@ class MinesTests(unittest.TestCase):
         mines.golf_board(reset=True)
         self.assertIsNot(mines.golf_board(), b)
         self.assertFalse(mines.golf_in_progress())
+        mines.reset_session()
+        p = mines.pool_board()
+        self.assertFalse(mines.pool_in_progress())
+        p.shoot(40, 0)
+        self.assertTrue(mines.pool_in_progress())
+        self.assertIs(mines.pool_board(), p)
+        mines.pool_board(reset=True)
+        self.assertIsNot(mines.pool_board(), p)
+        self.assertFalse(mines.pool_in_progress())
 
 
 class GolfTests(unittest.TestCase):
@@ -1761,6 +1780,53 @@ class GolfTests(unittest.TestCase):
         self.assertTrue(board.stuck)
         self.assertEqual(golf.status_text(board), "接不上了")
         self.assertFalse(board.draw())
+
+
+class PoolTests(unittest.TestCase):
+    def test_listed_with_the_others(self):
+        import mines
+
+        ids = [g["id"] for g in mines.GAMES]
+        self.assertEqual(ids, ["mines", "golf", "pool"])
+
+    def test_shoot_collides_and_pockets(self):
+        import pool
+
+        board = pool.Board()
+        self.assertFalse(board.shoot(2, 0))
+        self.assertTrue(board.shoot(40, 0))
+        self.assertLess(board.cue.vx, 0)
+        self.assertTrue(board.moved)
+
+        cue, color = board.balls[0], board.balls[1]
+        cue.x, cue.y, cue.vx, cue.vy = 100, 100, 120, 0
+        color.x, color.y, color.vx, color.vy = 110, 100, 0, 0
+        board._pairs()
+        self.assertGreater(color.vx, 50)
+        self.assertLess(abs(cue.vx), 50)
+
+        color.x, color.vx = 2, -30
+        board._walls()
+        self.assertGreaterEqual(color.x, pool.R)
+        self.assertGreater(color.vx, 0)
+
+        color.x, color.y = pool.R, pool.R
+        board._pockets()
+        self.assertFalse(color.alive)
+        self.assertEqual(pool.status_text(board), "进袋 1/6")
+
+        board.cue.x, board.cue.y = pool.R, pool.R
+        board._pockets()
+        self.assertTrue(board.cue.alive)
+        self.assertGreater(board.cue.x, 40)
+
+        for ball in board.balls:
+            if ball.kind == "color":
+                ball.alive = False
+        board.cue.vx = 40
+        board.step(0.02)
+        self.assertTrue(board.won)
+        self.assertEqual(pool.status_text(board), "清台了")
 
 
 class GhostGripTests(unittest.TestCase):

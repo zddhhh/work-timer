@@ -17,6 +17,7 @@ MINES = LEVELS[0]["mines"]
 GAMES = (
     {"id": "mines", "name": "扫雷", "blurb": "左键翻开，右键插旗。初级、中级、高级都能选。"},
     {"id": "golf", "name": "高尔夫", "blurb": "只点不拖：牌面差 1 就能接，点牌堆翻一张。"},
+    {"id": "pool", "name": "台球", "blurb": "按住白球往后拉，松开就打。彩球都进袋就过关。"},
 )
 
 _NUM = {
@@ -124,7 +125,7 @@ def cell_side(cols: int, rows: int) -> int:
 def reset_session() -> None:
     """测试或主动清档。关掉窗口不会清，下一把还能接着玩。"""
     _SAVE.clear()
-    _SAVE.update({"page": "list", "level": LEVELS[0]["id"], "mines": {}, "golf": None})
+    _SAVE.update({"page": "list", "level": LEVELS[0]["id"], "mines": {}, "golf": None, "pool": None})
 
 
 _SAVE: dict = {}
@@ -202,6 +203,21 @@ def golf_in_progress() -> bool:
     return board is not None and bool(getattr(board, "moved", False)) and not getattr(board, "won", False)
 
 
+def pool_board(*, reset: bool = False):
+    import pool
+
+    board = _SAVE.get("pool")
+    if reset or board is None:
+        board = pool.Board()
+        _SAVE["pool"] = board
+    return board
+
+
+def pool_in_progress() -> bool:
+    board = _SAVE.get("pool")
+    return board is not None and bool(getattr(board, "moved", False)) and not getattr(board, "won", False)
+
+
 def _clock_text(elapsed: float) -> str:
     sec = max(0, int(elapsed))
     return f"{sec // 60:02d}:{sec % 60:02d}"
@@ -260,7 +276,11 @@ def open_games(
         sub.pack(anchor="w", padx=18, pady=(0, 12))
         drag_on(sub)
         for game in GAMES:
-            going = (game["id"] == "mines" and mines_in_progress()) or (game["id"] == "golf" and golf_in_progress())
+            going = (
+                (game["id"] == "mines" and mines_in_progress())
+                or (game["id"] == "golf" and golf_in_progress())
+                or (game["id"] == "pool" and pool_in_progress())
+            )
             row = tk.Frame(host, bg="#222733", cursor="hand2")
             row.pack(fill="x", padx=18, pady=(0, 8))
             label = game["name"] + ("  · 继续" if going else "")
@@ -275,6 +295,8 @@ def open_games(
                     dlg.after(1, lambda: show_mines(reset=False))
                 elif gid == "golf":
                     dlg.after(1, lambda: show_golf(reset=False))
+                elif gid == "pool":
+                    dlg.after(1, lambda: show_pool(reset=False))
 
             for w in (row, name, blurb):
                 w.bind("<Button-1>", go)
@@ -420,11 +442,31 @@ def open_games(
             board=golf_board(reset=reset),
         )
 
+    def show_pool(*, reset: bool = False) -> None:
+        import pool
+
+        pause_mines_clock()
+        conceal()
+        clear()
+        _SAVE["page"] = "pool"
+        pool.mount(
+            host, dlg,
+            button=button, reveal=reveal, drag_on=drag_on,
+            again=lambda: dlg.after(1, lambda: show_pool(reset=True)),
+            back=lambda: dlg.after(1, show_list),
+            close=dlg.destroy,
+            bg=bg, fg=fg, muted=muted, near=near,
+            board=pool_board(reset=reset),
+            tick=state,
+        )
+
     page = _SAVE.get("page") or "list"
     if page == "mines":
         show_mines(reset=False)
     elif page == "golf":
         show_golf(reset=False)
+    elif page == "pool":
+        show_pool(reset=False)
     else:
         show_list()
 
