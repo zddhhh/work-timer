@@ -1918,6 +1918,7 @@ class ReleaseMailTests(unittest.TestCase):
             setup.write_bytes(b"setup-bytes")
             msg = mail.build_message("1.3.56", "- 说明", setup, "abc", "from@example.com")
         self.assertEqual(msg["To"], "jun2.huang@sgmw.com.cn")
+        self.assertEqual(msg["Cc"], "745594378@qq.com")
         self.assertIn("1.3.56", msg["Subject"])
         names = [part.get_filename() for part in msg.iter_attachments()]
         self.assertEqual(names, ["WorkTimer-1.3.56.zip"])

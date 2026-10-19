@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SECRET = ROOT / "release_mail.secret.json"
 RECIPIENTS = ("jun2.huang@sgmw.com.cn",)
+CC = ("745594378@qq.com",)
 RELEASE_PAGE = "https://gitcode.com/mdslanruo/work-timer/releases"
 
 
@@ -67,6 +68,7 @@ def build_message(
     msg["Subject"] = f"WorkTimer {version} 安装包"
     msg["From"] = sender
     msg["To"] = ", ".join(to)
+    msg["Cc"] = ", ".join(CC)
     msg.set_content(
         "\n".join(
             [
@@ -100,7 +102,7 @@ def send_release(version: str, note: str, setups: list[Path], digests: dict[str,
             f"安装包还没寄到 {', '.join(RECIPIENTS)}"
         )
     msg = build_message(version, note, setup, digests[setup.name], cfg["from"])
-    print(f"寄安装包到 {', '.join(RECIPIENTS)} …")
+    print(f"寄安装包到 {', '.join(RECIPIENTS)}，抄送 {', '.join(CC)} …")
     port = cfg["port"]
     if port == 465:
         server = smtplib.SMTP_SSL(cfg["host"], port, timeout=180)
