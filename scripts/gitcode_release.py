@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 台球辅助线可关，默认关；进袋从袋口掉进去，贴库会弹开"
+    "- 新增华境、发激励啦。点发激励啦会跳起来，弹出得了几捆"
 )
 
 

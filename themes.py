@@ -27,11 +27,12 @@ def use_flip_display(kind: str, big: str, cfg: dict | None = None, *, h: int = 9
     return bool(big) and fx._flip_text_has_digits(big)
 
 
-INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow"})
+INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow", "suofen"})
 _KINDS = frozenset(
     {
         "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", meow.KIND,
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder",         "flipclock", meow.KIND,
+        "huajing", "suofen",
     }
 )
 # 新 kind 的皮写在代码里、不进在线 themes.json：旧版不认识的 kind 会回落成玻璃皮
@@ -48,6 +49,34 @@ _BUILTIN_EXTRA: tuple[dict, ...] = (
         "idle": [160, 100, 122, 255],
         "warn": [232, 80, 48, 255],
         "done": [236, 66, 112, 255],
+        "radius": 16,
+    },
+    {
+        "id": "huajing",
+        "name": "华境",
+        "kind": "huajing",
+        "fill": [8, 12, 18, 235],
+        "outline": [170, 196, 214, 70],
+        "title": [214, 224, 232, 230],
+        "big": [248, 250, 252, 255],
+        "sub": [150, 196, 224, 230],
+        "idle": [186, 206, 222, 240],
+        "warn": [236, 196, 120, 245],
+        "done": [255, 214, 150, 250],
+        "radius": 16,
+    },
+    {
+        "id": "suofen",
+        "name": "发激励啦",
+        "kind": "suofen",
+        "fill": [255, 236, 214, 250],
+        "outline": [176, 42, 36, 180],
+        "title": [140, 48, 36, 255],
+        "big": [90, 32, 24, 255],
+        "sub": [160, 64, 40, 230],
+        "idle": [176, 48, 36, 255],
+        "warn": [196, 88, 20, 255],
+        "done": [176, 32, 28, 255],
         "radius": 16,
     },
 )
@@ -146,6 +175,10 @@ def _skin_base_rgba(
         return (238, 244, 254, 168) if skin_light else (8, 9, 18, 132)
     if kind == meow.KIND:
         return (255, 241, 246, 255)
+    if kind == "huajing":
+        return (8, 12, 18, 235)
+    if kind == "suofen":
+        return (255, 236, 214, 250)
     if kind == "glass":
         return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
     return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
@@ -330,7 +363,7 @@ def _parse_catalog(data: object) -> list[Theme]:
             continue
         seen.add(th.id)
         out.append(th)
-        if len(out) >= 16:
+        if len(out) >= 17:
             break
     return out
 
@@ -359,7 +392,7 @@ def _bundled_themes() -> list[Theme]:
     have = {t.id for t in items}
     for raw in _BUILTIN_EXTRA:
         th = _parse_theme(raw)
-        if th is not None and th.id not in have and len(items) < 16:
+        if th is not None and th.id not in have and len(items) < 17:
             items.append(th)
             have.add(th.id)
     return items
@@ -457,13 +490,14 @@ def consume_updated() -> bool:
 _PREFER_BUNDLED = frozenset(
     {
         "ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
-        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock", "meow",
+        "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",         "meow",
+        "huajing", "suofen",
     }
 )
 
 
 def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme]:
-    """在线/缓存目录 + 内置目录合并：内置皮以内置为准，远端缺的内置皮补回来，上限 16。"""
+    """在线/缓存目录 + 内置目录合并：内置皮以内置为准，远端缺的内置皮补回来，上限 17。"""
     if not remote:
         return list(bundled)
     bmap = {t.id: t for t in bundled}
@@ -477,11 +511,11 @@ def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme
     for t in bundled:
         if t.id in seen:
             continue
-        if len(items) >= 16:
+        if len(items) >= 17:
             break
         items.append(t)
         seen.add(t.id)
-    return items[:16]
+    return items[:17]
 
 
 def load_local_catalog() -> None:
@@ -678,7 +712,7 @@ def paint_card(
                 elif large_chrome:
                     oa = min(oa, 14)
                 d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
-            if not compact_chrome:
+            if not compact_chrome and kind not in ("huajing", "suofen"):
                 inset = 2
                 ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
                 pale_rim = ctx.card_light and kind not in ("midautumn", "nationalday", "thunder")
@@ -735,7 +769,12 @@ def paint_card(
         )
         if meow_lay is not None:
             title_y, row_y, row_h = meow_lay.title_y, meow_lay.row_y, meow_lay.row_h
-    title_x = _centered_text_x(d, title, font_title, w)
+    text_w = int(w * 0.58) if kind in ("huajing", "suofen") else w
+    if show_flip and kind in ("huajing", "suofen"):
+        title_y, flip_pad, row_y, row_w, row_h = fx.flip_row_layout(
+            text_w, h, title_h=title_h, has_sub=bool(sub),
+        )
+    title_x = _centered_text_x(d, title, font_title, text_w)
     if meow_lay is not None and title:
         d.text(
             (title_x, title_y), title, font=font_title, fill=title_fill,
@@ -772,7 +811,7 @@ def paint_card(
             stroke=True, sticker=True, bold=False,
         )
     elif big:
-        big_x = _centered_text_x(d, big, font_big, w)
+        big_x = _centered_text_x(d, big, font_big, text_w)
         _halo_text(
             d, (big_x, big_y), big, font_big, accent_fill,
             ghost=ghost, glow=(stage == "done" and not compact_text), compact=compact_text,

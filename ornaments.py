@@ -6,7 +6,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 import fx
 import meow
@@ -31,9 +31,10 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "warmglow": ("skin_warmglow.png", None),
     "midautumn": ("skin_midautumn.png", "skin_midautumn_glow.png"),
     "nationalday": ("skin_nationalday.png", "skin_nationalday_glow.png"),
+    "huajing": ("skin_huajing.png", None),
 }
 # 不用生图、逐帧程序化绘制的皮
-_PROC_KINDS = frozenset({"neonflow", "inkpulse", "thunder", "flipclock", meow.KIND})
+_PROC_KINDS = frozenset({"neonflow", "inkpulse", "thunder", "flipclock", meow.KIND, "suofen"})
 
 
 def asset_path(name: str) -> Path:
@@ -340,6 +341,95 @@ def paint_thunder_glyph(
     )
 
 
+def _huajing_lights(stage: str, phase: float) -> tuple[tuple[int, int, int], tuple[int, int, int], float]:
+    """星环和车底光。走着是琥珀蓝，快到点转金，到点变成炽焰鎏金。"""
+    pulse = 0.72 + 0.28 * math.sin(phase * (2.4 if stage == "warn" else 1.3))
+    if stage == "done":
+        return (255, 196, 92), (255, 228, 170), 1.0
+    if stage == "warn":
+        return (255, 176, 72), (220, 236, 255), max(0.75, pulse)
+    if stage == "idle":
+        return (70, 110, 150), (168, 186, 204), 0.42
+    return (72, 156, 220), (236, 244, 252), pulse
+
+
+def _fade_alpha(im: Image.Image, strength: float) -> Image.Image:
+    w, h = im.size
+    mask = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(mask)
+    for y in range(h):
+        fade = (1.0 - y / max(1, h - 1)) ** 1.6
+        md.line([(0, y), (w, y)], fill=int(255 * strength * fade))
+    r, g, b, a = im.split()
+    return Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
+
+
+def _paint_huajing(layer: Image.Image, phase: float, *, stage: str) -> None:
+    """墨玉黑底、星环灯、车底光和倒影，车贴在右侧。"""
+    bw, bh = layer.size
+    d = ImageDraw.Draw(layer)
+    for y in range(bh):
+        t = y / max(1, bh - 1)
+        col = (
+            int(5 + 10 * t),
+            int(8 + 16 * t),
+            int(14 + 22 * t),
+            255,
+        )
+        d.line([(0, y), (bw, y)], fill=col)
+    under, ring, gain = _huajing_lights(stage, phase)
+    # 左侧几道灯丝，时间后面不空
+    streak = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(streak)
+    span = int(bw * 0.56)
+    for i, yy in enumerate((0.22, 0.40, 0.78)):
+        y = int(bh * yy)
+        shift = int((math.sin(phase * 0.8 + i) * 0.5 + 0.5) * span * 0.35)
+        a = int((28 if stage == "idle" else 48) * gain)
+        sd.line([(8 + shift, y), (span, y)], fill=(*ring, a), width=1)
+    layer.alpha_composite(streak.filter(ImageFilter.GaussianBlur(0.6)))
+
+    car = load_asset("skin_huajing_car.png")
+    if car is None:
+        return
+    cw = max(48, int(bw * 0.40))
+    ch = max(1, int(car.height * cw / car.width))
+    if ch > int(bh * 0.72):
+        ch = max(1, int(bh * 0.72))
+        cw = max(1, int(car.width * ch / car.height))
+    car_s = car.resize((cw, ch), Image.Resampling.LANCZOS)
+    cx = bw - cw - max(2, bw // 80)
+    cy = max(2, (bh - ch) // 2 + bh // 28)
+
+    glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gx0, gy0 = cx - cw // 8, cy + int(ch * 0.55)
+    gx1, gy1 = cx + cw + cw // 10, min(bh - 1, cy + ch + max(6, bh // 10))
+    gd.ellipse((gx0, gy0, gx1, gy1), fill=(*under, int(150 * gain)))
+    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(max(4, bh // 12))))
+
+    if bh >= 88:
+        refl = _fade_alpha(car_s.transpose(Image.Transpose.FLIP_TOP_BOTTOM), 0.34 * gain)
+        layer.alpha_composite(refl, (cx, cy + ch - max(2, ch // 10)))
+
+    layer.alpha_composite(car_s, (cx, cy))
+
+    ring_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    rd = ImageDraw.Draw(ring_layer)
+    y = 3
+    drop = max(3, bh // 22)
+    x0, x1 = max(10, bw // 22), bw - max(10, bw // 22)
+    core = (*ring, int(235 * gain))
+    width = 2 if bh >= 100 else 1
+    z = max(10, bw // 18)
+    # 贯穿星环，两端各折一下，接近华境车头的 Z 字灯
+    rd.line([(x0 + z, y), (x1 - z, y)], fill=core, width=width)
+    rd.line([(x0, y + drop), (x0 + z // 2, y + drop), (x0 + z, y)], fill=core, width=width)
+    rd.line([(x1, y + drop), (x1 - z // 2, y + drop), (x1 - z, y)], fill=core, width=width)
+    layer.alpha_composite(ring_layer.filter(ImageFilter.GaussianBlur(1.1)))
+    layer.alpha_composite(ring_layer)
+
+
 def paste_skin(
     img: Image.Image,
     box: tuple[int, int, int, int],
@@ -379,6 +469,16 @@ def paste_skin(
             fx.paint_flipclock(layer, phase, stage=stage, radius=int(radius), light=light)
         elif kind == meow.KIND:
             meow.paint_backdrop(layer, phase, stage=stage, radius=int(radius), light=light)
+        elif kind == "suofen":
+            import suofen
+
+            suofen.paint(layer, phase, stage=stage)
+        img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+        return True
+
+    if kind == "huajing":
+        layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        _paint_huajing(layer, phase, stage=stage)
         img.alpha_composite(_round_mask(layer, radius), (x0, y0))
         return True
 

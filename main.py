@@ -36,6 +36,7 @@ import schedules
 import single_instance
 import skin_settings
 import store
+import suofen
 import themes
 import uninstall
 import updater
@@ -1594,6 +1595,9 @@ class WorkTimer:
             self._ink_hits = ornaments.register_ink_hit(self._ink_hits, now, int(lx), int(ly))
         elif kind == meow.KIND:
             self._meow.poke(now)
+            self._last_key = ""
+        elif kind == suofen.KIND:
+            suofen.poke(now)
             self._last_key = ""
         elif kind == "neonflow":
             rr = min(self._theme().radius, max(8, self._win_h // 5))
@@ -3746,6 +3750,8 @@ class WorkTimer:
                     fps = ornaments.thunder_fps(stage, phase)
                 elif meow_on:
                     fps = max(self._meow.fps(stage, phase, drinking=drinking), 60 if self._flip_anims else 0)
+                elif theme.kind == suofen.KIND:
+                    fps = max(suofen.fps(stage, phase), 60 if self._flip_anims else 0)
                 elif themes.use_flip_display(theme.kind, big, self.cfg, h=h):
                     fps = 60 if self._flip_anims else (14 if stage in ("idle", "done") else 20)
                 elif theme.kind in ("neonflow", "inkpulse"):

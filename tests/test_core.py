@@ -207,7 +207,7 @@ class ThemeTests(unittest.TestCase):
         ids = [t.id for t in merged]
         self.assertIn("ghost", ids)
         self.assertIn("nationalday", ids)
-        self.assertLessEqual(len(merged), 16)
+        self.assertLessEqual(len(merged), 17)
 
     def test_removed_ids_filtered_and_normalized(self):
         items = themes._parse_catalog({"themes": [
@@ -248,8 +248,23 @@ class MeowTests(unittest.TestCase):
         self.assertIn("meow", [t.id for t in themes._bundled_themes()])
         # 老版本不认识 meow 会退成玻璃，所以只写在代码里
         self.assertNotIn("meow", [t.id for t in themes._load_json_file(ROOT / "themes.json")])
-        self.assertLessEqual(len(themes._bundled_themes()), 16)
+        self.assertLessEqual(len(themes._bundled_themes()), 17)
         self.assertIn("meow", [t.id for t in themes.menu_sections()["fancy"]])
+        self.assertIn("suofen", [t.id for t in themes._bundled_themes()])
+        self.assertNotIn("suofen", [t.id for t in themes._load_json_file(ROOT / "themes.json")])
+        self.assertIn("发激励啦", [t.name for t in themes.menu_sections()["fancy"]])
+
+    def test_suofen_poke_pays_a_bundle(self):
+        import suofen
+
+        lines = {suofen.poke(float(i)) for i in range(12)}
+        self.assertGreater(len(lines), 1)
+        for line in lines:
+            self.assertIn("捆", line)
+        self.assertIsNone(suofen.callout(100.0))
+        suofen.poke(200.0)
+        self.assertIn("捆", suofen.callout(200.2) or "")
+        self.assertIsNone(suofen.callout(200.0 + suofen.POP_SEC + 0.1))
 
     def test_paint_all_stages_and_sizes(self):
         import meow
