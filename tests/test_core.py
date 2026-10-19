@@ -1904,6 +1904,42 @@ class PoolTests(unittest.TestCase):
         self.assertFalse(ball.alive)
 
 
+class ReleaseMailTests(unittest.TestCase):
+    def _mail(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import release_mail
+
+        return release_mail
+
+    def test_message_goes_to_the_configured_address_with_the_setup(self):
+        mail = self._mail()
+        with tempfile.TemporaryDirectory() as tmp:
+            setup = Path(tmp) / "WorkTimer-Setup.exe"
+            setup.write_bytes(b"setup-bytes")
+            msg = mail.build_message("1.3.56", "- 说明", setup, "abc", "from@example.com")
+        self.assertEqual(msg["To"], "jun2.huang@sgmw.com.cn")
+        self.assertIn("1.3.56", msg["Subject"])
+        names = [part.get_filename() for part in msg.iter_attachments()]
+        self.assertEqual(names, ["WorkTimer-Setup.exe"])
+
+    def test_smtp_secret_is_optional_until_the_file_is_complete(self):
+        mail = self._mail()
+        self.assertIsNone(mail.load_smtp(ROOT / "missing-release-mail.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "release_mail.secret.json"
+            path.write_text('{"host": "smtp.example.com", "user": "a@b.c"}', encoding="utf-8")
+            self.assertIsNone(mail.load_smtp(path))
+            path.write_text(
+                '{"host": "smtp.example.com", "port": 465, "user": "a@b.c",'
+                ' "password": "secret", "from": "a@b.c"}',
+                encoding="utf-8",
+            )
+            cfg = mail.load_smtp(path)
+        self.assertEqual(cfg["host"], "smtp.example.com")
+        self.assertEqual(cfg["from"], "a@b.c")
+        self.assertNotIn("secret", cfg["host"])
+
+
 class GhostGripTests(unittest.TestCase):
     def test_corner_marks_only_while_pointer_is_over(self):
         from PIL import ImageFont

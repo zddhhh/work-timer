@@ -11,4 +11,5 @@ release/
 *.log
 .gitcode_token
 update_defaults.secret.json
+release_mail.secret.json
 feedback/
