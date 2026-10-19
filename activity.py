@@ -49,17 +49,20 @@ def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
     book["on"] = bool(book.get("on"))
 
 
+def _hours24(v) -> list[int]:
+    if not isinstance(v, list) or len(v) != 24:
+        return [0] * 24
+    return [max(0, int(x)) if isinstance(x, int) and not isinstance(x, bool) else 0 for x in v]
+
+
 def _clean_day(v: dict) -> dict:
-    hours = v.get("hours")
-    if not isinstance(hours, list) or len(hours) != 24:
-        hours = [0] * 24
-    else:
-        hours = [max(0, int(x)) if isinstance(x, int) and not isinstance(x, bool) else 0 for x in hours]
     return {
         "keys": _n(v.get("keys")),
         "clicks": _n(v.get("clicks")),
         "wheels": _n(v.get("wheels")),
-        "hours": hours,
+        "hours": _hours24(v.get("hours")),
+        "keys_h": _hours24(v.get("keys_h")),
+        "clicks_h": _hours24(v.get("clicks_h")),
     }
 
 
@@ -73,10 +76,21 @@ def _day(cfg: dict, d: date) -> dict:
     k = d.strftime("%Y-%m-%d")
     item = days.get(k)
     if not isinstance(item, dict):
-        item = {"keys": 0, "clicks": 0, "wheels": 0, "hours": [0] * 24}
+        item = {
+            "keys": 0,
+            "clicks": 0,
+            "wheels": 0,
+            "hours": [0] * 24,
+            "keys_h": [0] * 24,
+            "clicks_h": [0] * 24,
+        }
         days[k] = item
     if not isinstance(item.get("hours"), list) or len(item["hours"]) != 24:
         item["hours"] = [0] * 24
+    if not isinstance(item.get("keys_h"), list) or len(item["keys_h"]) != 24:
+        item["keys_h"] = [0] * 24
+    if not isinstance(item.get("clicks_h"), list) or len(item["clicks_h"]) != 24:
+        item["clicks_h"] = [0] * 24
     return item
 
 
@@ -90,18 +104,27 @@ def note(cfg: dict, kind: str, now: datetime | None = None) -> bool:
     item = _day(cfg, now.date())
     field = {"key": "keys", "click": "clicks", "wheel": "wheels"}[kind]
     item[field] = _n(item.get(field)) + 1
-    hours = item["hours"]
     h = now.hour
     if 0 <= h < 24:
-        hours[h] = _n(hours[h]) if h < len(hours) else 0
-        hours[h] = hours[h] + 1
+        item["hours"][h] = _n(item["hours"][h]) + 1
+        if kind == "key":
+            item["keys_h"][h] = _n(item["keys_h"][h]) + 1
+        elif kind == "click":
+            item["clicks_h"][h] = _n(item["clicks_h"][h]) + 1
     return True
 
 
 def counts(cfg: dict, d: date) -> dict:
     item = _book(cfg).get("days", {}).get(d.strftime("%Y-%m-%d"))
     if not isinstance(item, dict):
-        return {"keys": 0, "clicks": 0, "wheels": 0, "hours": [0] * 24}
+        return {
+            "keys": 0,
+            "clicks": 0,
+            "wheels": 0,
+            "hours": [0] * 24,
+            "keys_h": [0] * 24,
+            "clicks_h": [0] * 24,
+        }
     return _clean_day(item)
 
 

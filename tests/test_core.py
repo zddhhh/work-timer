@@ -1553,6 +1553,53 @@ class ActivityTests(unittest.TestCase):
         self.assertNotIn("vk", text.lower())
         peak = activity.peak_hours(c["hours"])
         self.assertEqual(peak, (10, 12))
+        self.assertEqual(c["keys_h"][10], 1)
+        self.assertEqual(c["clicks_h"][11], 1)
+        self.assertEqual(c["hours"][11], 2)
+
+    def test_chart_series_and_render(self):
+        import activity
+        import activity_chart
+
+        self.assertEqual(activity_chart.nice_max(0), 10)
+        self.assertEqual(activity_chart.nice_max(11), 15)
+        self.assertEqual(activity_chart.nice_max(1000), 1000)
+        self.assertEqual(activity_chart.visible_span([0] * 24), (8, 19))
+        hours = [0] * 24
+        hours[7] = 3
+        hours[21] = 1
+        self.assertEqual(activity_chart.visible_span(hours), (7, 21))
+
+        cfg = {}
+        d = date(2026, 10, 19)
+        empty = activity_chart.today_pack(cfg, d)
+        self.assertEqual(empty["mode"], "empty")
+        activity.set_enabled(cfg, True)
+        now = datetime(2026, 10, 19, 14, 0)
+        activity.note(cfg, "click", now)
+        activity.note(cfg, "click", now)
+        activity.note(cfg, "key", now.replace(hour=9))
+        pack = activity_chart.today_pack(cfg, d)
+        self.assertEqual(pack["mode"], "split")
+        self.assertEqual(pack["clicks_h"][14], 2)
+        self.assertEqual(pack["keys_h"][9], 1)
+
+        old = {"keys": 3, "clicks": 5, "wheels": 0, "hours": [0] * 24}
+        old["hours"][10] = 8
+        cfg["activity"]["days"]["2026-10-19"] = old
+        legacy = activity_chart.today_pack(cfg, d)
+        self.assertEqual(legacy["mode"], "combined")
+
+        days = activity_chart.week_pack(cfg, [d], d)
+        im, hits = activity_chart.render(pack, days, enabled=True, this_week=True)
+        self.assertEqual(im.size, (activity_chart.W, activity_chart.H))
+        sampled = {im.getpixel((x, y)) for x in range(0, im.width, 12) for y in range(0, im.height, 12)}
+        self.assertGreater(len(sampled), 8)
+        self.assertTrue(any("点了" in h["text"] for h in hits))
+        off, off_hits = activity_chart.render(pack, days, enabled=False, this_week=True)
+        self.assertEqual(off.size, im.size)
+        self.assertEqual(off_hits, [])
+        self.assertEqual(activity_chart.hover_text(hits, hits[0]["x0"] + 1, hits[0]["y0"] + 1), hits[0]["text"])
 
     def test_parse_raw_ignores_key_up(self):
         import activity

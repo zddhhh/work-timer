@@ -100,7 +100,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 隐藏键会把正在显示的右键菜单一起关掉，不再留在屏幕上"
+    "- 工时账本「记下次数」加了按小时的柱状图：橙色柱是鼠标，蓝色折线是键盘；下面一排看这周每天"
 )
 
 
