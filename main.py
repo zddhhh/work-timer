@@ -1953,11 +1953,6 @@ class WorkTimer:
         ui["live_sec"] = sec
         today = date.today()
         now = datetime.now()
-        act_var = ui.get("act_var")
-        if act_var is not None:
-            text = activity.report_text(self.cfg, today)
-            if act_var.get() != text:
-                act_var.set(text)
         self._paint_activity_chart(ui)
         days = worklog.week_dates(ui["anchor"])
         touched = False
@@ -2348,10 +2343,8 @@ class WorkTimer:
         m = ui["anchor"]
         mrows = [worklog.row(self.cfg, d, today=today) for d in worklog.month_dates(m.year, m.month)]
         ui["month_sum"].set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
-        act_var = ui.get("act_var")
-        if act_var is not None:
+        if ui.get("act_on") is not None:
             ui["act_on"].set(activity.enabled(self.cfg))
-            act_var.set(activity.report_text(self.cfg, today))
         self._paint_activity_chart(ui)
 
     def _paint_activity_chart(self, ui: dict | None = None) -> None:
@@ -2375,7 +2368,7 @@ class WorkTimer:
         )
 
     def _build_worklog_dialog(self) -> dict:
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=640, height=780)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=640, height=860)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         body = tk.Frame(dlg, bg=_CARD_BG)
@@ -2436,36 +2429,32 @@ class WorkTimer:
         tk.Label(body, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
             anchor="w", pady=(2, 0)
         )
-        tk.Label(body, text="今天敲了多少下", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold")).pack(
-            anchor="w", pady=(14, 4)
-        )
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
-        act_var = tk.StringVar()
+        head = tk.Frame(body, bg=_CARD_BG)
+        head.pack(fill="x", pady=(16, 8))
+        tk.Label(
+            head, text="今天敲了多少下", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(side="left")
 
         def toggle_act() -> None:
             on = bool(act_on.get())
             activity.set_enabled(self.cfg, on)
             self.win.listen_raw_input(on)
             store.save_config(self.cfg)
-            act_var.set(activity.report_text(self.cfg, date.today()))
             self._paint_activity_chart(ui)
 
         tk.Checkbutton(
-            body, text="记下次数（只在本机，不记按了哪个键）", variable=act_on, command=toggle_act,
-            fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+            head, text="记下次数", variable=act_on, command=toggle_act,
+            fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w", pady=(0, 4))
-        tk.Label(
-            body, textvariable=act_var, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
-            justify="left", wraplength=520,
-        ).pack(anchor="w")
-        chart_lbl = tk.Label(body, bg="#1e2430", bd=0, highlightthickness=0)
-        chart_lbl.pack(anchor="w", pady=(8, 0))
+        ).pack(side="right")
+        chart_lbl = tk.Label(body, bg=_CARD_BG, bd=0, highlightthickness=0)
+        chart_lbl.pack(anchor="w")
         chart_hint = tk.StringVar(value="")
         tk.Label(
             body, textvariable=chart_hint, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 8),
             justify="left", wraplength=520,
-        ).pack(anchor="w", pady=(2, 0))
+        ).pack(anchor="w", pady=(4, 0))
         ui = {
             "dlg": dlg,
             "stop": False,
@@ -2476,7 +2465,6 @@ class WorkTimer:
             "week_var": week_var,
             "week_sum": week_sum,
             "month_sum": month_sum,
-            "act_var": act_var,
             "act_on": act_on,
             "chart_lbl": chart_lbl,
             "chart_hint": chart_hint,
@@ -2558,7 +2546,7 @@ class WorkTimer:
         ui["err"].set("")
         ui["anchor"] = date.today()
         self._fill_worklog(ui)
-        _reveal_card(ui["dlg"], min_w=620, min_h=740, near=self._dialog_near())
+        _reveal_card(ui["dlg"], min_w=620, min_h=800, near=self._dialog_near())
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
