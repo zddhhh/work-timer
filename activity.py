@@ -1,0 +1,173 @@
+"""键鼠次数：只记敲了多少下、点了多少次，不记按了哪个键。"""
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+
+KEEP_DAYS = 60
+_KEY = "activity"
+
+
+def enabled(cfg: dict) -> bool:
+    raw = cfg.get(_KEY)
+    return bool(isinstance(raw, dict) and raw.get("on"))
+
+
+def set_enabled(cfg: dict, on: bool) -> None:
+    book = _book(cfg)
+    book["on"] = bool(on)
+
+
+def _book(cfg: dict) -> dict:
+    raw = cfg.get(_KEY)
+    if not isinstance(raw, dict):
+        raw = {"on": False, "days": {}}
+        cfg[_KEY] = raw
+    days = raw.get("days")
+    if not isinstance(days, dict):
+        raw["days"] = {}
+    return raw
+
+
+def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
+    book = _book(cfg)
+    cutoff = (today or date.today()) - timedelta(days=KEEP_DAYS)
+    cleaned: dict[str, dict] = {}
+    days = book.get("days")
+    if not isinstance(days, dict):
+        days = {}
+    for k, v in days.items():
+        if not isinstance(k, str) or not isinstance(v, dict):
+            continue
+        try:
+            d = datetime.strptime(k, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if d < cutoff:
+            continue
+        cleaned[k] = _clean_day(v)
+    book["days"] = cleaned
+    book["on"] = bool(book.get("on"))
+
+
+def _clean_day(v: dict) -> dict:
+    hours = v.get("hours")
+    if not isinstance(hours, list) or len(hours) != 24:
+        hours = [0] * 24
+    else:
+        hours = [max(0, int(x)) if isinstance(x, int) and not isinstance(x, bool) else 0 for x in hours]
+    return {
+        "keys": _n(v.get("keys")),
+        "clicks": _n(v.get("clicks")),
+        "wheels": _n(v.get("wheels")),
+        "hours": hours,
+    }
+
+
+def _n(v) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+
+
+def _day(cfg: dict, d: date) -> dict:
+    book = _book(cfg)
+    days = book.setdefault("days", {})
+    k = d.strftime("%Y-%m-%d")
+    item = days.get(k)
+    if not isinstance(item, dict):
+        item = {"keys": 0, "clicks": 0, "wheels": 0, "hours": [0] * 24}
+        days[k] = item
+    if not isinstance(item.get("hours"), list) or len(item["hours"]) != 24:
+        item["hours"] = [0] * 24
+    return item
+
+
+def note(cfg: dict, kind: str, now: datetime | None = None) -> bool:
+    """记一次。kind 是 key / click / wheel。没开开关则什么都不做。"""
+    if not enabled(cfg):
+        return False
+    if kind not in ("key", "click", "wheel"):
+        return False
+    now = now or datetime.now()
+    item = _day(cfg, now.date())
+    field = {"key": "keys", "click": "clicks", "wheel": "wheels"}[kind]
+    item[field] = _n(item.get(field)) + 1
+    hours = item["hours"]
+    h = now.hour
+    if 0 <= h < 24:
+        hours[h] = _n(hours[h]) if h < len(hours) else 0
+        hours[h] = hours[h] + 1
+    return True
+
+
+def counts(cfg: dict, d: date) -> dict:
+    item = _book(cfg).get("days", {}).get(d.strftime("%Y-%m-%d"))
+    if not isinstance(item, dict):
+        return {"keys": 0, "clicks": 0, "wheels": 0, "hours": [0] * 24}
+    return _clean_day(item)
+
+
+def parse_raw(buf: bytes) -> str | None:
+    """从 WM_INPUT 的原始缓冲里认出是键盘按下、鼠标点还是滚轮。不读键码。"""
+    if len(buf) < 32:
+        return None
+    dw_type = int.from_bytes(buf[0:4], "little")
+    if dw_type == 1:
+        flags = int.from_bytes(buf[26:28], "little")
+        if flags & 1:
+            return None
+        return "key"
+    if dw_type == 0:
+        buttons = int.from_bytes(buf[28:30], "little")
+        if buttons & 0x0C00:
+            return "wheel"
+        if buttons & 0x0155:
+            return "click"
+        return None
+    return None
+
+
+def fmt_count(n: int) -> str:
+    n = max(0, int(n))
+    if n >= 10000:
+        t = f"{n / 10000:.1f}"
+        if t.endswith(".0"):
+            t = t[:-2]
+        return t + " 万"
+    return str(n)
+
+
+def peak_hours(hours: list[int]) -> tuple[int, int] | None:
+    """最勤的连续一到两小时。都是 0 则没有。"""
+    if len(hours) != 24 or not any(hours):
+        return None
+    best_i, best = 0, -1
+    for i, v in enumerate(hours):
+        if v > best:
+            best_i, best = i, v
+    nxt = hours[best_i + 1] if best_i < 23 else 0
+    prev = hours[best_i - 1] if best_i > 0 else 0
+    if nxt >= prev and nxt * 2 >= best:
+        return best_i, best_i + 2
+    if prev * 2 >= best:
+        return best_i - 1, best_i + 1
+    return best_i, best_i + 1
+
+
+def report_text(cfg: dict, d: date) -> str:
+    if not enabled(cfg):
+        return "打开开关后，才开始数今天敲了多少下、点了多少次。只记次数，不记按了哪个键，也不上传。"
+    c = counts(cfg, d)
+    keys, clicks, wheels = c["keys"], c["clicks"], c["wheels"]
+    if keys == 0 and clicks == 0 and wheels == 0:
+        return "开关已经开了，今天还没记下次数。"
+    parts = [f"今天敲了 {fmt_count(keys)} 下键盘，点了 {fmt_count(clicks)} 次鼠标"]
+    if wheels:
+        parts[0] += f"，滚轮 {fmt_count(wheels)} 下"
+    parts[0] += "。"
+    peak = peak_hours(c["hours"])
+    if peak is not None:
+        a, b = peak
+        if b - a == 1:
+            parts.append(f"最勤的是 {a} 点这一小时。")
+        else:
+            parts.append(f"最勤的是 {a}–{b} 点。")
+    return "".join(parts)

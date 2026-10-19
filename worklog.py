@@ -41,21 +41,42 @@ def fmt_clock(minutes: int | None) -> str:
 
 
 def fmt_elapsed(seconds: int) -> str:
-    """当天已过时长，带秒，给正在记录的那一行用。"""
-    total = max(0, int(seconds))
-    h, rem = divmod(total, 3600)
+    """当天已过多久，给还在记的那一行用。"""
+    h, rem = divmod(max(0, int(seconds)), 3600)
     m, s = divmod(rem, 60)
-    return f"{h}:{m:02d}:{s:02d}"
+    parts = []
+    if h:
+        parts.append(f"{h}小时")
+    if m:
+        parts.append(f"{m}分")
+    if s or not parts:
+        parts.append(f"{s}秒")
+    return "".join(parts)
 
 
 def fmt_span(minutes: int | None, *, signed: bool = False) -> str:
+    """待了多久。9小时30分，不要写成 9:30，免得看成钟点。"""
     if minutes is None:
         return ""
-    sign = ""
     if signed:
-        sign = "+" if minutes > 0 else ("-" if minutes < 0 else "±")
-    m = abs(int(minutes))
-    return f"{sign}{m // 60}:{m % 60:02d}"
+        return fmt_diff(minutes)
+    total = abs(int(minutes))
+    h, m = divmod(total, 60)
+    if h and m:
+        return f"{h}小时{m}分"
+    if h:
+        return f"{h}小时"
+    return f"{m}分"
+
+
+def fmt_diff(minutes: int | None) -> str:
+    """比该走的点早了还是晚了。"""
+    if minutes is None:
+        return ""
+    if minutes == 0:
+        return "正点"
+    label = "晚走" if minutes > 0 else "早走"
+    return label + fmt_span(abs(int(minutes)))
 
 
 def fmt_hms(total_seconds: int) -> str:
@@ -78,7 +99,7 @@ def live_elapsed(r: dict, now: datetime, idle_sec: float) -> str | None:
         end = start
     if end < start:
         end = start
-    return fmt_hms(int((end - start).total_seconds())) + " 记录中"
+    return fmt_elapsed(int((end - start).total_seconds())) + " · 还在记"
 
 
 def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
@@ -297,17 +318,22 @@ def summarize(rows: list[dict]) -> dict:
 
 def summary_text(label: str, s: dict) -> str:
     if not s["days"]:
-        return f"{label}：暂无记录"
-    parts = [f"{label} {s['days']} 天", f"共 {fmt_span(s['total'])}", f"日均 {fmt_span(s['avg'])}"]
+        return f"{label}还没有记下的天数"
+    parts = [f"{label}记了 {s['days']} 天", f"一共 {fmt_span(s['total'])}", f"平均每天 {fmt_span(s['avg'])}"]
     if s["diff"] is not None:
-        parts.append(f"比应下班 {fmt_span(s['diff'], signed=True)}")
-    return " · ".join(parts)
+        if s["diff"] == 0:
+            parts.append("都正点走")
+        elif s["diff"] > 0:
+            parts.append(f"一共晚走 {fmt_span(s['diff'])}")
+        else:
+            parts.append(f"一共早走 {fmt_span(abs(s['diff']))}")
+    return "，".join(parts)
 
 
 def to_csv(cfg: dict, dates: list[date]) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["日期", "星期", "到岗", "离开", "时长", "应下班", "比应下班(分钟)", "来源"])
+    w.writerow(["日期", "星期", "来了", "走了", "待了多久", "该走", "比该走", "来源"])
     for d in dates:
         r = row(cfg, d)
         if r["in"] is None and r["out"] is None:
@@ -321,7 +347,7 @@ def to_csv(cfg: dict, dates: list[date]) -> str:
                 fmt_clock(r["out"]),
                 fmt_span(r["dur"]),
                 fmt_clock(r["target"]),
-                "" if r["diff"] is None else r["diff"],
+                fmt_diff(r["diff"]),
                 src,
             ]
         )

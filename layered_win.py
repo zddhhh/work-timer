@@ -40,7 +40,11 @@ WM_RBUTTONUP = 0x0205
 WM_MOUSEMOVE = 0x0200
 WM_MOUSELEAVE = 0x02A3
 WM_TIMER = 0x0113
+WM_INPUT = 0x00FF
 _LIVE_TIMER = 1
+RID_INPUT = 0x10000003
+RIDEV_INPUTSINK = 0x00000100
+RIDEV_REMOVE = 0x00000001
 TME_LEAVE = 0x00000002
 WM_NCHITTEST = 0x0084
 WM_SYSCOMMAND = 0x0112
@@ -211,6 +215,32 @@ user32.TrackMouseEvent.argtypes = [ctypes.POINTER(TRACKMOUSEEVENT)]
 user32.TrackMouseEvent.restype = wintypes.BOOL
 
 
+class RAWINPUTHEADER(ctypes.Structure):
+    _fields_ = [
+        ("dwType", wintypes.DWORD),
+        ("dwSize", wintypes.DWORD),
+        ("hDevice", wintypes.HANDLE),
+        ("wParam", WPARAM),
+    ]
+
+
+class RAWINPUTDEVICE(ctypes.Structure):
+    _fields_ = [
+        ("usUsagePage", wintypes.USHORT),
+        ("usUsage", wintypes.USHORT),
+        ("dwFlags", wintypes.DWORD),
+        ("hwndTarget", wintypes.HWND),
+    ]
+
+
+user32.RegisterRawInputDevices.argtypes = [ctypes.POINTER(RAWINPUTDEVICE), wintypes.UINT, wintypes.UINT]
+user32.RegisterRawInputDevices.restype = wintypes.BOOL
+user32.GetRawInputData.argtypes = [
+    wintypes.HANDLE, wintypes.UINT, ctypes.c_void_p, ctypes.POINTER(wintypes.UINT), wintypes.UINT,
+]
+user32.GetRawInputData.restype = wintypes.UINT
+
+
 class MONITORINFO(ctypes.Structure):
     _fields_ = [
         ("cbSize", wintypes.DWORD),
@@ -358,6 +388,8 @@ class LayeredPetWindow:
         self._on_mouse_move: Callable[[int, int], None] | None = None
         self._on_mouse_leave: Callable[[], None] | None = None
         self._live_tick: Callable[[], None] | None = None
+        self._on_raw_input: Callable[[bytes], None] | None = None
+        self._raw_listening = False
         self._leave_armed = False
         self.corner_hit = EDGE
         self._dragging = False
@@ -513,6 +545,27 @@ class LayeredPetWindow:
         if self.hwnd and fn is not None:
             user32.SetTimer(self.hwnd, _LIVE_TIMER, 16, None)
 
+    def set_raw_input_handler(self, fn: Callable[[bytes], None] | None) -> None:
+        """WM_INPUT 原始缓冲，不解析键码。"""
+        self._on_raw_input = fn
+
+    def listen_raw_input(self, on: bool) -> None:
+        if not self.hwnd or bool(on) == self._raw_listening:
+            return
+        rid = (RAWINPUTDEVICE * 2)()
+        flags = RIDEV_INPUTSINK if on else RIDEV_REMOVE
+        target = self.hwnd if on else None
+        rid[0].usUsagePage = 1
+        rid[0].usUsage = 2
+        rid[0].dwFlags = flags
+        rid[0].hwndTarget = target
+        rid[1].usUsagePage = 1
+        rid[1].usUsage = 6
+        rid[1].dwFlags = flags
+        rid[1].hwndTarget = target
+        if user32.RegisterRawInputDevices(rid, 2, ctypes.sizeof(RAWINPUTDEVICE)):
+            self._raw_listening = bool(on)
+
     def set_request_show_handler(self, fn: Callable[[], None] | None) -> None:
         """单实例再次启动时唤起窗口（含 Ctrl 隐藏后的恢复）。"""
         self._on_request_show = fn
@@ -537,6 +590,7 @@ class LayeredPetWindow:
             user32.ReleaseDC(None, self._hdc_screen)
             self._hdc_screen = 0
         if self.hwnd:
+            self.listen_raw_input(False)
             user32.KillTimer(self.hwnd, _LIVE_TIMER)
             user32.DestroyWindow(self.hwnd)
             self.hwnd = 0
@@ -696,6 +750,22 @@ class LayeredPetWindow:
             if self._on_mouse_move and 0 <= lx < self.width and 0 <= ly < self.height:
                 self._arm_mouse_leave()
                 self._on_mouse_move(lx, ly)
+        if msg == WM_INPUT:
+            fn = self._on_raw_input
+            if fn is not None:
+                header = ctypes.sizeof(RAWINPUTHEADER)
+                size = wintypes.UINT(0)
+                user32.GetRawInputData(lparam, RID_INPUT, None, ctypes.byref(size), header)
+                n = int(size.value)
+                if 0 < n <= 256:
+                    buf = (ctypes.c_ubyte * n)()
+                    got = user32.GetRawInputData(lparam, RID_INPUT, buf, ctypes.byref(size), header)
+                    if got != 0xFFFFFFFF:
+                        try:
+                            fn(bytes(buf))
+                        except Exception:
+                            pass
+            return 0
         if msg == WM_TIMER and int(wparam) == _LIVE_TIMER:
             tick = self._live_tick
             if tick is not None:

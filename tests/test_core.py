@@ -5,7 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -473,6 +473,37 @@ class GameDialogTests(unittest.TestCase):
 
         main._run_card_modal(dlg, Win(), stop=lambda: hits["n"] >= 2)
         self.assertGreaterEqual(hits["n"], 2)
+        root.destroy()
+
+    def test_hide_key_conceals_the_open_card(self):
+        import tkinter as tk
+
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(80, 80), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        hidden = {"v": False}
+        n = {"v": 0}
+
+        class Win:
+            def pump(self):
+                return None
+
+            def dialog_hidden(self):
+                return hidden["v"]
+
+            def note_beat(self):
+                n["v"] += 1
+                if n["v"] == 2:
+                    hidden["v"] = True
+                if n["v"] >= 4:
+                    dlg.destroy()
+
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(80, 80))
+        main._run_card_modal(dlg, Win())
+        self.assertTrue(getattr(dlg, "_key_hidden", False))
         root.destroy()
 
 
@@ -1438,12 +1469,16 @@ class WorklogTests(unittest.TestCase):
         rows = [worklog.row(cfg, d, today=self.LATER) for d in worklog.week_dates(self.D.date())]
         s = worklog.summarize(rows)
         self.assertEqual((s["days"], s["total"], s["avg"], s["diff"]), (2, 1140, 570, 30))
-        self.assertIn("共 19:00", worklog.summary_text("本周", s))
-        self.assertEqual(worklog.fmt_elapsed(9 * 3600 + 52 * 60 + 8), "9:52:08")
+        self.assertIn("一共 19小时", worklog.summary_text("本周", s))
+        self.assertIn("晚走 30分", worklog.summary_text("本周", s))
+        self.assertEqual(worklog.fmt_elapsed(9 * 3600 + 52 * 60 + 8), "9小时52分8秒")
+        self.assertEqual(worklog.fmt_span(570), "9小时30分")
+        self.assertEqual(worklog.fmt_diff(20), "晚走20分")
+        self.assertEqual(worklog.fmt_diff(-15), "早走15分")
         csv_text = worklog.to_csv(cfg, worklog.month_dates(2026, 10))
         lines = csv_text.strip().splitlines()
         self.assertEqual(len(lines), 3)
-        self.assertIn("2026-10-08,周四,9:00,18:30,9:30,18:00,30,手改", lines[1])
+        self.assertIn("2026-10-08,周四,9:00,18:30,9小时30分,18:00,晚走30分,手改", lines[1])
 
     def test_out_uses_last_input_not_poll_clock(self):
         cfg = {}
@@ -1486,6 +1521,44 @@ class WorklogTests(unittest.TestCase):
         }
         worklog.ensure_fields(cfg, today=self.D.date())
         self.assertEqual(cfg["worklog"], {"2026-10-08": {"in": 540, "src": "flex"}})
+
+
+class ActivityTests(unittest.TestCase):
+    def test_counts_and_report_without_storing_keys(self):
+        import activity
+
+        cfg = {}
+        d = date(2026, 10, 19)
+        now = datetime(2026, 10, 19, 10, 15)
+        self.assertFalse(activity.note(cfg, "key", now))
+        activity.set_enabled(cfg, True)
+        self.assertTrue(activity.note(cfg, "key", now))
+        self.assertTrue(activity.note(cfg, "click", now.replace(hour=11)))
+        self.assertTrue(activity.note(cfg, "wheel", now.replace(hour=11)))
+        c = activity.counts(cfg, d)
+        self.assertEqual((c["keys"], c["clicks"], c["wheels"]), (1, 1, 1))
+        text = activity.report_text(cfg, d)
+        self.assertIn("敲了 1 下", text)
+        self.assertIn("点了 1 次", text)
+        self.assertNotIn("vk", text.lower())
+        peak = activity.peak_hours(c["hours"])
+        self.assertEqual(peak, (10, 12))
+
+    def test_parse_raw_ignores_key_up(self):
+        import activity
+
+        key_down = bytearray(40)
+        key_down[0] = 1
+        self.assertEqual(activity.parse_raw(bytes(key_down)), "key")
+        key_up = bytearray(key_down)
+        key_up[26] = 1
+        self.assertIsNone(activity.parse_raw(bytes(key_up)))
+        mouse = bytearray(40)
+        mouse[28] = 0x01
+        self.assertEqual(activity.parse_raw(bytes(mouse)), "click")
+        wheel = bytearray(40)
+        wheel[29] = 0x04
+        self.assertEqual(activity.parse_raw(bytes(wheel)), "wheel")
 
 
 class MinesTests(unittest.TestCase):

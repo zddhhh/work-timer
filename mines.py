@@ -314,29 +314,11 @@ def open_games(
     show_list()
 
     def on_frame() -> None:
-        # 弹窗循环已经在刷倒计时时，这里不要再刷一遍
+        # 弹窗循环已经在刷倒计时、跟隐藏键时，这里不要再刷一遍
         if live is not None and getattr(win, "blocked_live", None) is not live:
             live()
         tick = state["tick"]
         if tick is not None:
             tick()
-        if poll_hide is None:
-            return
-        try:
-            hidden = bool(poll_hide())
-            if not dlg.winfo_exists():
-                return
-            gone = dlg.state() == "withdrawn"
-        except tk.TclError:
-            return
-        if hidden and not gone:
-            dlg.withdraw()
-        elif not hidden and gone:
-            dlg.deiconify()
-            try:
-                dlg.attributes("-topmost", True)
-            except tk.TclError:
-                pass
-            dlg.lift()
 
     modal(dlg, win, on_frame=on_frame)
