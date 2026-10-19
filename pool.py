@@ -10,16 +10,30 @@ TABLE_H = 210.0
 POCKET_R = 16.0
 _ROLL = 92.0
 _STOP = 8.0
-_CUSHION = 0.76
+_CUSHION = 0.8
 _BALL_E = 0.97
+HOLE = 13.0
+JAW_R = 3.6
+CORNER_MOUTH = 30.0
+SIDE_MOUTH = 22.0
+# 袋心在台面外面。库嘴挡在袋口两侧，球撞上去会弹开，球心进了袋才落袋。
 _POCKETS = (
-    (R, R),
-    (TABLE_W / 2, R),
-    (TABLE_W - R, R),
-    (R, TABLE_H - R),
-    (TABLE_W / 2, TABLE_H - R),
-    (TABLE_W - R, TABLE_H - R),
+    (-3.0, -3.0),
+    (TABLE_W / 2, -10.0),
+    (TABLE_W + 3.0, -3.0),
+    (-3.0, TABLE_H + 3.0),
+    (TABLE_W / 2, TABLE_H + 10.0),
+    (TABLE_W + 3.0, TABLE_H + 3.0),
 )
+_JAWS = (
+    (26.0, 4.2), (4.2, 26.0),
+    (TABLE_W / 2 - 16.5, 4.2), (TABLE_W / 2 + 16.5, 4.2),
+    (TABLE_W - 26.0, 4.2), (TABLE_W - 4.2, 26.0),
+    (26.0, TABLE_H - 4.2), (4.2, TABLE_H - 26.0),
+    (TABLE_W / 2 - 16.5, TABLE_H - 4.2), (TABLE_W / 2 + 16.5, TABLE_H - 4.2),
+    (TABLE_W - 26.0, TABLE_H - 4.2), (TABLE_W - 4.2, TABLE_H - 26.0),
+)
+guide_lines = False
 _COLORS = ("#f0c14a", "#5aa7e8", "#e25b5b", "#b48cff", "#f08a3c", "#5ecf8a")
 _FELT = "#127848"
 _FELT_DEEP = "#0c5e38"
@@ -29,6 +43,19 @@ _WOOD_LINE = "#8d5a34"
 _CUE = "#f4f1ea"
 _HINT = "按住白球往后拉，松开就打。"
 _SCALE = 1.58
+
+
+def set_guide_lines(on: bool) -> None:
+    global guide_lines
+    guide_lines = bool(on)
+
+
+def _mouth_x(x: float) -> bool:
+    return x <= CORNER_MOUTH or x >= TABLE_W - CORNER_MOUTH or abs(x - TABLE_W / 2) <= SIDE_MOUTH
+
+
+def _mouth_y(y: float) -> bool:
+    return y <= CORNER_MOUTH or y >= TABLE_H - CORNER_MOUTH
 
 
 class Ball:
@@ -54,6 +81,7 @@ class Board:
         self.won = False
         self.aiming = False
         self.aim = (0.0, 0.0)
+        self.guide_on = guide_lines
         self.rack()
 
     def rack(self) -> None:
@@ -111,28 +139,40 @@ class Board:
         for _ in range(2):
             t_ball, ball = self._ray_ball(x, y, ux, uy)
             t_wall, wall = self._ray_wall(x, y, ux, uy)
+            t_hole = self._ray_hole(x, y, ux, uy)
+            t_jaw, jn = self._ray_jaw(x, y, ux, uy)
             t_hit = t_wall if t_ball is None else min(t_wall, t_ball)
+            if t_hole is not None:
+                t_hit = min(t_hit, t_hole)
+            if t_jaw is not None:
+                t_hit = min(t_hit, t_jaw)
             travel = min(remain, t_hit)
             if travel > 0.5:
                 path.append((x, y, x + ux * travel, y + uy * travel))
             if travel >= remain - 0.1 or t_hit > remain:
                 break
-            nx, ny = x + ux * t_hit, y + uy * t_hit
-            if t_ball is not None and t_ball <= t_wall + 1e-6:
-                ghost = (nx, ny)
+            hx, hy = x + ux * t_hit, y + uy * t_hit
+            if t_hole is not None and t_hole <= t_hit + 1e-6:
+                break
+            if t_ball is not None and t_ball <= t_hit + 1e-6:
+                ghost = (hx, hy)
                 target = ball
-                to_obj = math.hypot(ball.x - nx, ball.y - ny) or 1.0
-                obj_dir = ((ball.x - nx) / to_obj, (ball.y - ny) / to_obj)
+                to_obj = math.hypot(ball.x - hx, ball.y - hy) or 1.0
+                obj_dir = ((ball.x - hx) / to_obj, (ball.y - hy) / to_obj)
                 dot = ux * obj_dir[0] + uy * obj_dir[1]
                 tx, ty = ux - obj_dir[0] * dot, uy - obj_dir[1] * dot
                 tang = math.hypot(tx, ty)
                 cue_dir = (tx / tang, ty / tang) if tang > 0.08 else None
                 break
-            if wall == "x":
+            if t_jaw is not None and t_jaw <= t_hit + 1e-6:
+                jx, jy = jn
+                dot = ux * jx + uy * jy
+                ux, uy = ux - 2 * dot * jx, uy - 2 * dot * jy
+            elif wall == "x":
                 ux = -ux
             else:
                 uy = -uy
-            x, y = nx, ny
+            x, y = hx, hy
             remain -= t_hit
             if remain < 12:
                 break
@@ -161,21 +201,61 @@ class Board:
         best_t, best = 1e9, "x"
         if ux < 0:
             t = (R - x) / ux
-            if 0 < t < best_t:
+            if 0 < t < best_t and not _mouth_y(y + uy * t):
                 best_t, best = t, "x"
         elif ux > 0:
             t = (TABLE_W - R - x) / ux
-            if 0 < t < best_t:
+            if 0 < t < best_t and not _mouth_y(y + uy * t):
                 best_t, best = t, "x"
         if uy < 0:
             t = (R - y) / uy
-            if 0 < t < best_t:
+            if 0 < t < best_t and not _mouth_x(x + ux * t):
                 best_t, best = t, "y"
         elif uy > 0:
             t = (TABLE_H - R - y) / uy
-            if 0 < t < best_t:
+            if 0 < t < best_t and not _mouth_x(x + ux * t):
                 best_t, best = t, "y"
         return best_t, best
+
+    def _ray_jaw(self, x: float, y: float, ux: float, uy: float) -> tuple[float | None, tuple[float, float]]:
+        best_t = None
+        best_n = (0.0, 1.0)
+        rad = R + JAW_R
+        rad2 = rad * rad
+        for jx, jy in _JAWS:
+            fx, fy = x - jx, y - jy
+            along = fx * ux + fy * uy
+            disc = along * along - (fx * fx + fy * fy - rad2)
+            if disc < 0:
+                continue
+            root = math.sqrt(disc)
+            t = -along - root
+            if t < 0.4:
+                t = -along + root
+            if t < 0.4:
+                continue
+            if best_t is not None and t >= best_t:
+                continue
+            hx, hy = x + ux * t - jx, y + uy * t - jy
+            span = math.hypot(hx, hy) or 1.0
+            best_t, best_n = t, (hx / span, hy / span)
+        return best_t, best_n
+
+    def _ray_hole(self, x: float, y: float, ux: float, uy: float) -> float | None:
+        best = None
+        limit = HOLE * HOLE
+        for px, py in _POCKETS:
+            fx, fy = px - x, py - y
+            dot = ux * fx + uy * fy
+            disc = dot * dot - (fx * fx + fy * fy - limit)
+            if disc < 0 or dot <= 0:
+                continue
+            t = dot - math.sqrt(disc)
+            if t < 0.4:
+                continue
+            if best is None or t < best:
+                best = t
+        return best
 
     def step(self, dt: float) -> bool:
         if self.won or not self.moving:
@@ -188,10 +268,12 @@ class Board:
                     continue
                 b.x += b.vx * h
                 b.y += b.vy * h
-            self._pockets()
+            self._pairs()
+            self._pairs()
+            self._jaws()
             self._walls()
-            self._pairs()
-            self._pairs()
+            self._pockets()
+            self._keep_on_table()
             for b in self.balls:
                 if b.alive:
                     _roll(b, h)
@@ -206,7 +288,8 @@ class Board:
         for b in self.balls:
             if not b.alive:
                 continue
-            if not any(math.hypot(b.x - px, b.y - py) <= POCKET_R for px, py in _POCKETS):
+            in_hole = any(math.hypot(b.x - px, b.y - py) <= HOLE for px, py in _POCKETS)
+            if not in_hole:
                 continue
             b.alive = False
             b.vx = b.vy = 0.0
@@ -229,25 +312,64 @@ class Board:
                 return
             self.cue.x += R * 2
 
+    def _keep_on_table(self) -> None:
+        """没进袋又滑出台面的，按库边弹回来。"""
+        for b in self.balls:
+            if not b.alive:
+                continue
+            if b.x < -2:
+                b.x = R
+                b.vx = abs(b.vx) * _CUSHION
+            elif b.x > TABLE_W + 2:
+                b.x = TABLE_W - R
+                b.vx = -abs(b.vx) * _CUSHION
+            if b.y < -2:
+                b.y = R
+                b.vy = abs(b.vy) * _CUSHION
+            elif b.y > TABLE_H + 2:
+                b.y = TABLE_H - R
+                b.vy = -abs(b.vy) * _CUSHION
+
+    def _jaws(self) -> None:
+        limit = R + JAW_R
+        for b in self.balls:
+            if not b.alive:
+                continue
+            for jx, jy in _JAWS:
+                dx, dy = b.x - jx, b.y - jy
+                dist = math.hypot(dx, dy)
+                if dist >= limit:
+                    continue
+                if dist < 1e-6:
+                    dx, dy, dist = 0.0, 1.0, 1.0
+                nx, ny = dx / dist, dy / dist
+                b.x = jx + nx * limit
+                b.y = jy + ny * limit
+                rel = b.vx * nx + b.vy * ny
+                if rel < 0:
+                    bounce = (1.0 + _CUSHION) * rel
+                    b.vx -= bounce * nx
+                    b.vy -= bounce * ny
+
     def _walls(self) -> None:
         left, right = R, TABLE_W - R
         top, bot = R, TABLE_H - R
         for b in self.balls:
             if not b.alive:
                 continue
-            if b.x < left:
+            if b.x < left and not _mouth_y(b.y):
                 b.x = left
                 if b.vx < 0:
                     b.vx = -b.vx * _CUSHION
-            elif b.x > right:
+            elif b.x > right and not _mouth_y(b.y):
                 b.x = right
                 if b.vx > 0:
                     b.vx = -b.vx * _CUSHION
-            if b.y < top:
+            if b.y < top and not _mouth_x(b.x):
                 b.y = top
                 if b.vy < 0:
                     b.vy = -b.vy * _CUSHION
-            elif b.y > bot:
+            elif b.y > bot and not _mouth_x(b.x):
                 b.y = bot
                 if b.vy > 0:
                     b.vy = -b.vy * _CUSHION
@@ -298,6 +420,10 @@ def _mix(color: str, factor: float) -> str:
     return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
 
 
+def _guide_caption() -> str:
+    return "辅助线 开" if guide_lines else "辅助线 关"
+
+
 def status_text(board: Board) -> str:
     if board.won:
         return "清台了"
@@ -313,6 +439,15 @@ def mount(host, dlg, *, button, reveal, again, back, close, drag_on, bg, fg, mut
     drag_on(title)
     status = tk.StringVar(value=status_text(board))
     tk.Label(head, textvariable=status, fg=muted, bg=bg, font=("Microsoft YaHei UI", 10)).pack(side="right")
+
+    def toggle_guide() -> None:
+        set_guide_lines(not guide_lines)
+        board.guide_on = guide_lines
+        guide_btn.configure(text=_guide_caption())
+        redraw()
+
+    guide_btn = button(head, _guide_caption(), toggle_guide)
+    guide_btn.pack(side="right", padx=(0, 10))
     hint = tk.Label(host, text=_HINT, fg=muted, bg=bg, font=("Microsoft YaHei UI", 9))
     hint.pack(anchor="w", padx=16, pady=(0, 6))
     drag_on(hint)
@@ -445,6 +580,8 @@ def _draw_aim(canvas, spot, to_table, board: Board) -> None:
         cx + ux * (gap + reach), cy + uy * (gap + reach),
         fill="#3a6ea5", width=5, capstyle="round",
     )
+    if not board.guide_on:
+        return
     info = board.guide(dx, dy)
     if not info:
         return

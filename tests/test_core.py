@@ -1810,12 +1810,12 @@ class PoolTests(unittest.TestCase):
         self.assertGreaterEqual(color.x, pool.R)
         self.assertGreater(color.vx, 0)
 
-        color.x, color.y = pool.R, pool.R
+        color.x, color.y = 0, 0
         board._pockets()
         self.assertFalse(color.alive)
         self.assertEqual(pool.status_text(board), "进袋 1/6")
 
-        board.cue.x, board.cue.y = pool.R, pool.R
+        board.cue.x, board.cue.y = 0, 0
         board._pockets()
         self.assertTrue(board.cue.alive)
         self.assertGreater(board.cue.x, 40)
@@ -1864,6 +1864,44 @@ class PoolTests(unittest.TestCase):
                 self.assertGreaterEqual(ball.y, pool.R - 0.2)
                 self.assertLessEqual(ball.y, pool.TABLE_H - pool.R + 0.2)
         self.assertFalse(board.moving)
+
+    def test_guide_lines_start_off_and_stay_with_the_next_rack(self):
+        import pool
+
+        pool.set_guide_lines(False)
+        self.assertFalse(pool.Board().guide_on)
+        pool.set_guide_lines(True)
+        self.assertTrue(pool.Board().guide_on)
+        pool.set_guide_lines(False)
+
+    def test_cushion_bounces_unless_the_ball_enters_the_pocket(self):
+        import pool
+
+        board = pool.Board()
+        ball = board.balls[1]
+        ball.x, ball.y, ball.vx, ball.vy = 120, pool.R, 30, 0
+        board._pockets()
+        self.assertTrue(ball.alive)
+        ball.x, ball.y, ball.vy = 50, 2, -80
+        board._walls()
+        self.assertGreater(ball.vy, 0)
+        self.assertTrue(ball.alive)
+        ball.x, ball.y = pool.R, pool.R
+        board._pockets()
+        self.assertTrue(ball.alive)
+        for other in board.balls:
+            if other is not ball:
+                other.alive = False
+        ball.x, ball.y, ball.vx, ball.vy = 130, pool.R, 240, 0
+        for _ in range(60):
+            board.step(0.02)
+        self.assertTrue(ball.alive)
+        self.assertGreaterEqual(ball.y, pool.R - 0.2)
+        ball.alive = True
+        ball.x, ball.y, ball.vx, ball.vy = pool.TABLE_W / 2, 78, 0, -420
+        for _ in range(40):
+            board.step(0.02)
+        self.assertFalse(ball.alive)
 
 
 class GhostGripTests(unittest.TestCase):

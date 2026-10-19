@@ -126,6 +126,8 @@ def reset_session() -> None:
     """测试或主动清档。关掉窗口不会清，下一把还能接着玩。"""
     _SAVE.clear()
     _SAVE.update({"page": "list", "level": LEVELS[0]["id"], "mines": {}, "golf": None, "pool": None})
+    import pool
+    pool.set_guide_lines(False)
 
 
 _SAVE: dict = {}

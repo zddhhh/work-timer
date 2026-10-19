@@ -100,7 +100,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 台球更接近真桌：球会滚停，撞库减速，拉杆能看到先打到哪颗、碰完往哪走"
+    "- 台球辅助线可关，默认关；进袋从袋口掉进去，贴库会弹开"
 )
 
 
