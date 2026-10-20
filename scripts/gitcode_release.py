@@ -5,8 +5,7 @@ r"""创建 GitCode Release 并上传主安装包和 Win7 安装包。
   .\.venv\Scripts\python.exe scripts\gitcode_release.py              先打包再发
   .\.venv\Scripts\python.exe scripts\gitcode_release.py --no-build   直接发 release/ 里已测过的包
 
-上传成功后把主安装包寄到 scripts/release_mail.py 里的邮箱。
-发信账号写在 release_mail.secret.json，不进 git。
+安装包只上传到 Release。不再给固定邮箱寄信，由订阅功能发送。
 """
 from __future__ import annotations
 
@@ -147,9 +146,6 @@ def main() -> None:
     for p in setups:
         upload_asset(tok, tag, p)
     print(f"完成：https://gitcode.com/{OWNER}/{REPO}/releases")
-    from release_mail import send_release
-
-    send_release(ver, RELEASE_NOTE, setups, digests)
 
 
 if __name__ == "__main__":

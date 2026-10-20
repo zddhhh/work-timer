@@ -1,6 +1,6 @@
-"""发版后把主安装包寄到指定邮箱。
+"""把安装包寄到调用时指定的邮箱。发版脚本不再调用这里。
 
-收件人写在这里。发信账号放 release_mail.secret.json（不进 git），例如：
+发信账号放 release_mail.secret.json（不进 git），例如：
 
     {
       "host": "smtp.qq.com",
@@ -21,8 +21,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET = ROOT / "release_mail.secret.json"
-RECIPIENTS = ("jun2.huang@sgmw.com.cn",)
-CC = ("745594378@qq.com",)
 RELEASE_PAGE = "https://gitcode.com/mdslanruo/work-timer/releases"
 
 
@@ -60,15 +58,18 @@ def build_message(
     setup: Path,
     digest: str,
     sender: str,
-    recipients: tuple[str, ...] | None = None,
+    recipients: tuple[str, ...],
+    cc: tuple[str, ...] = (),
 ) -> EmailMessage:
-    to = recipients if recipients is not None else RECIPIENTS
+    if not recipients:
+        raise ValueError("没有收件人")
     packed = f"WorkTimer-{version}.zip"
     msg = EmailMessage()
     msg["Subject"] = f"WorkTimer {version} 安装包"
     msg["From"] = sender
-    msg["To"] = ", ".join(to)
-    msg["Cc"] = ", ".join(CC)
+    msg["To"] = ", ".join(recipients)
+    if cc:
+        msg["Cc"] = ", ".join(cc)
     msg.set_content(
         "\n".join(
             [
@@ -91,7 +92,15 @@ def build_message(
     return msg
 
 
-def send_release(version: str, note: str, setups: list[Path], digests: dict[str, str]) -> None:
+def send_release(
+    version: str,
+    note: str,
+    setups: list[Path],
+    digests: dict[str, str],
+    recipients: tuple[str, ...],
+) -> None:
+    if not recipients:
+        return
     setup = next((p for p in setups if p.name == "WorkTimer-Setup.exe"), None)
     if setup is None:
         raise SystemExit("没有主安装包，没法发邮件")
@@ -99,10 +108,10 @@ def send_release(version: str, note: str, setups: list[Path], digests: dict[str,
     if cfg is None:
         raise SystemExit(
             "缺少 release_mail.secret.json（host/port/user/password/from），"
-            f"安装包还没寄到 {', '.join(RECIPIENTS)}"
+            f"安装包还没寄到 {', '.join(recipients)}"
         )
-    msg = build_message(version, note, setup, digests[setup.name], cfg["from"])
-    print(f"寄安装包到 {', '.join(RECIPIENTS)}，抄送 {', '.join(CC)} …")
+    msg = build_message(version, note, setup, digests[setup.name], cfg["from"], recipients)
+    print(f"寄安装包到 {', '.join(recipients)} …")
     port = cfg["port"]
     if port == 465:
         server = smtplib.SMTP_SSL(cfg["host"], port, timeout=180)
