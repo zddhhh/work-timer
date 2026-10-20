@@ -258,11 +258,11 @@ def _busiest_caption(days: list[dict]) -> str:
             best_n = n
             best = row
     if best is None:
-        return "这周还没记下次数"
+        return "这周还没记到次数"
     d = best["date"]
     text = f"最勤 周{_WD[d.weekday()]}"
     if combined:
-        text += f"  ·  有 {combined} 天只记了总数"
+        text += f"  ·  有 {combined} 天只有总次数"
     return text
 
 
@@ -278,7 +278,7 @@ def _render_week(
     _round(dr, (0, 0, w - 1, h - 1), _PANEL, radius=12)
     hits: list[dict] = []
     if not enabled:
-        _text(dr, (w / 2, h / 2 - 10), "打开开关，开始数今天敲了多少、点了多少", size=13, fill=_WHITE, anchor="mm")
+        _text(dr, (w / 2, h / 2 - 10), "勾选「记录键盘、鼠标次数」后才开始记", size=13, fill=_WHITE, anchor="mm")
         _text(dr, (w / 2, h / 2 + 12), "只记次数，不记按了哪个键，也不上传", size=11, fill=_MUTED, anchor="mm")
         return im, hits
 
@@ -359,7 +359,7 @@ def render(
     _round(dr, (0, 0, w - 1, h - 1), _PANEL, radius=12)
     hits: list[dict] = []
     if not enabled:
-        _text(dr, (w / 2, h / 2 - 10), "打开开关，开始数今天敲了多少、点了多少", size=13, fill=_WHITE, anchor="mm")
+        _text(dr, (w / 2, h / 2 - 10), "勾选「记录键盘、鼠标次数」后才开始记", size=13, fill=_WHITE, anchor="mm")
         _text(dr, (w / 2, h / 2 + 12), "只记次数，不记按了哪个键，也不上传", size=11, fill=_MUTED, anchor="mm")
         return im, hits
 
@@ -367,7 +367,7 @@ def render(
     plot_l, plot_r = 46, w - inset
     _paint_totals(dr, w, (("键盘", today["keys"], _KEY), ("鼠标", today["clicks"], _CLICK), ("滚轮", today["wheels"], _WHEEL)))
 
-    cap = "今天还没记下次数" if today["mode"] == "empty" else _peak_caption(today)
+    cap = "这天还没记到次数" if today["mode"] == "empty" else _peak_caption(today)
     _text(dr, (inset, 54), cap, size=11, fill=_MUTED, anchor="lm")
 
     lo, hi = visible_span(today["hours"], today["keys_h"], today["clicks_h"], today["wheels_h"])

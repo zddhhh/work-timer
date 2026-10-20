@@ -196,11 +196,11 @@ def peak_hours(hours: list[int]) -> tuple[int, int] | None:
 
 def report_text(cfg: dict, d: date) -> str:
     if not enabled(cfg):
-        return "打开开关后，才开始数今天敲了多少下、点了多少次。只记次数，不记按了哪个键，也不上传。"
+        return "勾选「记录键盘、鼠标次数」后才开始记。只记次数，不记按了哪个键，也不上传。"
     c = counts(cfg, d)
     keys, clicks, wheels = c["keys"], c["clicks"], c["wheels"]
     if keys == 0 and clicks == 0 and wheels == 0:
-        return "开关已经开了，今天还没记下次数。"
+        return "已经在记了，这天还没有次数。"
     parts = [f"今天敲了 {fmt_count(keys)} 下键盘，点了 {fmt_count(clicks)} 次鼠标"]
     if wheels:
         parts[0] += f"，滚轮 {fmt_count(wheels)} 下"

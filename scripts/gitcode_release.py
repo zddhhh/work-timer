@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 喝水提醒要等点一下才过；次数图可以翻以前的日期，保留天数可以自己选"
+    "- 工时账本的开关写明了：记的是键盘鼠标次数，留多久只影响这些次数"
 )
 
 

@@ -2442,7 +2442,7 @@ class WorkTimer:
         hint.pack(fill="x", pady=(0, 8))
         tk.Label(
             hint,
-            text="来了、走了填钟点，例如 8:30。待了多久是时长，不是钟点。两格清空即删除这天。",
+            text="来了、走了填钟点，例如 8:30。待了多久是时长，不是钟点。两格都清空，这一天就删掉。",
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), anchor="w",
         ).pack(side="left")
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
@@ -2453,12 +2453,6 @@ class WorkTimer:
             self.win.listen_raw_input(on)
             store.save_config(self.cfg)
             self._paint_activity_chart(ui)
-
-        tk.Checkbutton(
-            hint, text="记下次数", variable=act_on, command=toggle_act,
-            fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
-            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
-        ).pack(side="right")
 
         charts = tk.Frame(sheet, bg=_CARD_BG, width=pair_w, height=activity_chart.H + 32)
         charts.pack(fill="x")
@@ -2503,7 +2497,7 @@ class WorkTimer:
         week_card = tk.Frame(charts, bg=_CARD_BG)
         week_card.grid(row=0, column=1, sticky="nsew", padx=(activity_chart.GAP // 2, 0))
         tk.Label(
-            week_card, text="这周", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
+            week_card, text="这周每天", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
         ).pack(fill="x", pady=(0, 4))
         week_lbl = tk.Label(week_card, bg=_CARD_BG, bd=0, highlightthickness=0)
         week_lbl.pack(anchor="w")
@@ -2515,20 +2509,36 @@ class WorkTimer:
             store.save_config(self.cfg)
             self._paint_activity_chart(ui)
 
-        keep_row = tk.Frame(sheet, bg=_CARD_BG)
-        keep_row.pack(fill="x", pady=(8, 0))
+        count_row = tk.Frame(sheet, bg=_CARD_BG)
+        count_row.pack(fill="x", pady=(8, 0))
+        tk.Checkbutton(
+            count_row, text="记录键盘、鼠标次数", variable=act_on, command=toggle_act,
+            fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
+        ).pack(side="left")
         tk.Label(
-            keep_row, text="次数保留", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            count_row,
+            text="只数敲了几下、点了几次、滚了几格，不记按了哪个键。关掉后，上面两张图不再增加。",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), anchor="w",
+            wraplength=pair_w - 220, justify="left",
+        ).pack(side="left", padx=(8, 0))
+
+        keep_row = tk.Frame(sheet, bg=_CARD_BG)
+        keep_row.pack(fill="x", pady=(4, 0))
+        tk.Label(
+            keep_row, text="这些次数留多久", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
         ).pack(side="left", padx=(0, 8))
         for days_n in activity.KEEP_PRESETS:
             tk.Radiobutton(
-                keep_row, text=f"{days_n} 天", variable=keep_var, value=days_n, command=on_keep,
+                keep_row, text=f"最近 {days_n} 天", variable=keep_var, value=days_n, command=on_keep,
                 fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
                 activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
             ).pack(side="left", padx=(0, 8))
         tk.Label(
-            keep_row, text="点这周某一天，左边改看那天", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
-        ).pack(side="right")
+            sheet,
+            text="改短会删掉更早的次数，来了、走了的记录不动。点「这周每天」里的某一天，左边换成那天每小时的图。",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), anchor="w", wraplength=pair_w, justify="left",
+        ).pack(fill="x", pady=(2, 0))
 
         cell_bg = "#1e2430"
         entry_bg = "#2a3344"
