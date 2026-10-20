@@ -1,4 +1,6 @@
-"""订阅云函数：网页收邮箱，并用 163 把安装包 zip 寄出去。
+"""订阅云函数：网页收邮箱，并用 163 把下载地址寄出去。
+
+不附安装包。一封带 20MB 附件的信就会把 163 当天的发信流量用完。
 
 控制台里建「事件函数」，运行环境 Python 3.10，入口 index.main_handler。
 内存 512 MB，超时 600 秒，打开公网访问。
@@ -25,7 +27,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import io
 import json
 import re
 import smtplib
@@ -33,7 +34,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 from email.message import EmailMessage
 
 API = "https://api.gitcode.com/api/v5"
@@ -251,9 +251,9 @@ def signup(state: dict, email: str, mode: str, version: str, sender: str = "", o
         return {"state": state, "send": False, "text": text}
     if _sent_today(state) >= DAILY_CAP:
         return {"state": state, "send": False, "text": "今天寄得太多了，明天再试。"}
-    text = f"最新版 {version} 的 {label} 安装包会寄到 {email}。"
+    text = f"最新版 {version} 的 {label} 下载地址会寄到 {email}。"
     if sender:
-        text += f"发信邮箱是 {sender}，请核对发件人再打开。"
+        text += f"发信邮箱是 {sender}，请核对发件人再点开。"
     if mode == "auto":
         text += "以后这一类的新版本也会寄。不想要了，用邮件里的链接取消。"
     else:
@@ -354,11 +354,11 @@ def _form(error: str = "", sender: str = "") -> str:
     warn = f"<p class='err'>{_esc(error)}</p>" if error else ""
     if sender:
         lead = (
-            f"安装包由 {_esc(sender)} 寄出，请认准这个发件人。"
+            f"下载地址由 {_esc(sender)} 寄出，请认准这个发件人。"
             "两类分开寄，互不影响。同一类的同一个版本只寄一次。"
         )
     else:
-        lead = "电脑连不上更新时，先选自己的系统，安装包寄到邮箱。"
+        lead = "电脑连不上更新时，先选自己的系统，下载地址寄到邮箱。"
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -372,7 +372,7 @@ input[type=email] {{ width:100%; box-sizing:border-box; padding:10px; font-size:
 button {{ margin-top:8px; padding:10px 18px; font-size:16px; background:#b02a24; color:#fff; border:0; border-radius:8px; }}
 .err {{ color:#b02a24; }}
 </style></head><body><main>
-<h1>用邮箱收安装包</h1>
+<h1>用邮箱收下载地址</h1>
 <p>{lead}</p>
 {warn}
 <form method="post">
@@ -504,6 +504,19 @@ def _asset_url(owner: str, name: str, tag: str, asset: str) -> str:
     )
 
 
+def download_link(repo: str, tag: str, asset: str) -> str:
+    """给收件人点的公开地址。不带令牌，过期的临时链接也不写进邮件。"""
+    repo = (repo or "mdslanruo/work-timer").strip().strip("/")
+    tag = (tag or "").strip()
+    asset = (asset or "").strip()
+    if not tag or not asset:
+        return f"https://gitcode.com/{repo}/releases"
+    return (
+        f"https://gitcode.com/{repo}/releases/download/"
+        f"{urllib.parse.quote(tag, safe='')}/{urllib.parse.quote(asset, safe='')}"
+    )
+
+
 def _sender() -> str:
     return _env("SMTP_FROM") or _env("SMTP_USER")
 
@@ -575,7 +588,14 @@ def unsubscribe(state: dict, token: str, secret: str) -> dict:
     return {"ok": True, "changed": found, "state": state, "text": text}
 
 
-def mail_text(version: str, sender: str, note: str = "", system: str = "main", unsub_url: str = "") -> str:
+def mail_text(
+    version: str,
+    sender: str,
+    note: str = "",
+    system: str = "main",
+    unsub_url: str = "",
+    download_url: str = "",
+) -> str:
     os_key = _clean_os(system) or "main"
     label, asset = SYSTEMS[os_key]
     lines = [
@@ -588,14 +608,15 @@ def mail_text(version: str, sender: str, note: str = "", system: str = "main", u
         lines.extend(
             [
                 f"这封信由 {sender} 发出。",
-                "发件人不是这个邮箱，不要打开附件。",
+                "发件人不是这个邮箱，不要点里面的链接。",
                 "",
             ]
         )
     lines.extend(
         [
-            f"附件压缩包里只有 {asset}。",
-            "解压后双击它安装。",
+            f"安装包不在附件里。用浏览器打开下面的地址，下载 {asset}：",
+            download_url or "https://gitcode.com/mdslanruo/work-timer/releases",
+            "下载后双击它安装。",
         ]
     )
     extra = public_note(note)
@@ -629,49 +650,21 @@ def _get_json(url: str, token: str) -> object:
     raise last  # pragma: no cover
 
 
-def _download(url: str) -> bytes:
-    token = _env("GITCODE_TOKEN")
-    headers = {"User-Agent": "WorkTimer-Subscribe"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return resp.read()
-
-
-def _zip_files(files: list[tuple[str, bytes]]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
-        for name, blob in files:
-            zf.writestr(name, blob)
-    return buf.getvalue()
-
-
 def build_mail(
     email: str,
     version: str,
     sender: str,
     note: str,
-    files: list[tuple[str, bytes]],
     system: str = "main",
     unsub_url: str = "",
+    download_url: str = "",
 ) -> EmailMessage:
     os_key = _clean_os(system) or "main"
     msg = EmailMessage()
     msg["Subject"] = f"WorkTimer 最新版 {version}（{SYSTEMS[os_key][0]}）"
     msg["From"] = sender
     msg["To"] = email
-    msg.set_content(mail_text(version, sender, note, os_key, unsub_url))
-    for name, blob in files:
-        label = "Win7" if "win7" in name.lower() else "Setup"
-        # 校验值只放邮件头，正文不展示这串数字。
-        msg[f"X-WorkTimer-{label}"] = hashlib.sha256(blob).hexdigest()
-    msg.add_attachment(
-        _zip_files(files),
-        maintype="application",
-        subtype="zip",
-        filename=f"WorkTimer-{version}.zip",
-    )
+    msg.set_content(mail_text(version, sender, note, os_key, unsub_url, download_url))
     return msg
 
 
@@ -687,10 +680,11 @@ def _cancel(token: str) -> dict:
 def _mail_one(email: str, release: dict, system: str = "main", unsub: bool = False) -> None:
     os_key = _clean_os(system) or "main"
     asset = SYSTEMS[os_key][1]
-    files = [(asset, _download(release["downloads"][asset]))]
+    repo = _env("GITCODE_REPO") or "mdslanruo/work-timer"
+    page = download_link(repo, str(release.get("tag") or ""), asset)
     link = cancel_link(email, _env("SMTP_PASSWORD")) if unsub and _env("SMTP_PASSWORD") else ""
     msg = build_mail(
-        email, release["version"], _sender(), release.get("note") or "", files, os_key, link,
+        email, release["version"], _sender(), release.get("note") or "", os_key, link, page,
     )
     host = _env("SMTP_HOST") or "smtp.163.com"
     port = int(_env("SMTP_PORT") or "465")

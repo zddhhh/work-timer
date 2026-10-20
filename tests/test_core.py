@@ -2123,8 +2123,8 @@ class ReleaseMailTests(unittest.TestCase):
         self.assertNotIn("sha256", body.lower())
         self.assertNotIn("abcdef", body)
         self.assertIn("1.3.56", msg["Subject"])
-        names = [part.get_filename() for part in msg.iter_attachments()]
-        self.assertEqual(names, ["WorkTimer-1.3.56.zip"])
+        self.assertIn(mail.RELEASE_PAGE, body)
+        self.assertEqual(list(msg.iter_attachments()), [])
 
     def test_smtp_secret_is_optional_until_the_file_is_complete(self):
         mail = self._mail()

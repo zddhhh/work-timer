@@ -1,12 +1,9 @@
 """订阅云函数：报名名单和连不上网时的二维码。"""
 from __future__ import annotations
 
-import hashlib
 import importlib.util
-import io
 import unittest
 import urllib.error
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,24 +116,26 @@ class SubscribeTests(unittest.TestCase):
 
     def test_mail_shows_version_and_sender_without_the_checksum(self):
         note = "WorkTimer 1.3.58\n\n- 说明一条\n\n# sha256(WorkTimer-Setup.exe): deadbeef\n# sha256: deadbeef\n"
-        text = self.fn.mail_text("1.3.58", "earoot@163.com", note, "win8")
+        url = self.fn.download_link(
+            "mdslanruo/work-timer", "v1.3.58", "WorkTimer-Win7-Setup.exe",
+        )
+        text = self.fn.mail_text("1.3.58", "earoot@163.com", note, "win8", download_url=url)
         self.assertIn("最新版本：1.3.58", text)
         self.assertIn("earoot@163.com", text)
         self.assertIn("Windows 7、8", text)
-        self.assertIn("只有 WorkTimer-Win7-Setup.exe", text)
+        self.assertIn(url, text)
+        self.assertIn("WorkTimer-Win7-Setup.exe", text)
+        self.assertNotIn("附件压缩包", text)
         self.assertNotIn("Windows 10", text)
         self.assertIn("说明一条", text)
         self.assertNotIn("sha256", text.lower())
         self.assertNotIn("deadbeef", text)
         msg = self.fn.build_mail(
-            "a@x.com", "1.3.58", "earoot@163.com", note,
-            [("WorkTimer-Win7-Setup.exe", b"win7")], "win8",
+            "a@x.com", "1.3.58", "earoot@163.com", note, "win8", download_url=url,
         )
         self.assertIn("Windows 7、8", msg["Subject"])
         self.assertNotIn("sha256", msg.get_body(preferencelist=("plain",)).get_content().lower())
-        self.assertEqual(msg["X-WorkTimer-Win7"], hashlib.sha256(b"win7").hexdigest())
-        packed = next(msg.iter_attachments()).get_payload(decode=True)
-        self.assertEqual(zipfile.ZipFile(io.BytesIO(packed)).namelist(), ["WorkTimer-Win7-Setup.exe"])
+        self.assertEqual(list(msg.iter_attachments()), [])
 
     def test_signup_names_the_sender(self):
         got = self.fn.signup({}, "a@x.com", "once", "1.3.58", "earoot@163.com")

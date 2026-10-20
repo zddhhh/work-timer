@@ -63,10 +63,14 @@ def build_message(
 ) -> EmailMessage:
     if not recipients:
         raise ValueError("没有收件人")
-    files = [(setup.name, setup.read_bytes())]
-    if win7 is not None:
-        files.append((win7.name, win7.read_bytes()))
-    msg = _subscribe().build_mail(recipients[0], version, sender, note, files)
+    # setup / win7 只用来确认文件还在，不再读进邮件。20MB 附件会把 163 当天的流量用完。
+    if not setup.is_file():
+        raise ValueError("没有主安装包")
+    if win7 is not None and not win7.is_file():
+        raise ValueError("没有 Win7 安装包")
+    msg = _subscribe().build_mail(
+        recipients[0], version, sender, note, download_url=RELEASE_PAGE,
+    )
     if len(recipients) > 1:
         msg.replace_header("To", ", ".join(recipients))
     if cc:
