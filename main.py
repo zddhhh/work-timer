@@ -2357,7 +2357,7 @@ class WorkTimer:
 
     def _paint_activity_chart(self, ui: dict | None = None) -> None:
         ui = ui if ui is not None else self._worklog_ui
-        if ui is None or ui.get("chart_lbl") is None:
+        if ui is None or ui.get("today_lbl") is None:
             return
         try:
             if not ui["dlg"].winfo_exists():
@@ -2366,35 +2366,24 @@ class WorkTimer:
             return
         today = date.today()
         days = worklog.week_dates(ui["anchor"])
-        this_week = days[0] <= today <= days[-1]
-        view = "today"
-        chooser = ui.get("chart_view")
-        if chooser is not None:
-            view = str(chooser.get() or "today")
-        title = ui.get("chart_title")
-        if title is not None:
-            if view == "week":
-                title.set("本周敲了多少下" if this_week else "这周敲了多少下")
-            else:
-                title.set("今天敲了多少下")
         activity_chart.paint_into(
             ui,
             self.cfg,
             today=today,
             days=days,
             enabled=activity.enabled(self.cfg),
-            this_week=this_week,
-            view=view,
+            this_week=days[0] <= today <= days[-1],
         )
 
     def _build_worklog_dialog(self) -> dict:
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=1080, height=560)
+        pair_w = activity_chart.W * 2 + activity_chart.GAP
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=720)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(6, 14))
         body = tk.Frame(dlg, bg=_CARD_BG)
         body.pack(side="top", fill="both", expand=True, padx=16)
         err = tk.StringVar(value="")
-        _pack_err_line(body, err, wrap=640)
+        _pack_err_line(body, err, wrap=pair_w)
         top = tk.Frame(body, bg=_CARD_BG)
         top.pack(fill="x", pady=(12, 8))
         tk.Label(
@@ -2403,25 +2392,55 @@ class WorkTimer:
         week_var = tk.StringVar()
         nav = tk.Frame(top, bg=_CARD_BG)
         nav.pack(side="right")
+        sheet = tk.Frame(body, bg=_CARD_BG)
+        sheet.pack(anchor="w")
+        hint = tk.Frame(sheet, bg=_CARD_BG, width=pair_w)
+        hint.pack(fill="x", pady=(0, 8))
         tk.Label(
-            body,
+            hint,
             text="来了、走了填钟点，例如 8:30。待了多久是时长，不是钟点。两格清空即删除这天。",
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), anchor="w",
-        ).pack(fill="x", pady=(0, 8))
+        ).pack(side="left")
+        act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
 
-        columns = tk.Frame(body, bg=_CARD_BG)
-        columns.pack(fill="both", expand=True)
-        left = tk.Frame(columns, bg=_CARD_BG)
-        left.pack(side="left", fill="y", padx=(0, 14))
-        right = tk.Frame(columns, bg=_CARD_BG)
-        right.pack(side="left", fill="y")
+        def toggle_act() -> None:
+            on = bool(act_on.get())
+            activity.set_enabled(self.cfg, on)
+            self.win.listen_raw_input(on)
+            store.save_config(self.cfg)
+            self._paint_activity_chart(ui)
+
+        tk.Checkbutton(
+            hint, text="记下次数", variable=act_on, command=toggle_act,
+            fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
+        ).pack(side="right")
+
+        charts = tk.Frame(sheet, bg=_CARD_BG, width=pair_w, height=activity_chart.H + 36)
+        charts.pack(fill="x")
+        charts.pack_propagate(False)
+        charts.columnconfigure(0, minsize=activity_chart.W, weight=1)
+        charts.columnconfigure(1, minsize=activity_chart.W, weight=1)
+
+        def _chart_card(col: int, title: str, padx: tuple[int, int]) -> tk.Label:
+            card = tk.Frame(charts, bg=_CARD_BG)
+            card.grid(row=0, column=col, sticky="nsew", padx=padx)
+            tk.Label(
+                card, text=title, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
+            ).pack(fill="x", pady=(0, 4))
+            lbl = tk.Label(card, bg=_CARD_BG, bd=0, highlightthickness=0)
+            lbl.pack(anchor="w")
+            return lbl
+
+        today_lbl = _chart_card(0, "今天", (0, activity_chart.GAP // 2))
+        week_lbl = _chart_card(1, "这周", (activity_chart.GAP // 2, 0))
 
         cell_bg = "#1e2430"
         entry_bg = "#2a3344"
-        table = tk.Frame(left, bg=cell_bg, highlightthickness=1, highlightbackground="#2a3140")
-        table.pack(anchor="w")
+        table = tk.Frame(sheet, bg=cell_bg, highlightthickness=1, highlightbackground="#2a3140")
+        table.pack(fill="x", pady=(12, 0))
         for c, (text, wide) in enumerate((("日期", 132), ("来了", 78), ("走了", 78), ("待了多久", 108), ("比该走", 92))):
-            table.columnconfigure(c, minsize=wide)
+            table.columnconfigure(c, minsize=wide, weight=2 if c == 0 else 1)
             tk.Label(
                 table, text=text, fg=_CARD_MUTED, bg=cell_bg, font=("Microsoft YaHei UI", 9),
             ).grid(row=0, column=c, sticky="w", padx=(12 if c == 0 else 6, 6), pady=(8, 4))
@@ -2452,49 +2471,14 @@ class WorkTimer:
         week_sum = tk.StringVar()
         month_sum = tk.StringVar()
         tk.Label(
-            left, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
-            wraplength=470, justify="left",
+            sheet, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
+            wraplength=pair_w, justify="left",
         ).pack(anchor="w", pady=(10, 0))
         tk.Label(
-            left, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
-            wraplength=470, justify="left",
+            sheet, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=pair_w, justify="left",
         ).pack(anchor="w", pady=(2, 0))
 
-        act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
-        head = tk.Frame(right, bg=_CARD_BG)
-        head.pack(fill="x", pady=(0, 6))
-        chart_title = tk.StringVar(value="今天敲了多少下")
-        chart_view = tk.StringVar(value="today")
-        tk.Label(
-            head, textvariable=chart_title, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
-        ).pack(side="left")
-        view_box = tk.Frame(head, bg=_CARD_BG)
-        view_box.pack(side="left", padx=(12, 0))
-
-        def on_chart_view() -> None:
-            self._paint_activity_chart(ui)
-
-        for label, value in (("今天", "today"), ("这周", "week")):
-            tk.Radiobutton(
-                view_box, text=label, variable=chart_view, value=value, command=on_chart_view,
-                fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
-                activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
-            ).pack(side="left")
-
-        def toggle_act() -> None:
-            on = bool(act_on.get())
-            activity.set_enabled(self.cfg, on)
-            self.win.listen_raw_input(on)
-            store.save_config(self.cfg)
-            self._paint_activity_chart(ui)
-
-        tk.Checkbutton(
-            head, text="记下次数", variable=act_on, command=toggle_act,
-            fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
-            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
-        ).pack(side="right")
-        chart_lbl = tk.Label(right, bg=_CARD_BG, bd=0, highlightthickness=0)
-        chart_lbl.pack(anchor="w")
         ui = {
             "dlg": dlg,
             "stop": False,
@@ -2506,26 +2490,27 @@ class WorkTimer:
             "week_sum": week_sum,
             "month_sum": month_sum,
             "act_on": act_on,
-            "chart_title": chart_title,
-            "chart_view": chart_view,
-            "chart_lbl": chart_lbl,
-            "chart_photo": None,
-            "chart_hits": [],
+            "today_lbl": today_lbl,
+            "week_lbl": week_lbl,
             "chart_sig": None,
         }
 
-        def on_chart_move(e) -> None:
-            ww = max(1, chart_lbl.winfo_width())
-            wh = max(1, chart_lbl.winfo_height())
-            x = int(e.x * activity_chart.W / ww)
-            y = int(e.y * activity_chart.H / wh)
-            activity_chart.apply_hover(ui, x, y)
+        def bind_chart(lbl: tk.Label, panel: str) -> None:
+            def move(e) -> None:
+                ww = max(1, lbl.winfo_width())
+                wh = max(1, lbl.winfo_height())
+                activity_chart.apply_hover(
+                    ui, panel, int(e.x * activity_chart.W / ww), int(e.y * activity_chart.H / wh),
+                )
 
-        def on_chart_leave(_e) -> None:
-            activity_chart.apply_hover(ui, -1, -1)
+            def leave(_e) -> None:
+                activity_chart.apply_hover(ui, panel, -1, -1)
 
-        chart_lbl.bind("<Motion>", on_chart_move)
-        chart_lbl.bind("<Leave>", on_chart_leave)
+            lbl.bind("<Motion>", move)
+            lbl.bind("<Leave>", leave)
+
+        bind_chart(today_lbl, "today")
+        bind_chart(week_lbl, "week")
 
         def close() -> None:
             ui["stop"] = True
@@ -2591,7 +2576,7 @@ class WorkTimer:
         ui["err"].set("")
         ui["anchor"] = date.today()
         self._fill_worklog(ui)
-        _reveal_card(ui["dlg"], min_w=980, min_h=480, near=self._dialog_near())
+        _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=680, near=self._dialog_near())
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:

@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时账本的次数图可以看这一周，和今天按小时看的是同一套键盘、鼠标、滚轮"
+    "- 工时账本的次数改成今天、这周两张并排的图，和下面的表左右对齐"
 )
 
 

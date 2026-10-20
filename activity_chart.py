@@ -14,7 +14,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 import activity
 
-W, H = 584, 292
+W, H = 492, 236
+GAP = 12
 IDLE_READOUT = "移到柱上，看这一小时各是多少"
 WEEK_IDLE = "移到某一天，看这三项各是多少"
 _WD = "一二三四五六日"
@@ -202,8 +203,21 @@ def _hour_text(hour: int, today: dict) -> str:
     )
 
 
+def _paint_totals(dr: ImageDraw.ImageDraw, w: int, items: tuple) -> None:
+    inset = 14
+    col_w = (w - inset * 2) / 3
+    for i, (name, val, color) in enumerate(items):
+        cx = inset + (i + 0.5) * col_w
+        if i:
+            x = int(inset + i * col_w)
+            dr.line((x, 12, x, 46), fill=_GRID, width=1)
+        _text(dr, (cx, 8), name, size=11, fill=color, anchor="mt")
+        _text(dr, (cx, 44), activity.fmt_count(val), size=20, fill=_WHITE, anchor="ms", bold=True)
+
+
 def _paint_readout(im: Image.Image, text: str, *, active: bool = False) -> None:
-    x0, y0, x1, y1 = READOUT
+    w, h = im.size
+    x0, y0, x1, y1 = 12, h - 30, w - 12, h - 8
     dr = ImageDraw.Draw(im)
     dr.rectangle((x0, y0, x1, y1), fill=_PANEL)
     _round(dr, (x0, y0, x1, y1), (36, 44, 58, 255), radius=8)
@@ -268,22 +282,13 @@ def _render_week(
         _text(dr, (w / 2, h / 2 + 12), "只记次数，不记按了哪个键，也不上传", size=11, fill=_MUTED, anchor="mm")
         return im, hits
 
-    inset = 18
+    inset = 14
     keys, clicks, wheels = week_totals(days)
-    stats_y = 16
-    items = (("键盘", keys, _KEY), ("鼠标", clicks, _CLICK), ("滚轮", wheels, _WHEEL))
-    col_w = (w - inset * 2) / 3
-    for i, (name, val, color) in enumerate(items):
-        cx = inset + (i + 0.5) * col_w
-        if i:
-            x = int(inset + i * col_w)
-            dr.line((x, stats_y + 4, x, stats_y + 44), fill=_GRID, width=1)
-        _text(dr, (cx, stats_y + 2), name, size=11, fill=color, anchor="mt")
-        _text(dr, (cx, stats_y + 42), activity.fmt_count(val), size=22, fill=_WHITE, anchor="ms", bold=True)
-    _text(dr, (inset, 78), _busiest_caption(days), size=11, fill=_MUTED, anchor="lm")
+    _paint_totals(dr, w, (("键盘", keys, _KEY), ("鼠标", clicks, _CLICK), ("滚轮", wheels, _WHEEL)))
+    _text(dr, (inset, 54), _busiest_caption(days), size=11, fill=_MUTED, anchor="lm")
 
-    plot_l, plot_r = 24, w - inset
-    plot_top, base = 96, 228
+    plot_l, plot_r = 16, w - inset
+    plot_top, base = 68, h - 52
     bar_room = base - plot_top
     group_w = (plot_r - plot_l) / max(1, len(days))
     dr.line((plot_l + 8, base, plot_r - 8, base), fill=_LINE, width=1)
@@ -357,21 +362,12 @@ def render(
         _text(dr, (w / 2, h / 2 + 12), "只记次数，不记按了哪个键，也不上传", size=11, fill=_MUTED, anchor="mm")
         return im, hits
 
-    inset = 18
-    plot_l, plot_r = 62, w - inset
-    stats_y = 16
-    items = (("键盘", today["keys"], _KEY), ("鼠标", today["clicks"], _CLICK), ("滚轮", today["wheels"], _WHEEL))
-    col_w = (w - inset * 2) / 3
-    for i, (name, val, color) in enumerate(items):
-        cx = inset + (i + 0.5) * col_w
-        if i:
-            x = int(inset + i * col_w)
-            dr.line((x, stats_y + 4, x, stats_y + 44), fill=_GRID, width=1)
-        _text(dr, (cx, stats_y + 2), name, size=11, fill=color, anchor="mt")
-        _text(dr, (cx, stats_y + 42), activity.fmt_count(val), size=22, fill=_WHITE, anchor="ms", bold=True)
+    inset = 14
+    plot_l, plot_r = 46, w - inset
+    _paint_totals(dr, w, (("键盘", today["keys"], _KEY), ("鼠标", today["clicks"], _CLICK), ("滚轮", today["wheels"], _WHEEL)))
 
     cap = "今天还没记下次数" if today["mode"] == "empty" else _peak_caption(today)
-    _text(dr, (inset, 78), cap, size=11, fill=_MUTED, anchor="lm")
+    _text(dr, (inset, 54), cap, size=11, fill=_MUTED, anchor="lm")
 
     lo, hi = visible_span(today["hours"], today["keys_h"], today["clicks_h"], today["wheels_h"])
     n = hi - lo + 1
@@ -381,13 +377,14 @@ def render(
         rows = (("操作", today["hours"], _COMBINED),)
     else:
         rows = (
-            ("鼠标", today["clicks_h"], _CLICK),
             ("键盘", today["keys_h"], _KEY),
+            ("鼠标", today["clicks_h"], _CLICK),
             ("滚轮", today["wheels_h"], _WHEEL),
         )
-    row_h = 42
-    rows_top = 96
-    bar_room = 30
+    rows_top = 68
+    room = max(24, (h - 30 - 14 - rows_top) // max(1, len(rows)))
+    row_h = room
+    bar_room = max(16, room - 8)
 
     def x_center(hour: int) -> float:
         return plot_l + (hour - lo + 0.5) * slot
@@ -437,40 +434,42 @@ def paint_into(
     days: list[date],
     enabled: bool,
     this_week: bool,
-    view: str = "today",
 ) -> None:
-    """账本开着时重画。数据没变就跳过，避免每秒重建图片。"""
-    view = "week" if view == "week" else "today"
+    """今天和这周各画一张，尺寸相同。数据没变就跳过。"""
     pack = today_pack(cfg, today)
     week = week_pack(cfg, days, today)
-    sig = signature(pack, week, enabled=enabled, this_week=this_week, view=view)
-    if ui.get("chart_sig") == sig and ui.get("chart_base") is not None:
+    sig = signature(pack, week, enabled=enabled, this_week=this_week, view="both")
+    if ui.get("chart_sig") == sig and ui.get("today_base") is not None and ui.get("week_base") is not None:
         return
-    im, hits = render(pack, week, enabled=enabled, this_week=this_week, view=view)
-    ui["chart_idle"] = WEEK_IDLE if view == "week" else IDLE_READOUT
-    ui["chart_base"] = im
-    ui["chart_hits"] = hits
+    today_im, today_hits = render(pack, week, enabled=enabled, this_week=this_week, view="today")
+    week_im, week_hits = render(pack, week, enabled=enabled, this_week=this_week, view="week")
+    ui["today_base"] = today_im
+    ui["today_hits"] = today_hits
+    ui["week_base"] = week_im
+    ui["week_hits"] = week_hits
     ui["chart_sig"] = sig
-    ui["chart_hover"] = None
-    apply_hover(ui, -1, -1)
+    ui["today_hover"] = None
+    ui["week_hover"] = None
+    apply_hover(ui, "today", -1, -1)
+    apply_hover(ui, "week", -1, -1)
 
 
-def apply_hover(ui: dict, x: int, y: int) -> None:
-    base = ui.get("chart_base")
+def apply_hover(ui: dict, panel: str, x: int, y: int) -> None:
+    base = ui.get(f"{panel}_base")
     if base is None:
         return
-    text = hover_text(ui.get("chart_hits") or [], x, y) or str(ui.get("chart_idle") or IDLE_READOUT)
-    if text == ui.get("chart_hover") and ui.get("chart_photo") is not None:
+    idle = WEEK_IDLE if panel == "week" else IDLE_READOUT
+    text = hover_text(ui.get(f"{panel}_hits") or [], x, y) or idle
+    if text == ui.get(f"{panel}_hover") and ui.get(f"{panel}_photo") is not None:
         return
     im = base.copy()
-    idle = str(ui.get("chart_idle") or IDLE_READOUT)
     _paint_readout(im, text, active=text != idle)
     photo = ImageTk.PhotoImage(im)
-    lbl = ui.get("chart_lbl")
+    lbl = ui.get(f"{panel}_lbl")
     if lbl is not None:
         lbl.configure(image=photo)
-    ui["chart_photo"] = photo
-    ui["chart_hover"] = text
+    ui[f"{panel}_photo"] = photo
+    ui[f"{panel}_hover"] = text
 
 
 def hover_text(hits: list[dict], x: int, y: int) -> str:
