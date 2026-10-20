@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时账本的次数改成今天、这周两张并排的图，和下面的表左右对齐"
+    "- 喝水提醒要等点一下才过；次数图可以翻以前的日期，保留天数可以自己选"
 )
 
 

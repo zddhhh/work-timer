@@ -749,6 +749,17 @@ class HydrateTests(unittest.TestCase):
         later = datetime(2026, 10, 13, 9, 30, 0)
         self.assertAlmostEqual(hydrate.interval_sec(cfg) - hydrate.elapsed_sec(cfg, later), left)
 
+    def test_arm_waits_for_a_click(self):
+        cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00")
+        now = datetime(2026, 10, 13, 9, 50, 0)
+        self.assertEqual(hydrate.decide(cfg, now), "fire")
+        hydrate.arm(cfg)
+        self.assertTrue(cfg["hydrate"]["pending"])
+        self.assertEqual(hydrate.decide(cfg, now), "fire")
+        hydrate.reset_anchor(cfg, now)
+        self.assertFalse(cfg["hydrate"]["pending"])
+        self.assertEqual(hydrate.decide(cfg, now), "none")
+
     def test_click_reset_restarts_round(self):
         cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00", pending=True)
         now = datetime(2026, 10, 13, 9, 50, 0)
@@ -1628,6 +1639,14 @@ class ActivityTests(unittest.TestCase):
         split_days = activity_chart.week_pack(
             cfg, [monday + timedelta(days=i) for i in range(7)], d,
         )
+        self.assertEqual(activity.keep_days({}), 60)
+        activity.set_keep_days(cfg, 7, today=d)
+        self.assertEqual(activity.keep_days(cfg), 7)
+        cfg["activity"]["days"]["2026-10-01"] = {"keys": 1, "clicks": 0, "wheels": 0, "hours": [0] * 24}
+        activity.ensure_fields(cfg, today=d)
+        self.assertNotIn("2026-10-01", cfg["activity"]["days"])
+        self.assertEqual(activity.set_keep_days(cfg, 3, today=d), 60)
+
         self.assertEqual(activity_chart.week_totals(split_days), (1, 2, 0))
         week_im, week_hits = activity_chart.render(pack, split_days, enabled=True, this_week=True, view="week")
         self.assertEqual(week_im.size, (activity_chart.W, activity_chart.H))

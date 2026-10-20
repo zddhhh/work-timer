@@ -335,6 +335,7 @@ def _render_week(
                 "y0": plot_top - 6,
                 "y1": base + 26,
                 "text": _day_text(row),
+                "date": row["date"].isoformat(),
             }
         )
     _paint_readout(im, WEEK_IDLE)
@@ -434,9 +435,10 @@ def paint_into(
     days: list[date],
     enabled: bool,
     this_week: bool,
+    focus: date | None = None,
 ) -> None:
-    """今天和这周各画一张，尺寸相同。数据没变就跳过。"""
-    pack = today_pack(cfg, today)
+    """左边看 focus 这一天，右边看这一周。尺寸相同。数据没变就跳过。"""
+    pack = today_pack(cfg, focus or today)
     week = week_pack(cfg, days, today)
     sig = signature(pack, week, enabled=enabled, this_week=this_week, view="both")
     if ui.get("chart_sig") == sig and ui.get("today_base") is not None and ui.get("week_base") is not None:
@@ -472,8 +474,13 @@ def apply_hover(ui: dict, panel: str, x: int, y: int) -> None:
     ui[f"{panel}_hover"] = text
 
 
-def hover_text(hits: list[dict], x: int, y: int) -> str:
+def hit_at(hits: list[dict], x: int, y: int) -> dict | None:
     for hit in reversed(hits):
         if hit["x0"] <= x < hit["x1"] and hit["y0"] <= y <= hit["y1"]:
-            return str(hit["text"])
-    return ""
+            return hit
+    return None
+
+
+def hover_text(hits: list[dict], x: int, y: int) -> str:
+    hit = hit_at(hits, x, y)
+    return str(hit["text"]) if hit else ""

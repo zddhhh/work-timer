@@ -1065,6 +1065,7 @@ class WorkTimer:
         self._font_sub = _font(fs)
         self._kinetic: kinetic.Show | None = None
         self._hydrate_showing = False
+        self._hydrate_waiting = bool(hydrate.read(self.cfg).get("pending")) and hydrate.enabled(self.cfg)
         self._hydrate_paused_at: datetime | None = None
         self.win.blocked_live = self._card_frame
         self.win.note_beat = self._note_beat
@@ -1296,7 +1297,7 @@ class WorkTimer:
             return
         self._celebrate_start = phase
         self._celebrate_until = phase + ornaments.CONFETTI_SEC
-        if kinetic.playing(self._kinetic, phase):
+        if kinetic.playing(self._kinetic, phase) or self._hydrate_waiting:
             return
         if aid == schedules.OFFWORK_ID:
             self._start_kinetic(kinetic.OFFWORK_PHRASES)
@@ -1307,7 +1308,7 @@ class WorkTimer:
                 self._start_kinetic((raw,))
 
     def _tick_kinetic(self, now: float) -> None:
-        if kinetic.playing(self._kinetic, now):
+        if self._hydrate_waiting or kinetic.playing(self._kinetic, now):
             return
         wall = datetime.now()
         if self._try_start_fest_kinetic(
@@ -1479,16 +1480,13 @@ class WorkTimer:
     def _on_click(self, lx: int, ly: int) -> None:
         if self._esc_hidden:
             return
+        if self._hydrate_waiting:
+            self._ack_hydrate()
+            return
         if self._kinetic is not None:
-            drank = self._hydrate_showing
             self._kinetic.skip()
             self._kinetic = None
             self._hydrate_showing = False
-            if drank:
-                hydrate.reset_anchor(self.cfg, datetime.now())
-                store.save_config(self.cfg)
-                if self._theme().kind == meow.KIND:
-                    self._meow.cheer(time.monotonic())
             self._last_key = ""
             return
         self._maybe_skin_interact(lx, ly)
@@ -1629,8 +1627,10 @@ class WorkTimer:
     def _set_hydrate(self, on: bool) -> None:
         hydrate.set_enabled(self.cfg, on)
         self._hydrate_paused_at = None
-        if not on and self._hydrate_showing:
-            self._stop_kinetic()
+        if not on:
+            self._hydrate_waiting = False
+            if self._hydrate_showing:
+                self._stop_kinetic()
         store.save_config(self.cfg)
 
     def _hydrate_after_offwork(self, now: datetime | None = None) -> bool:
@@ -1643,10 +1643,25 @@ class WorkTimer:
 
     def _tick_hydrate(self, now_m: float) -> None:
         if not hydrate.enabled(self.cfg):
+            self._hydrate_waiting = False
             self._hydrate_paused_at = None
             return
-        if self._hydrate_showing and not kinetic.playing(self._kinetic, now_m):
-            self._hydrate_showing = False
+        now = datetime.now()
+        if self._hydrate_after_offwork(now):
+            if self._hydrate_waiting or hydrate.read(self.cfg)["pending"]:
+                self._hydrate_waiting = False
+                self._hydrate_paused_at = None
+                hydrate.decide(self.cfg, now, after_offwork=True)
+                store.save_config(self.cfg)
+            return
+        if hydrate.is_stale(self.cfg, now):
+            self._hydrate_waiting = False
+            self._hydrate_paused_at = None
+            hydrate.decide(self.cfg, now)
+            store.save_config(self.cfg)
+            return
+        if self._hydrate_waiting:
+            return
         if (
             kinetic.playing(self._kinetic, now_m)
             or self._esc_hidden
@@ -1656,11 +1671,6 @@ class WorkTimer:
             or self.win.dragging
             or self.win.resizing
         ):
-            return
-        now = datetime.now()
-        if self._hydrate_after_offwork(now):
-            self._hydrate_paused_at = None
-            hydrate.decide(self.cfg, now, after_offwork=True)
             return
         idle = worklog.idle_seconds()
         if idle >= worklog.IDLE_LIMIT_SEC:
@@ -1673,9 +1683,25 @@ class WorkTimer:
             store.save_config(self.cfg)
         if hydrate.decide(self.cfg, now) != "fire":
             return
-        hydrate.reset_anchor(self.cfg, now)
+        hydrate.arm(self.cfg)
         store.save_config(self.cfg)
-        self._start_kinetic(kinetic.HYDRATE_PHRASES)
+        self._hydrate_waiting = True
+        if self._kinetic is not None:
+            self._kinetic.skip()
+            self._kinetic = None
+        self._last_key = ""
+
+    def _ack_hydrate(self) -> None:
+        self._hydrate_waiting = False
+        self._hydrate_showing = False
+        if self._kinetic is not None:
+            self._kinetic.skip()
+            self._kinetic = None
+        hydrate.reset_anchor(self.cfg, datetime.now())
+        store.save_config(self.cfg)
+        if self._theme().kind == meow.KIND:
+            self._meow.cheer(time.monotonic())
+        self._last_key = ""
 
     def _auto_start_on(self) -> bool:
         return bool(self.cfg.get("auto_start"))
@@ -2233,7 +2259,7 @@ class WorkTimer:
         ).pack(pady=(16, 4), anchor="w")
         tk.Label(
             body,
-            text="到点时卡片上闪一句「该喝水了」，不抢下班倒计时。离开座位、开会隐藏窗口、过了下班点都不会催。点一下卡片表示喝过了。",
+            text="到点后卡片停在「该喝水了」，点一下才算喝过，下一轮从这一下开始。离开座位、开会隐藏窗口、过了下班点都不会催。",
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), wraplength=360, justify="left",
         ).pack(anchor="w", pady=(0, 10))
         interval_var = tk.IntVar(value=hydrate.interval_min(self.cfg))
@@ -2366,6 +2392,23 @@ class WorkTimer:
             return
         today = date.today()
         days = worklog.week_dates(ui["anchor"])
+        keep = activity.keep_days(self.cfg)
+        focus = ui.get("chart_day") or today
+        if focus > today:
+            focus = today
+        earliest = today - timedelta(days=keep)
+        if focus < earliest:
+            focus = earliest
+        ui["chart_day"] = focus
+        day_var = ui.get("day_var")
+        if day_var is not None:
+            if focus == today:
+                caption = f"今天 {focus.month}/{focus.day}"
+            elif focus == today - timedelta(days=1):
+                caption = f"昨天 {focus.month}/{focus.day}"
+            else:
+                caption = f"{focus.month}/{focus.day} 周{worklog.WEEKDAY_CN[focus.weekday()]}"
+            day_var.set(caption)
         activity_chart.paint_into(
             ui,
             self.cfg,
@@ -2373,6 +2416,7 @@ class WorkTimer:
             days=days,
             enabled=activity.enabled(self.cfg),
             this_week=days[0] <= today <= days[-1],
+            focus=focus,
         )
 
     def _build_worklog_dialog(self) -> dict:
@@ -2416,24 +2460,75 @@ class WorkTimer:
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="right")
 
-        charts = tk.Frame(sheet, bg=_CARD_BG, width=pair_w, height=activity_chart.H + 36)
+        charts = tk.Frame(sheet, bg=_CARD_BG, width=pair_w, height=activity_chart.H + 32)
         charts.pack(fill="x")
         charts.pack_propagate(False)
         charts.columnconfigure(0, minsize=activity_chart.W, weight=1)
         charts.columnconfigure(1, minsize=activity_chart.W, weight=1)
 
-        def _chart_card(col: int, title: str, padx: tuple[int, int]) -> tk.Label:
-            card = tk.Frame(charts, bg=_CARD_BG)
-            card.grid(row=0, column=col, sticky="nsew", padx=padx)
-            tk.Label(
-                card, text=title, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
-            ).pack(fill="x", pady=(0, 4))
-            lbl = tk.Label(card, bg=_CARD_BG, bd=0, highlightthickness=0)
-            lbl.pack(anchor="w")
-            return lbl
+        day_var = tk.StringVar(value="今天")
 
-        today_lbl = _chart_card(0, "今天", (0, activity_chart.GAP // 2))
-        week_lbl = _chart_card(1, "这周", (activity_chart.GAP // 2, 0))
+        def shift_chart_day(delta: int) -> None:
+            today = date.today()
+            keep = activity.keep_days(self.cfg)
+            cur = ui.get("chart_day") or today
+            nxt = cur + timedelta(days=delta)
+            if nxt < today - timedelta(days=keep) or nxt > today:
+                return
+            ui["chart_day"] = nxt
+            self._paint_activity_chart(ui)
+
+        day_card = tk.Frame(charts, bg=_CARD_BG)
+        day_card.grid(row=0, column=0, sticky="nsew", padx=(0, activity_chart.GAP // 2))
+        day_head = tk.Frame(day_card, bg=_CARD_BG)
+        day_head.pack(fill="x", pady=(0, 4))
+
+        def _chev(text: str, delta: int) -> None:
+            lbl = tk.Label(
+                day_head, text=text, fg=_CARD_FG, bg=_CARD_BG,
+                font=("Microsoft YaHei UI", 12, "bold"), cursor="hand2",
+            )
+            lbl.bind("<Button-1>", lambda _e: shift_chart_day(delta))
+            lbl.pack(side="left", padx=(0, 4))
+
+        _chev("‹", -1)
+        tk.Label(
+            day_head, textvariable=day_var, fg=_CARD_FG, bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(side="left", padx=(2, 6))
+        _chev("›", 1)
+        today_lbl = tk.Label(day_card, bg=_CARD_BG, bd=0, highlightthickness=0)
+        today_lbl.pack(anchor="w")
+
+        week_card = tk.Frame(charts, bg=_CARD_BG)
+        week_card.grid(row=0, column=1, sticky="nsew", padx=(activity_chart.GAP // 2, 0))
+        tk.Label(
+            week_card, text="这周", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+        week_lbl = tk.Label(week_card, bg=_CARD_BG, bd=0, highlightthickness=0)
+        week_lbl.pack(anchor="w")
+
+        keep_var = tk.IntVar(value=activity.keep_days(self.cfg))
+
+        def on_keep() -> None:
+            activity.set_keep_days(self.cfg, int(keep_var.get()))
+            store.save_config(self.cfg)
+            self._paint_activity_chart(ui)
+
+        keep_row = tk.Frame(sheet, bg=_CARD_BG)
+        keep_row.pack(fill="x", pady=(8, 0))
+        tk.Label(
+            keep_row, text="次数保留", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+        ).pack(side="left", padx=(0, 8))
+        for days_n in activity.KEEP_PRESETS:
+            tk.Radiobutton(
+                keep_row, text=f"{days_n} 天", variable=keep_var, value=days_n, command=on_keep,
+                fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+                activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
+            ).pack(side="left", padx=(0, 8))
+        tk.Label(
+            keep_row, text="点这周某一天，左边改看那天", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+        ).pack(side="right")
 
         cell_bg = "#1e2430"
         entry_bg = "#2a3344"
@@ -2492,6 +2587,9 @@ class WorkTimer:
             "act_on": act_on,
             "today_lbl": today_lbl,
             "week_lbl": week_lbl,
+            "day_var": day_var,
+            "chart_day": date.today(),
+            "keep_var": keep_var,
             "chart_sig": None,
         }
 
@@ -2511,6 +2609,29 @@ class WorkTimer:
 
         bind_chart(today_lbl, "today")
         bind_chart(week_lbl, "week")
+
+        def on_week_click(e) -> None:
+            ww = max(1, week_lbl.winfo_width())
+            wh = max(1, week_lbl.winfo_height())
+            hit = activity_chart.hit_at(
+                ui.get("week_hits") or [],
+                int(e.x * activity_chart.W / ww),
+                int(e.y * activity_chart.H / wh),
+            )
+            raw = str((hit or {}).get("date") or "")
+            if not raw:
+                return
+            try:
+                picked = date.fromisoformat(raw)
+            except ValueError:
+                return
+            today = date.today()
+            if picked > today or picked < today - timedelta(days=activity.keep_days(self.cfg)):
+                return
+            ui["chart_day"] = picked
+            self._paint_activity_chart(ui)
+
+        week_lbl.bind("<Button-1>", on_week_click)
 
         def close() -> None:
             ui["stop"] = True
@@ -2575,6 +2696,7 @@ class WorkTimer:
         ui["fg"] = layered_win.user32.GetForegroundWindow()
         ui["err"].set("")
         ui["anchor"] = date.today()
+        ui["chart_day"] = date.today()
         self._fill_worklog(ui)
         _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=680, near=self._dialog_near())
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
@@ -3859,6 +3981,13 @@ class WorkTimer:
             if theme.kind == "ghost" and self._ghost_ptr is not None:
                 gx, gy = self._ghost_ptr
                 key = f"{key}-gh{gx // 16}-{gy // 16}"
+            if self._hydrate_waiting:
+                blink = int(phase * 2) % 2 == 0
+                shown_title = "该喝水了"
+                big = "点一下"
+                sub = "喝过了再点"
+                accent = theme.warn if blink else theme.big
+                key = f"hydrate-wait-{int(blink)}-{theme.id}-{w}x{h}"
 
             if key == self._last_key:
                 return
@@ -3874,7 +4003,7 @@ class WorkTimer:
                 key = f"{key}-tq{len(thunder_quote)}-{hash(thunder_quote) & 0xFFFF}"
 
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            if kinetic.playing(self._kinetic, phase):
+            if kinetic.playing(self._kinetic, phase) and not self._hydrate_waiting:
                 themes.paint_card(
                     img,
                     w,

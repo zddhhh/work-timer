@@ -85,6 +85,12 @@ def set_interval(cfg: dict, minutes: int, *, now: datetime | None = None) -> int
     return cfg["hydrate"]["interval_min"]
 
 
+def arm(cfg: dict) -> None:
+    """到点后停住，等用户点一下。不重开计时。"""
+    ensure_fields(cfg)
+    cfg["hydrate"]["pending"] = True
+
+
 def reset_anchor(cfg: dict, now: datetime) -> None:
     ensure_fields(cfg)
     cfg["hydrate"]["anchor"] = now.replace(microsecond=0).isoformat(timespec="seconds")

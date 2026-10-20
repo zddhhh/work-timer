@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-KEEP_DAYS = 60
+KEEP_PRESETS = (7, 30, 60, 90)
+DEFAULT_KEEP = 60
 _KEY = "activity"
 
 
@@ -28,9 +29,25 @@ def _book(cfg: dict) -> dict:
     return raw
 
 
+def keep_days(cfg: dict) -> int:
+    raw = _book(cfg).get("keep_days")
+    if raw in KEEP_PRESETS:
+        return int(raw)
+    return DEFAULT_KEEP
+
+
+def set_keep_days(cfg: dict, days: int, *, today: date | None = None) -> int:
+    book = _book(cfg)
+    book["keep_days"] = days if days in KEEP_PRESETS else DEFAULT_KEEP
+    ensure_fields(cfg, today=today)
+    return int(book["keep_days"])
+
+
 def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
     book = _book(cfg)
-    cutoff = (today or date.today()) - timedelta(days=KEEP_DAYS)
+    if book.get("keep_days") not in KEEP_PRESETS:
+        book["keep_days"] = DEFAULT_KEEP
+    cutoff = (today or date.today()) - timedelta(days=int(book["keep_days"]))
     cleaned: dict[str, dict] = {}
     days = book.get("days")
     if not isinstance(days, dict):
