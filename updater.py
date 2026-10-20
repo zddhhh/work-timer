@@ -213,6 +213,15 @@ def _safe_error(e: BaseException) -> str:
     return re.sub(r"https?://\S+", "<url>", text)[:160]
 
 
+def is_network_error(msg: str) -> bool:
+    """检查更新连不上：内网、断网、超时都算。"""
+    low = (msg or "").lower()
+    return any(
+        k in low
+        for k in ("网络", "超时", "timeout", "timed out", "urlopen", "getaddrinfo", "ssl", "unreachable")
+    )
+
+
 def friendly_error(msg: str) -> tuple[str, str]:
     """底层报错 → (标题, 下一步怎么做)。弹窗里不出现 HTTP、sha256、令牌这类词。"""
     low = (msg or "").lower()
@@ -224,7 +233,7 @@ def friendly_error(msg: str) -> tuple[str, str]:
         return "现在没法更新", "过几分钟再试，还不行就到官网下安装包"
     if "http 5" in low:
         return "更新这边有点忙", "过几分钟再试一次"
-    if any(k in low for k in ("网络", "超时", "timeout", "timed out", "urlopen", "getaddrinfo", "ssl", "unreachable")):
+    if is_network_error(msg):
         return "现在连不上网", "检查一下网络，再试一次"
     if "prerelease" in low or "预发布" in msg or "no stable" in low:
         return "正式版还没出", "等正式版发布了再更新"

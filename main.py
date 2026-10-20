@@ -3485,7 +3485,42 @@ class WorkTimer:
 
         def fail(msg: str) -> None:
             head, hint = updater.friendly_error(msg)
+            url = str(self.cfg.get("subscribe_url") or "").strip()
+            if url and updater.is_network_error(msg):
+                finish_subscribe(head, url)
+                return
             finish_idle(head, hint, error=True)
+
+        def finish_subscribe(head: str, url: str) -> None:
+            if not alive():
+                return
+            state["phase"] = "idle"
+            try:
+                bar.stop()
+                bar.pack_forget()
+            except Exception:
+                pass
+            clear_notes()
+            progress.set("")
+            try:
+                progress_lbl.pack_forget()
+            except Exception:
+                pass
+            status.set(head)
+            detail.set("手机扫下面的码，填邮箱。可以只要这一版，也可以以后每版都寄到邮箱。")
+            import qrcode
+
+            code = qrcode.QRCode(border=1, box_size=4, error_correction=qrcode.constants.ERROR_CORRECT_M)
+            code.add_data(url)
+            code.make(fit=True)
+            img = code.make_image(fill_color="#1a1a1a", back_color="#f6f1e8").convert("RGB")
+            img = img.resize((168, 168), Image.NEAREST)
+            photo = ImageTk.PhotoImage(img)
+            slot = tk.Label(notes_box, image=photo, bg=_CARD_BG)
+            slot.image = photo
+            slot.pack(pady=(8, 0))
+            set_btns([("好", on_close, False)])
+            _fit_card(dlg, min_w=300, min_h=320, near=near)
 
         def start_download(info: updater.ReleaseInfo) -> None:
             if not alive():

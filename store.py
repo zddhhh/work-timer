@@ -74,7 +74,11 @@ def load_config() -> dict:
             pass
     path = config_path()
     if not path.exists():
-        return dict(defaults)
+        fresh = dict(defaults)
+        url = _subscribe_url(defaults)
+        if url:
+            fresh["subscribe_url"] = url
+        return fresh
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -92,9 +96,29 @@ def load_config() -> dict:
         merged.pop("ctrl_hide", None)
         merged.pop("esc_disguise", None)
         merged["skin_settings"] = skin_settings.merge(merged.get("skin_settings"))
+        url = _subscribe_url(defaults)
+        if url:
+            merged["subscribe_url"] = url
         return merged
     except json.JSONDecodeError:
         return dict(defaults)
+
+
+def _subscribe_url(defaults: dict) -> str:
+    """报名页地址。打包时写在 update_defaults 里；本机调试可以放 secret，不进用户配置。"""
+    url = str(defaults.get("subscribe_url") or "").strip()
+    if url:
+        return url
+    secret = app_dir() / "update_defaults.secret.json"
+    if not secret.exists():
+        return ""
+    try:
+        data = json.loads(secret.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("subscribe_url") or "").strip()
 
 
 _SAVE_MIN_GAP = 1.0  # 两次落盘最小间隔（秒）；期间的改动合并成一次
@@ -108,6 +132,7 @@ def _write_config(cfg: dict) -> None:
     # 两个 token 都只从 update_defaults(.secret).json / 环境变量进内存，不落用户配置
     out.pop("feedback_token", None)
     out.pop("gitcode_token", None)
+    out.pop("subscribe_url", None)
     path = config_path()
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")

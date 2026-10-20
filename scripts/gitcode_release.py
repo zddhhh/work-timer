@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 新增华境、发激励啦。点发激励啦会跳起来，弹出得了几捆"
+    "- 检查更新连不上网时弹出报名二维码，扫码填邮箱即可收安装包"
 )
 
 
