@@ -39,8 +39,12 @@ def keep_days(cfg: dict) -> int:
 def set_keep_days(cfg: dict, days: int, *, today: date | None = None) -> int:
     book = _book(cfg)
     book["keep_days"] = days if days in KEEP_PRESETS else DEFAULT_KEEP
+    kept = int(book["keep_days"])
     ensure_fields(cfg, today=today)
-    return int(book["keep_days"])
+    import worklog
+
+    worklog.ensure_fields(cfg, today=today, keep_days=kept)
+    return kept
 
 
 def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
@@ -196,7 +200,7 @@ def peak_hours(hours: list[int]) -> tuple[int, int] | None:
 
 def report_text(cfg: dict, d: date) -> str:
     if not enabled(cfg):
-        return "勾选「记录键盘、鼠标次数」后才开始记。只记次数，不记按了哪个键，也不上传。"
+        return "还没开始记。"
     c = counts(cfg, d)
     keys, clicks, wheels = c["keys"], c["clicks"], c["wheels"]
     if keys == 0 and clicks == 0 and wheels == 0:

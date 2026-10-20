@@ -13,7 +13,6 @@ from datetime import date, datetime, timedelta
 
 import flex_time
 
-KEEP_DAYS = 400
 IDLE_LIMIT_SEC = 300
 # 已过应下班点、且距上次活动超过这么久，视为已下班；之后的键鼠活动（如晚上在家用电脑）不再算进当天。
 # 只有最后活动落在应下班前 CLOSE_LEAD_MIN 内（或之后）才封账，下午开长会回来继续干不会被截断。
@@ -102,12 +101,17 @@ def live_elapsed(r: dict, now: datetime, idle_sec: float) -> str | None:
     return fmt_elapsed(int((end - start).total_seconds())) + " · 还在记"
 
 
-def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
+def ensure_fields(cfg: dict, *, today: date | None = None, keep_days: int | None = None) -> None:
+    """来了、走了和键鼠次数留同样久。早于这个范围的天删掉。"""
     raw = cfg.get("worklog")
     if not isinstance(raw, dict):
         cfg["worklog"] = {}
         return
-    cutoff = _key((today or date.today()) - timedelta(days=KEEP_DAYS))
+    if keep_days is None:
+        import activity
+
+        keep_days = activity.keep_days(cfg)
+    cutoff = _key((today or date.today()) - timedelta(days=int(keep_days)))
     cleaned: dict[str, dict] = {}
     for k, v in raw.items():
         if not isinstance(v, dict) or not isinstance(k, str) or k < cutoff:

@@ -26,8 +26,8 @@ POP_SEC = 2.4
 # 原图第 3 帧是残缺的中间张，不用
 _POSE = {
     "idle": (2,),
-    "run": (4, 5, 6),
-    "warn": (4, 5, 6),
+    "run": (4,),
+    "warn": (4,),
     "done": (2,),
 }
 _FRAMES: list[Image.Image] | None = None
@@ -139,8 +139,10 @@ def _knock(im: Image.Image, thresh: int = 40) -> Image.Image:
         if ay0 - 8 <= cy <= ay1 + 8 and cn < _n * 0.85:
             for x, y in cc:
                 kp[x, y] = 255
-    keep = keep.filter(ImageFilter.MaxFilter(5))
-    kp = keep.load()
+    # 只把轮廓上的小缝补上，用来判断哪些黑色在身体里面。补上的那圈本身不画，
+    # 否则人物左右晃时黑边会拖成重影。
+    sealed = keep.filter(ImageFilter.MaxFilter(5))
+    sp = sealed.load()
     outside: set[tuple[int, int]] = set()
     q: deque[tuple[int, int]] = deque()
     for x in range(w):
@@ -151,7 +153,7 @@ def _knock(im: Image.Image, thresh: int = 40) -> Image.Image:
         q.append((w - 1, y))
     while q:
         x, y = q.popleft()
-        if (x, y) in outside or not (0 <= x < w and 0 <= y < h) or kp[x, y]:
+        if (x, y) in outside or not (0 <= x < w and 0 <= y < h) or sp[x, y]:
             continue
         outside.add((x, y))
         q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
@@ -162,9 +164,24 @@ def _knock(im: Image.Image, thresh: int = 40) -> Image.Image:
             if (x, y) in outside:
                 continue
             r, g, b, _a = px[x, y]
-            opx[x, y] = (r, g, b, 255) if max(r, g, b) > thresh else (22, 16, 16, 255)
+            if max(r, g, b) > thresh:
+                opx[x, y] = (r, g, b, 255)
+                continue
+            if _on_fringe(x, y, outside, w, h):
+                continue
+            opx[x, y] = (22, 16, 16, 255)
     box = out.getbbox()
     return out.crop(box) if box else out
+
+
+def _on_fringe(x: int, y: int, outside: set[tuple[int, int]], w: int, h: int) -> bool:
+    """贴着外轮廓两像素以内的黑，是补缝时扩出来的，不是头发裤子。"""
+    for dy in range(-2, 3):
+        for dx in range(-2, 3):
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < w and 0 <= ny < h) or (nx, ny) in outside:
+                return True
+    return False
 
 
 def _load() -> tuple[list[Image.Image], list[int]]:
@@ -259,10 +276,10 @@ def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
     if sw > max_w:
         sw = max_w
         sh = max(1, int(sprite.height * sw / sprite.width))
-    fitted = sprite.resize((sw, sh), Image.Resampling.LANCZOS)
+    fitted = sprite.resize((sw, sh), Image.Resampling.BOX)
     ox = w - sw - max(4, w // 80)
     if stage == "warn" and pop_age(phase) is None:
-        ox += int(math.sin(phase * 16) * max(1, sw // 26))
+        ox += int(math.sin(phase * 5.2) * max(1, sw // 48))
     hop = _hop(stage, phase)
     oy = int(foot - sh - hop * sh * 0.22)
     _shadow(d, ox + sw // 2, foot, int(sw * (1 - 0.25 * hop)))

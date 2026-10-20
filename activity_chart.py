@@ -16,8 +16,8 @@ import activity
 
 W, H = 492, 236
 GAP = 12
-IDLE_READOUT = "移到柱上，看这一小时各是多少"
-WEEK_IDLE = "移到某一天，看这三项各是多少"
+IDLE_READOUT = ""
+WEEK_IDLE = ""
 _WD = "一二三四五六日"
 READOUT = (16, 258, 568, 280)
 _FONT: dict[tuple, ImageFont.ImageFont] = {}
@@ -216,6 +216,8 @@ def _paint_totals(dr: ImageDraw.ImageDraw, w: int, items: tuple) -> None:
 
 
 def _paint_readout(im: Image.Image, text: str, *, active: bool = False) -> None:
+    if not text:
+        return
     w, h = im.size
     x0, y0, x1, y1 = 12, h - 30, w - 12, h - 8
     dr = ImageDraw.Draw(im)
@@ -230,7 +232,7 @@ def _day_text(row: dict) -> str:
     if row.get("future"):
         return f"{head}    还没到"
     if row.get("mode") == "combined":
-        return f"{head}    操作 {activity.fmt_count(row.get('combined') or 0)}（这天还没分开记）"
+        return f"{head}    {activity.fmt_count(row.get('combined') or 0)}"
     if row.get("mode") == "empty":
         return f"{head}    还没记下"
     return (
@@ -243,12 +245,10 @@ def _day_text(row: dict) -> str:
 def _busiest_caption(days: list[dict]) -> str:
     best = None
     best_n = 0
-    combined = 0
     for row in days:
         if row.get("future"):
             continue
         if row.get("mode") == "combined":
-            combined += 1
             n = int(row.get("combined") or 0)
         elif row.get("mode") == "empty":
             n = 0
@@ -260,10 +260,7 @@ def _busiest_caption(days: list[dict]) -> str:
     if best is None:
         return "这周还没记到次数"
     d = best["date"]
-    text = f"最勤 周{_WD[d.weekday()]}"
-    if combined:
-        text += f"  ·  有 {combined} 天只有总次数"
-    return text
+    return f"最勤 周{_WD[d.weekday()]}"
 
 
 def _render_week(
@@ -278,8 +275,7 @@ def _render_week(
     _round(dr, (0, 0, w - 1, h - 1), _PANEL, radius=12)
     hits: list[dict] = []
     if not enabled:
-        _text(dr, (w / 2, h / 2 - 10), "勾选「记录键盘、鼠标次数」后才开始记", size=13, fill=_WHITE, anchor="mm")
-        _text(dr, (w / 2, h / 2 + 12), "只记次数，不记按了哪个键，也不上传", size=11, fill=_MUTED, anchor="mm")
+        _text(dr, (w / 2, h / 2), "还没开始记", size=13, fill=_WHITE, anchor="mm")
         return im, hits
 
     inset = 14
@@ -359,8 +355,7 @@ def render(
     _round(dr, (0, 0, w - 1, h - 1), _PANEL, radius=12)
     hits: list[dict] = []
     if not enabled:
-        _text(dr, (w / 2, h / 2 - 10), "勾选「记录键盘、鼠标次数」后才开始记", size=13, fill=_WHITE, anchor="mm")
-        _text(dr, (w / 2, h / 2 + 12), "只记次数，不记按了哪个键，也不上传", size=11, fill=_MUTED, anchor="mm")
+        _text(dr, (w / 2, h / 2), "还没开始记", size=13, fill=_WHITE, anchor="mm")
         return im, hits
 
     inset = 14

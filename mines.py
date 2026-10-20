@@ -272,11 +272,8 @@ def open_games(
         conceal()
         clear()
         title = tk.Label(host, text="小游戏", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
-        title.pack(anchor="w", padx=18, pady=(16, 4))
+        title.pack(anchor="w", padx=18, pady=(16, 12))
         drag_on(title)
-        sub = tk.Label(host, text="隐藏键同样把这个窗口收起来。没玩完的一局关了还能接着。", fg=muted, bg=bg, font=("Microsoft YaHei UI", 9))
-        sub.pack(anchor="w", padx=18, pady=(0, 12))
-        drag_on(sub)
         for game in GAMES:
             going = (
                 (game["id"] == "mines" and mines_in_progress())

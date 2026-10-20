@@ -2041,10 +2041,6 @@ class WorkTimer:
         tk.Label(
             body, text="用户反馈", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(anchor="w", pady=(14, 4))
-        tk.Label(
-            body, text="发到官方仓库 Issue，我们可随时拉下来看。",
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w")
         title_var = tk.StringVar()
         tk.Label(body, text="标题", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9)).pack(
             anchor="w", pady=(8, 0)
@@ -2055,7 +2051,7 @@ class WorkTimer:
         ).pack(anchor="w", ipady=5, fill="x")
         contact_var = tk.StringVar(value=str(self.cfg.get("feedback_contact") or ""))
         tk.Label(
-            body, text="联系方式（邮箱 / 微信，方便我们回复你；会记住）",
+            body, text="联系方式",
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
         ).pack(anchor="w", pady=(8, 0))
         tk.Entry(
@@ -2082,7 +2078,7 @@ class WorkTimer:
                 err.set("请填写标题或内容")
                 return
             if not contact:
-                err.set("请留一个联系方式，不然我们没法回复你")
+                err.set("请填写联系方式")
                 return
             busy["v"] = True
             err.set("正在提交…")
@@ -2121,12 +2117,7 @@ class WorkTimer:
         _pack_err_line(body, err, wrap=360)
         tk.Label(
             body, text="皮肤设置", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(pady=(16, 4), anchor="w")
-        tk.Label(
-            body,
-            text="各特效皮肤的个性化选项；后续新皮肤也会集中在这里。",
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), wraplength=360, justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(pady=(16, 10), anchor="w")
 
         th_frame = tk.Frame(body, bg="#1e2430", highlightthickness=1, highlightbackground="#2a3140")
         th_frame.pack(fill="x", pady=(0, 8))
@@ -2137,7 +2128,7 @@ class WorkTimer:
         ).pack(anchor="w")
         tk.Label(
             th_inner,
-            text="点击台词（留空则不显示单字彩蛋，劈雷与电涌仍保留）",
+            text="点击台词",
             fg=_CARD_MUTED, bg="#1e2430", font=("Microsoft YaHei UI", 9), wraplength=340, justify="left",
         ).pack(anchor="w", pady=(4, 2))
         quote_var = tk.StringVar(value=skin_settings.thunder_quote(self.cfg))
@@ -2156,7 +2147,7 @@ class WorkTimer:
             store.save_config(self.cfg)
             self._thunder_quote_step = 0
             self._last_key = ""
-            err.set("已保存" if new_q else "已保存（未启用点击字效）")
+            err.set("已保存")
 
         _card_btn(bar, "保存", save, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
@@ -2173,12 +2164,7 @@ class WorkTimer:
         _pack_err_line(body, err, wrap=360)
         tk.Label(
             body, text="按键隐藏", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(pady=(16, 4), anchor="w")
-        tk.Label(
-            body,
-            text="单击指定按键可快速隐藏/显示计时窗。建议用 `、F12 等；Ctrl/Alt 易与组合键冲突。",
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), wraplength=360, justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(pady=(16, 10), anchor="w")
 
         box = tk.Frame(body, bg="#1e2430", highlightthickness=1, highlightbackground="#2a3140")
         box.pack(fill="x", pady=(0, 8))
@@ -2198,7 +2184,7 @@ class WorkTimer:
         key_lbl.pack(anchor="w", pady=(4, 8))
         tk.Label(
             inner,
-            text="在下方按下新按键以替换",
+            text="按下要换成的键",
             fg=_CARD_MUTED,
             bg="#1e2430",
             font=("Microsoft YaHei UI", 9),
@@ -2256,12 +2242,7 @@ class WorkTimer:
         body.pack(side="top", fill="both", expand=True, padx=18)
         tk.Label(
             body, text="喝水提醒", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(pady=(16, 4), anchor="w")
-        tk.Label(
-            body,
-            text="到点后卡片停在「该喝水了」，点一下才算喝过，下一轮从这一下开始。离开座位、开会隐藏窗口、过了下班点都不会催。",
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), wraplength=360, justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(pady=(16, 10), anchor="w")
         interval_var = tk.IntVar(value=hydrate.interval_min(self.cfg))
         box = tk.Frame(body, bg=_CARD_BG)
         box.pack(anchor="w")
@@ -2342,31 +2323,54 @@ class WorkTimer:
 
     def _fill_worklog(self, ui: dict) -> None:
         today = date.today()
-        days = worklog.week_dates(ui["anchor"])
+        earliest = today - timedelta(days=activity.keep_days(self.cfg))
+        week = worklog.week_dates(ui["anchor"])
+        if week[0] > today or week[-1] < earliest:
+            ui["anchor"] = today
+            week = worklog.week_dates(today)
+        days = week
         ui["week_var"].set(f"{days[0].month}/{days[0].day} – {days[-1].month}/{days[-1].day}")
+        self._sync_week_nav(ui, today, earliest)
         ui["edits"].clear()
         rows = []
-        for d, slot in zip(days, ui["slots"]):
+        for i, (d, slot) in enumerate(zip(days, ui["slots"])):
+            too_old = d < earliest
             r = worklog.row(self.cfg, d, today=today)
             rows.append(r)
-            label = f"{d.month}/{d.day} 周{worklog.WEEKDAY_CN[d.weekday()]}"
+            label = f"{d.month}/{d.day}  周{worklog.WEEKDAY_CN[d.weekday()]}"
             if d == today:
-                label += " · 今天"
+                label += "  今天"
+            if too_old:
+                fg = "#3a4150"
+            elif d == today:
+                fg = "#9ecbff"
+            elif d.weekday() < 5:
+                fg = _CARD_FG
+            else:
+                fg = _CARD_MUTED
             slot["date"].configure(
                 text=label,
-                fg=_CARD_FG if d.weekday() < 5 else _CARD_MUTED,
+                fg=fg,
                 font=("Microsoft YaHei UI", 10, "bold" if d == today else "normal"),
             )
-            out_s = worklog.fmt_clock(r["out"])
+            out_s = "" if too_old else worklog.fmt_clock(r["out"])
             slot["auto_out"] = out_s
-            slot["vin"].set(worklog.fmt_clock(r["in"]))
+            slot["vin"].set("" if too_old else worklog.fmt_clock(r["in"]))
             slot["vout"].set(out_s)
-            state = "disabled" if d > today else "normal"
+            state = "disabled" if d > today or too_old else "normal"
             slot["ein"].configure(state=state)
             slot["eout"].configure(state=state)
-            slot["dur"].configure(text=self._worklog_dur_text(r, datetime.now()))
-            slot["diff"].configure(text=worklog.fmt_diff(r["diff"]), fg=self._worklog_diff_fg(r["diff"]))
-            row_bg = "#243044" if d == today else "#1e2430"
+            slot["dur"].configure(text="" if too_old else self._worklog_dur_text(r, datetime.now()))
+            slot["diff"].configure(
+                text="" if too_old else worklog.fmt_diff(r["diff"]),
+                fg=self._worklog_diff_fg(None if too_old else r["diff"]),
+            )
+            if d == today:
+                row_bg = "#243044"
+            elif i % 2:
+                row_bg = "#1b212d"
+            else:
+                row_bg = "#202634"
             for w in (slot["date"], slot["dur"], slot["diff"]):
                 w.configure(bg=row_bg)
             slot["ein"].configure(disabledbackground=row_bg)
@@ -2419,9 +2423,31 @@ class WorkTimer:
             focus=focus,
         )
 
+    def _sync_week_nav(self, ui: dict, today: date, earliest: date) -> None:
+        week = worklog.week_dates(ui["anchor"])
+        can_prev = week[0] - timedelta(days=1) >= earliest
+        can_next = week[0] + timedelta(days=7) <= today
+        here = week[0] <= today <= week[-1]
+        on, off = _CARD_FG, "#3a4150"
+
+        def paint(widget: tk.Widget | None, ok: bool, accent: bool = False) -> None:
+            if widget is None:
+                return
+            if accent:
+                fg = _CARD_MUTED if ok else _CARD_ACCENT
+                cursor = "arrow" if ok else "hand2"
+            else:
+                fg = on if ok else off
+                cursor = "hand2" if ok else "arrow"
+            widget.configure(fg=fg, cursor=cursor)
+
+        paint(ui.get("week_prev"), can_prev)
+        paint(ui.get("week_next"), can_next)
+        paint(ui.get("week_home"), here, accent=True)
+
     def _build_worklog_dialog(self) -> dict:
         pair_w = activity_chart.W * 2 + activity_chart.GAP
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=720)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=830)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(6, 14))
         body = tk.Frame(dlg, bg=_CARD_BG)
@@ -2429,7 +2455,7 @@ class WorkTimer:
         err = tk.StringVar(value="")
         _pack_err_line(body, err, wrap=pair_w)
         top = tk.Frame(body, bg=_CARD_BG)
-        top.pack(fill="x", pady=(12, 8))
+        top.pack(fill="x", pady=(8, 6))
         tk.Label(
             top, text="工时账本", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(side="left")
@@ -2438,13 +2464,6 @@ class WorkTimer:
         nav.pack(side="right")
         sheet = tk.Frame(body, bg=_CARD_BG)
         sheet.pack(anchor="w")
-        hint = tk.Frame(sheet, bg=_CARD_BG, width=pair_w)
-        hint.pack(fill="x", pady=(0, 8))
-        tk.Label(
-            hint,
-            text="来了、走了填钟点，例如 8:30。待了多久是时长，不是钟点。两格都清空，这一天就删掉。",
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), anchor="w",
-        ).pack(side="left")
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
 
         def toggle_act() -> None:
@@ -2504,75 +2523,88 @@ class WorkTimer:
 
         keep_var = tk.IntVar(value=activity.keep_days(self.cfg))
 
-        def on_keep() -> None:
-            activity.set_keep_days(self.cfg, int(keep_var.get()))
-            store.save_config(self.cfg)
-            self._paint_activity_chart(ui)
+        keep_btns: dict[int, tk.Label] = {}
 
-        count_row = tk.Frame(sheet, bg=_CARD_BG)
-        count_row.pack(fill="x", pady=(8, 0))
+        def _style_keep() -> None:
+            cur = activity.keep_days(self.cfg)
+            for n, btn in keep_btns.items():
+                on = n == cur
+                btn.configure(
+                    bg=_CARD_ACCENT if on else "#222733",
+                    fg="white" if on else _CARD_MUTED,
+                    font=("Microsoft YaHei UI", 9, "bold" if on else "normal"),
+                )
+
+        def on_keep(days_n: int) -> None:
+            keep_var.set(days_n)
+            activity.set_keep_days(self.cfg, days_n)
+            store.save_config(self.cfg)
+            _style_keep()
+            today = date.today()
+            earliest = today - timedelta(days=activity.keep_days(self.cfg))
+            week = worklog.week_dates(ui["anchor"])
+            if week[-1] < earliest or week[0] > today:
+                ui["anchor"] = today
+            focus = ui.get("chart_day") or today
+            if focus < earliest or focus > today:
+                ui["chart_day"] = today if today >= earliest else earliest
+            self._fill_worklog(ui)
+
+        tool = tk.Frame(sheet, bg=_CARD_BG)
+        tool.pack(fill="x", pady=(8, 0))
         tk.Checkbutton(
-            count_row, text="记录键盘、鼠标次数", variable=act_on, command=toggle_act,
+            tool, text="记录键盘、鼠标次数", variable=act_on, command=toggle_act,
             fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left")
+        picks = tk.Frame(tool, bg=_CARD_BG)
+        picks.pack(side="right")
         tk.Label(
-            count_row,
-            text="只数敲了几下、点了几次、滚了几格，不记按了哪个键。关掉后，上面两张图不再增加。",
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), anchor="w",
-            wraplength=pair_w - 220, justify="left",
-        ).pack(side="left", padx=(8, 0))
-
-        keep_row = tk.Frame(sheet, bg=_CARD_BG)
-        keep_row.pack(fill="x", pady=(4, 0))
-        tk.Label(
-            keep_row, text="这些次数留多久", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            picks, text="留多久", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
         ).pack(side="left", padx=(0, 8))
         for days_n in activity.KEEP_PRESETS:
-            tk.Radiobutton(
-                keep_row, text=f"最近 {days_n} 天", variable=keep_var, value=days_n, command=on_keep,
-                fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
-                activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
-            ).pack(side="left", padx=(0, 8))
-        tk.Label(
-            sheet,
-            text="改短会删掉更早的次数，来了、走了的记录不动。点「这周每天」里的某一天，左边换成那天每小时的图。",
-            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), anchor="w", wraplength=pair_w, justify="left",
-        ).pack(fill="x", pady=(2, 0))
+            btn = tk.Label(
+                picks, text=f"{days_n} 天", fg=_CARD_MUTED, bg="#222733",
+                font=("Microsoft YaHei UI", 9), cursor="hand2", padx=10, pady=2,
+            )
+            btn.pack(side="left", padx=(0, 4))
+            btn.bind("<Button-1>", lambda _e, n=days_n: on_keep(n))
+            keep_btns[days_n] = btn
+        _style_keep()
 
-        cell_bg = "#1e2430"
+        head_bg = "#191e28"
         entry_bg = "#2a3344"
-        table = tk.Frame(sheet, bg=cell_bg, highlightthickness=1, highlightbackground="#2a3140")
-        table.pack(fill="x", pady=(12, 0))
-        for c, (text, wide) in enumerate((("日期", 132), ("来了", 78), ("走了", 78), ("待了多久", 108), ("比该走", 92))):
+        table = tk.Frame(sheet, bg=head_bg, highlightthickness=1, highlightbackground="#2c3444")
+        table.pack(fill="x", pady=(10, 0))
+        for c, (text, wide) in enumerate((("日期", 148), ("来了", 78), ("走了", 78), ("待了多久", 120), ("比该走", 100))):
             table.columnconfigure(c, minsize=wide, weight=2 if c == 0 else 1)
             tk.Label(
-                table, text=text, fg=_CARD_MUTED, bg=cell_bg, font=("Microsoft YaHei UI", 9),
-            ).grid(row=0, column=c, sticky="w", padx=(12 if c == 0 else 6, 6), pady=(8, 4))
+                table, text=text, fg=_CARD_MUTED, bg=head_bg, font=("Microsoft YaHei UI", 9),
+            ).grid(row=0, column=c, sticky="w", padx=(14 if c == 0 else 8, 6), pady=(8, 6))
         slots = []
         for i in range(1, 8):
-            date_lbl = tk.Label(table, text="", fg=_CARD_FG, bg=cell_bg, font=("Microsoft YaHei UI", 10), anchor="w")
-            date_lbl.grid(row=i, column=0, sticky="ew", padx=(12, 6), pady=2)
+            date_lbl = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
+            date_lbl.grid(row=i, column=0, sticky="ew", padx=(14, 6), pady=3)
             vin = tk.StringVar()
             vout = tk.StringVar()
             ein = tk.Entry(
                 table, textvariable=vin, width=6, font=("Consolas", 11), justify="center",
                 bg=entry_bg, fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
-                disabledbackground=cell_bg, disabledforeground=_CARD_MUTED,
+                highlightthickness=0, disabledbackground="#202634", disabledforeground=_CARD_MUTED,
             )
             eout = tk.Entry(
                 table, textvariable=vout, width=6, font=("Consolas", 11), justify="center",
                 bg=entry_bg, fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
-                disabledbackground=cell_bg, disabledforeground=_CARD_MUTED,
+                highlightthickness=0, disabledbackground="#202634", disabledforeground=_CARD_MUTED,
             )
-            ein.grid(row=i, column=1, padx=6, pady=2, ipady=1)
-            eout.grid(row=i, column=2, padx=6, pady=2, ipady=1)
-            dur = tk.Label(table, text="", fg=_CARD_FG, bg=cell_bg, font=("Microsoft YaHei UI", 10), anchor="w")
-            diff = tk.Label(table, text="", fg=_CARD_MUTED, bg=cell_bg, font=("Microsoft YaHei UI", 10), anchor="w")
-            dur.grid(row=i, column=3, sticky="ew", padx=6)
-            diff.grid(row=i, column=4, sticky="ew", padx=(6, 12))
+            ein.grid(row=i, column=1, sticky="w", padx=8, pady=3, ipady=2)
+            eout.grid(row=i, column=2, sticky="w", padx=8, pady=3, ipady=2)
+            dur = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
+            diff = tk.Label(table, text="", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
+            dur.grid(row=i, column=3, sticky="ew", padx=8)
+            diff.grid(row=i, column=4, sticky="ew", padx=(8, 14))
             slots.append({"date": date_lbl, "vin": vin, "vout": vout, "ein": ein, "eout": eout, "dur": dur, "diff": diff})
-        tk.Frame(table, bg=cell_bg, height=6).grid(row=8, column=0)
+        tk.Frame(table, bg=head_bg, height=8).grid(row=8, column=0, columnspan=5, sticky="ew")
         week_sum = tk.StringVar()
         month_sum = tk.StringVar()
         tk.Label(
@@ -2655,7 +2687,20 @@ class WorkTimer:
         def shift(days: int) -> None:
             if not self._worklog_apply(ui):
                 return
-            ui["anchor"] = ui["anchor"] + timedelta(days=days) if days else date.today()
+            today = date.today()
+            earliest = today - timedelta(days=activity.keep_days(self.cfg))
+            nxt = today if not days else ui["anchor"] + timedelta(days=days)
+            week = worklog.week_dates(nxt)
+            if week[-1] < earliest or week[0] > today:
+                return
+            if not days:
+                ui["chart_day"] = today
+            else:
+                focus = ui.get("chart_day") or today
+                if focus < week[0] or focus > week[-1]:
+                    pick = min(today, week[-1])
+                    ui["chart_day"] = earliest if pick < earliest else pick
+            ui["anchor"] = nxt
             err.set("")
             self._fill_worklog(ui)
 
@@ -2686,12 +2731,26 @@ class WorkTimer:
                 return
             err.set(f"已导出 {m.month} 月：{path}")
 
-        _card_btn(nav, "‹", lambda: shift(-7)).pack(side="left")
-        tk.Label(nav, textvariable=week_var, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold")).pack(
-            side="left", padx=10
+        def _week_chev(text: str, days: int, key: str) -> None:
+            lbl = tk.Label(
+                nav, text=text, fg=_CARD_FG, bg=_CARD_BG,
+                font=("Microsoft YaHei UI", 14, "bold"), cursor="hand2",
+            )
+            lbl.bind("<Button-1>", lambda _e: shift(days))
+            lbl.pack(side="left", padx=(8 if key == "week_next" else 0, 0))
+            ui[key] = lbl
+
+        _week_chev("‹", -7, "week_prev")
+        tk.Label(
+            nav, textvariable=week_var, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
+        ).pack(side="left", padx=8)
+        _week_chev("›", 7, "week_next")
+        home = tk.Label(
+            nav, text="本周", fg=_CARD_ACCENT, bg=_CARD_BG, font=("Microsoft YaHei UI", 9), cursor="hand2",
         )
-        _card_btn(nav, "›", lambda: shift(7)).pack(side="left", padx=(0, 8))
-        _card_btn(nav, "本周", lambda: shift(0)).pack(side="left")
+        home.bind("<Button-1>", lambda _e: shift(0))
+        home.pack(side="left", padx=(12, 0))
+        ui["week_home"] = home
         _card_btn(bar, "保存修改", save, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "导出本月 CSV…", export).pack(side="left", padx=6)
         _card_btn(bar, "关闭", close).pack(side="left", padx=6)
@@ -2708,7 +2767,7 @@ class WorkTimer:
         ui["anchor"] = date.today()
         ui["chart_day"] = date.today()
         self._fill_worklog(ui)
-        _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=680, near=self._dialog_near())
+        _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=830, near=self._dialog_near())
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
 
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
@@ -3639,7 +3698,7 @@ class WorkTimer:
                 finish_subscribe(
                     head,
                     url,
-                    "更新服务这会儿有点忙。可以过几分钟再试，也可以扫下面的码，把安装包寄到邮箱。",
+                    "这会儿有点忙。过几分钟再试，或扫下面的码。",
                 )
                 return
             finish_idle(head, hint, error=True)
@@ -3660,7 +3719,7 @@ class WorkTimer:
             except Exception:
                 pass
             status.set(head)
-            detail.set(detail_text or "手机扫下面的码，填邮箱。可以只要这一版，也可以以后每版都寄到邮箱。")
+            detail.set(detail_text or "扫下面的码，把安装包寄到邮箱。")
             import qrcode
 
             code = qrcode.QRCode(border=1, box_size=4, error_correction=qrcode.constants.ERROR_CORRECT_M)
@@ -3689,7 +3748,7 @@ class WorkTimer:
             except Exception:
                 pass
             status.set("正在下载新版本…")
-            detail.set("下完会自己装上。日程、备忘和设置都还在。")
+            detail.set("下完会自己装上。")
             progress.set("")
             set_btns([("取消", on_close, False)])
             try:
@@ -3754,7 +3813,7 @@ class WorkTimer:
                     elif kind == "ok":
                         path = done_box[0][1]
                         status.set("正在安装，马上就好")
-                        detail.set("窗口会关一下再打开，日程和设置不会丢。")
+                        detail.set("窗口会关一下再打开。")
                         progress.set("下载完成")
                         bar.configure(value=100)
                         _fit_card(dlg, min_w=320, min_h=168, near=near)

@@ -1582,6 +1582,27 @@ class WorklogTests(unittest.TestCase):
         worklog.ensure_fields(cfg, today=self.D.date())
         self.assertEqual(cfg["worklog"], {"2026-10-08": {"in": 540, "src": "flex"}})
 
+    def test_arrival_follows_the_same_keep_as_counts(self):
+        import activity
+
+        today = date(2026, 10, 19)
+        cfg = {
+            "worklog": {
+                "2026-10-19": {"in": 540, "out": 1080},
+                "2026-08-20": {"in": 540, "out": 1080},
+                "2026-08-19": {"in": 540, "out": 1080},
+            }
+        }
+        worklog.ensure_fields(cfg, today=today)
+        self.assertIn("2026-10-19", cfg["worklog"])
+        self.assertIn("2026-08-20", cfg["worklog"])
+        self.assertNotIn("2026-08-19", cfg["worklog"])
+        cfg["worklog"]["2026-10-12"] = {"in": 540, "out": 1080}
+        cfg["worklog"]["2026-10-11"] = {"in": 500, "out": 1000}
+        self.assertEqual(activity.set_keep_days(cfg, 7, today=today), 7)
+        self.assertIn("2026-10-12", cfg["worklog"])
+        self.assertNotIn("2026-10-11", cfg["worklog"])
+
 
 class ActivityTests(unittest.TestCase):
     def test_counts_and_report_without_storing_keys(self):

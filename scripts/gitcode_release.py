@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时账本的开关写明了：记的是键盘鼠标次数，留多久只影响这些次数"
+    "- 来了、走了和键鼠次数留同样的天数；发激励啦左右晃不再拖重影"
 )
 
 
