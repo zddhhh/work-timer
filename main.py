@@ -2396,14 +2396,17 @@ class WorkTimer:
             return
         today = date.today()
         days = worklog.week_dates(ui["anchor"])
-        keep = activity.keep_days(self.cfg)
+        lo, hi = self._week_day_bounds(ui, today)
         focus = ui.get("chart_day") or today
-        if focus > today:
-            focus = today
-        earliest = today - timedelta(days=keep)
-        if focus < earliest:
-            focus = earliest
+        if focus > hi:
+            focus = hi
+        if focus < lo:
+            focus = lo
         ui["chart_day"] = focus
+        off = "#3a4150"
+        for widget, ok in ((ui.get("day_prev"), focus > lo), (ui.get("day_next"), focus < hi)):
+            if widget is not None:
+                widget.configure(fg=_CARD_FG if ok else off, cursor="hand2" if ok else "arrow")
         day_var = ui.get("day_var")
         if day_var is not None:
             if focus == today:
@@ -2422,6 +2425,16 @@ class WorkTimer:
             this_week=days[0] <= today <= days[-1],
             focus=focus,
         )
+
+    def _week_day_bounds(self, ui: dict, today: date) -> tuple[date, date]:
+        """左边按天翻，只在当前选中的这一周里，而且不超过今天。"""
+        week = worklog.week_dates(ui["anchor"])
+        earliest = today - timedelta(days=activity.keep_days(self.cfg))
+        lo = max(week[0], earliest)
+        hi = min(week[-1], today)
+        if hi < lo:
+            hi = lo
+        return lo, hi
 
     def _sync_week_nav(self, ui: dict, today: date, earliest: date) -> None:
         week = worklog.week_dates(ui["anchor"])
@@ -2483,10 +2496,10 @@ class WorkTimer:
 
         def shift_chart_day(delta: int) -> None:
             today = date.today()
-            keep = activity.keep_days(self.cfg)
+            lo, hi = self._week_day_bounds(ui, today)
             cur = ui.get("chart_day") or today
             nxt = cur + timedelta(days=delta)
-            if nxt < today - timedelta(days=keep) or nxt > today:
+            if nxt < lo or nxt > hi:
                 return
             ui["chart_day"] = nxt
             self._paint_activity_chart(ui)
@@ -2496,20 +2509,23 @@ class WorkTimer:
         day_head = tk.Frame(day_card, bg=_CARD_BG)
         day_head.pack(fill="x", pady=(0, 4))
 
-        def _chev(text: str, delta: int) -> None:
+        day_nav: dict[str, tk.Label] = {}
+
+        def _chev(text: str, delta: int, key: str) -> None:
             lbl = tk.Label(
                 day_head, text=text, fg=_CARD_FG, bg=_CARD_BG,
                 font=("Microsoft YaHei UI", 12, "bold"), cursor="hand2",
             )
             lbl.bind("<Button-1>", lambda _e: shift_chart_day(delta))
             lbl.pack(side="left", padx=(0, 4))
+            day_nav[key] = lbl
 
-        _chev("‹", -1)
+        _chev("‹", -1, "prev")
         tk.Label(
             day_head, textvariable=day_var, fg=_CARD_FG, bg=_CARD_BG,
             font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(side="left", padx=(2, 6))
-        _chev("›", 1)
+        _chev("›", 1, "next")
         today_lbl = tk.Label(day_card, bg=_CARD_BG, bd=0, highlightthickness=0)
         today_lbl.pack(anchor="w")
 
@@ -2631,6 +2647,8 @@ class WorkTimer:
             "week_lbl": week_lbl,
             "day_var": day_var,
             "chart_day": date.today(),
+            "day_prev": day_nav.get("prev"),
+            "day_next": day_nav.get("next"),
             "keep_var": keep_var,
             "chart_sig": None,
         }
@@ -2668,7 +2686,8 @@ class WorkTimer:
             except ValueError:
                 return
             today = date.today()
-            if picked > today or picked < today - timedelta(days=activity.keep_days(self.cfg)):
+            lo, hi = self._week_day_bounds(ui, today)
+            if picked < lo or picked > hi:
                 return
             ui["chart_day"] = picked
             self._paint_activity_chart(ui)

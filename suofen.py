@@ -23,13 +23,7 @@ _PAY = (
     "这回{n}捆",
 )
 POP_SEC = 2.4
-# 原图第 3 帧是残缺的中间张，不用
-_POSE = {
-    "idle": (2,),
-    "run": (4,),
-    "warn": (4,),
-    "done": (2,),
-}
+# 原图第 3 帧是残缺的中间张，不用。4、5、6 几乎是同一张，来回切会看成重影。
 _FRAMES: list[Image.Image] | None = None
 _DURS: list[int] | None = None
 _pop_at: float | None = None
@@ -65,13 +59,9 @@ def pop_age(now: float) -> float | None:
 def fps(stage: str, now: float) -> int:
     if callout(now):
         return 30
-    if stage == "warn":
-        return 24
     if stage == "done":
         return 20
-    if stage == "run":
-        return 18
-    return 12
+    return 16
 
 
 def _ambient(stage: str, phase: float) -> str:
@@ -217,36 +207,42 @@ def _at(frames: list[Image.Image], idx: int) -> Image.Image:
     return frames[idx if idx < len(frames) else 0]
 
 
+# 常驻一轮：抱着红包 → 侧过脸笑一下 → 再抱着 → 把红包举起来。
+# 用差得开的姿势，不左右滑同一张图，避免又拖出重影。
+_LOOP = 7.2
+
+
+def _resident_frame(phase: float) -> int:
+    cyc = phase % _LOOP
+    if 2.3 <= cyc < 3.9:
+        return 1
+    if 5.0 <= cyc < 6.35:
+        return 2
+    return 4
+
+
 def _pose(stage: str, phase: float) -> Image.Image | None:
     frames, _durs = _load()
     if not frames:
         return None
-    if pop_age(phase) is not None:
+    if pop_age(phase) is not None or stage == "done":
         return _at(frames, 2)
-    if stage == "idle":
-        cyc = phase % 6.5
-        if 5.3 < cyc < 6.05:
-            return _at(frames, 1)
-        if 1.6 < cyc < 2.35:
-            return _at(frames, 2)
-        return _at(frames, 4)
-    if stage == "done":
-        return _at(frames, 2)
-    seq = tuple(i for i in _POSE.get(stage, _POSE["run"]) if i < len(frames)) or (0,)
-    step = 0.18 if stage == "warn" else 0.32
-    return frames[seq[int(phase / step) % len(seq)]]
+    return _at(frames, _resident_frame(phase))
 
 
 def _hop(stage: str, phase: float) -> float:
-    """跳起的高度，按身高原比例。平时隔一会儿跺一下，点中就跳高。"""
+    """跳起的高度，按身高原比例。举起红包时垫一下，点中就跳高。"""
     age = pop_age(phase)
     if age is not None and age < 0.62:
         return math.sin(age / 0.62 * math.pi)
-    if stage == "idle":
+    if stage == "done":
+        cyc = phase % 3.2
+        if cyc < 0.34:
+            return math.sin(cyc / 0.34 * math.pi) * 0.16
         return 0.0
-    cyc = phase % (2.2 if stage == "warn" else 3.2)
-    if cyc < 0.34:
-        return math.sin(cyc / 0.34 * math.pi) * (0.28 if stage == "warn" else 0.16)
+    cyc = phase % _LOOP
+    if 5.0 <= cyc < 5.72:
+        return math.sin((cyc - 5.0) / 0.72 * math.pi) * 0.2
     return 0.0
 
 
@@ -277,11 +273,12 @@ def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
         sw = max_w
         sh = max(1, int(sprite.height * sw / sprite.width))
     fitted = sprite.resize((sw, sh), Image.Resampling.BOX)
-    ox = w - sw - max(4, w // 80)
-    if stage == "warn" and pop_age(phase) is None:
-        ox += int(math.sin(phase * 5.2) * max(1, sw // 48))
+    # 身体中线固定在右侧。侧脸、举红包换姿势时人还站在原地。
+    cx = w - max(10, int(w * 0.16))
+    ox = max(4, min(w - sw - 4, cx - sw // 2))
     hop = _hop(stage, phase)
-    oy = int(foot - sh - hop * sh * 0.22)
+    breathe = 0 if pop_age(phase) is not None or stage == "done" else int(math.sin(phase * 1.6) * max(1, sh // 90))
+    oy = int(foot - sh - hop * sh * 0.22 - breathe)
     _shadow(d, ox + sw // 2, foot, int(sw * (1 - 0.25 * hop)))
     if stage == "done" and pop_age(phase) is None:
         _toss(d, ox, oy, sw, sh, phase)

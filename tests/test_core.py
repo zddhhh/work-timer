@@ -266,6 +266,8 @@ class MeowTests(unittest.TestCase):
         suofen.poke(200.0)
         self.assertIn("捆", suofen.callout(200.2) or "")
         self.assertIsNone(suofen.callout(200.0 + suofen.POP_SEC + 0.1))
+        sizes = {suofen._pose("run", t).size for t in (0.2, 3.0, 5.4)}
+        self.assertGreaterEqual(len(sizes), 3)
 
     def test_paint_all_stages_and_sizes(self):
         import meow
