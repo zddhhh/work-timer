@@ -94,12 +94,41 @@ def patch_legacy_proxy() -> None:
     urllib.request._wt_proxy_patched = True
 
 
+def _retryable(exc: BaseException) -> bool:
+    """断网那种别连着重试；刚恢复网络时的连接被掐断、服务繁忙，再试一次。"""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in (429, 502, 503, 504)
+    if isinstance(exc, urllib.error.URLError):
+        low = str(getattr(exc, "reason", exc)).lower()
+        offline = ("getaddrinfo", "timed out", "timeout", "unreachable", "10051", "10065", "network is unreachable")
+        return not any(k in low for k in offline)
+    return False
+
+
+def _urlopen(req: urllib.request.Request, timeout: float):
+    last: BaseException | None = None
+    for attempt in range(3):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except Exception as e:
+            last = e
+            if isinstance(e, urllib.error.HTTPError):
+                try:
+                    e.close()
+                except Exception:
+                    pass
+            if attempt >= 2 or not _retryable(e):
+                raise
+            time.sleep(1.0 if attempt == 0 else 2.0)
+    raise last  # pragma: no cover
+
+
 def _http_get_json(url: str, token: str = "", *, timeout: float = 10.0) -> object:
     headers = {"User-Agent": f"WorkTimer/{APP_VERSION}", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _urlopen(req, timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -115,7 +144,7 @@ def _http_download(
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
+        with _urlopen(req, 120) as resp, open(dest, "wb") as f:
             total = 0
             try:
                 total = int(resp.headers.get("Content-Length") or 0)
@@ -213,6 +242,12 @@ def _safe_error(e: BaseException) -> str:
     return re.sub(r"https?://\S+", "<url>", text)[:160]
 
 
+def is_busy_error(msg: str) -> bool:
+    """更新接口次数用完了。网络是通的，过一会儿就能查。"""
+    low = (msg or "").lower()
+    return "http 429" in low or "too many requests" in low or "invokes this api is too large" in low
+
+
 def is_network_error(msg: str) -> bool:
     """检查更新连不上：内网、断网、超时都算。"""
     low = (msg or "").lower()
@@ -231,7 +266,7 @@ def friendly_error(msg: str) -> tuple[str, str]:
         return "暂时还没有新版本", "过一会儿再试试"
     if "http 401" in low or "http 403" in low:
         return "现在没法更新", "过几分钟再试，还不行就到官网下安装包"
-    if "http 5" in low:
+    if "http 5" in low or is_busy_error(msg):
         return "更新这边有点忙", "过几分钟再试一次"
     if is_network_error(msg):
         return "现在连不上网", "检查一下网络，再试一次"

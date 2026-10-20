@@ -48,10 +48,12 @@ def main_handler(event, context):
         try:
             return _fanout()
         except Exception as e:  # noqa: BLE001
+            _log_error(e)
             return f"群发失败：{_public_error(e)}"
     try:
         return _http(event)
     except Exception as e:  # noqa: BLE001
+        _log_error(e)
         return _html(200, _message_html("没寄成", _public_error(e)))
 
 
@@ -68,6 +70,8 @@ def _http(event: dict) -> dict:
     if method == "OPTIONS":
         return _html(204, "")
     if method == "GET":
+        if query_params(event).get("meta") == "1":
+            return _meta()
         return _html(200, _form(sender=_sender()))
     if method != "POST":
         return _html(405, _message_html("不支持", "用报名页提交。"))
@@ -286,9 +290,54 @@ def _esc(text: str) -> str:
 
 def _public_error(e: BaseException) -> str:
     text = str(e) or e.__class__.__name__
+    low = text.lower()
     if "554" in text:
         return "邮箱把这封信退了，过一会儿再试。"
+    if "429" in text or "too many" in low or "invokes this api is too large" in low:
+        return "安装包列表暂时繁忙，过一会儿再试。"
     return "寄的时候出了问题，过一会儿再试。"
+
+
+def _log_error(e: BaseException) -> None:
+    text = re.sub(r"https?://\S+", "<url>", str(e) or e.__class__.__name__)
+    text = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "<email>", text)
+    print(f"subscribe error: {type(e).__name__}: {text[:180]}")
+
+
+def query_params(event: dict) -> dict[str, str]:
+    for key in ("queryStringParameters", "queryString"):
+        raw = (event or {}).get(key)
+        if isinstance(raw, dict):
+            return {str(k): "" if v is None else str(v) for k, v in raw.items()}
+        if isinstance(raw, str) and raw:
+            return {k: v for k, v in urllib.parse.parse_qsl(raw.lstrip("?"))}
+    path = str((event or {}).get("path") or "")
+    if "?" in path:
+        return {k: v for k, v in urllib.parse.parse_qsl(path.split("?", 1)[1])}
+    return {}
+
+
+def _meta() -> dict:
+    version = ""
+    try:
+        version = str(_latest_release().get("version") or "")
+    except Exception as e:  # noqa: BLE001
+        _log_error(e)
+    body = json.dumps({"version": version, "sender": _sender()}, ensure_ascii=False)
+    return _json(200, body)
+
+
+def _json(status: int, body: str) -> dict:
+    return {
+        "isBase64Encoded": False,
+        "statusCode": status,
+        "headers": {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        },
+        "body": body,
+    }
 
 
 def _env(name: str) -> str:
@@ -367,12 +416,28 @@ def mail_text(version: str, sender: str, note: str = "") -> str:
 
 
 def _get_json(url: str, token: str) -> object:
+    import time
+
     headers = {"User-Agent": "WorkTimer-Subscribe", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    last: BaseException | None = None
+    for attempt in range(3):
+        if attempt:
+            time.sleep(1.0 if attempt == 1 else 2.0)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            last = e
+            try:
+                e.close()
+            except Exception:
+                pass
+            if e.code not in (429, 500, 502, 503, 504) or attempt == 2:
+                raise
+    raise last  # pragma: no cover
 
 
 def _download(url: str) -> bytes:

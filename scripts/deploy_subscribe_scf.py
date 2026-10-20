@@ -63,6 +63,16 @@ def _zip_code() -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
+def _gitcode_token() -> str:
+    token = os.environ.get("GITCODE_TOKEN", "").strip()
+    if token:
+        return token
+    path = ROOT / ".gitcode_token"
+    if path.exists():
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
 def _smtp() -> dict:
     path = ROOT / "release_mail.secret.json"
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -237,6 +247,7 @@ def main() -> None:
         "TENCENT_SECRET_ID": os.environ["TENCENT_SECRET_ID"],
         "TENCENT_SECRET_KEY": os.environ["TENCENT_SECRET_KEY"],
         "GITCODE_REPO": "mdslanruo/work-timer",
+        "GITCODE_TOKEN": _gitcode_token(),
     }
     env.update(_smtp())
     cli = _scf()

@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import io
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -83,6 +84,16 @@ class SubscribeTests(unittest.TestCase):
         self.assertIn("最新版 1.3.58", got["text"])
         self.assertIn("earoot@163.com", got["text"])
         self.assertIn("Win7", got["text"])
+
+    def test_busy_list_is_not_called_a_mail_failure(self):
+        err = urllib.error.HTTPError("https://example.test", 429, "Too Many Requests", None, None)
+        self.assertIn("暂时繁忙", self.fn._public_error(err))
+        self.assertNotIn("寄的时候出了问题", self.fn._public_error(err))
+
+    def test_meta_query_is_recognized(self):
+        self.assertEqual(self.fn.query_params({"queryStringParameters": {"meta": "1"}}), {"meta": "1"})
+        self.assertEqual(self.fn.query_params({"queryString": "meta=1"}), {"meta": "1"})
+        self.assertEqual(self.fn.query_params({}), {})
 
     def test_bad_email_rejected(self):
         self.assertIsNone(self.fn._clean_email("not-an-email"))

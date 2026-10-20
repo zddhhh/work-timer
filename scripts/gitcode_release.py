@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 检查更新连不上网时弹出报名二维码，扫码填邮箱即可收安装包"
+    "- 检查更新碰到服务繁忙时会说明过几分钟再试，报名页直接显示最新版本号"
 )
 
 

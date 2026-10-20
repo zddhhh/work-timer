@@ -12,12 +12,14 @@ label { display:block; margin:14px 0 6px; }
 input[type=email] { width:100%; box-sizing:border-box; font:16px sans-serif; padding:10px; }
 button { margin-top:18px; font:16px sans-serif; padding:10px 18px; background:#8c2f2f; color:#fff; border:0; }
 .note { color:#6b5346; font-size:14px; }
+.ver { font-size:18px; font-weight:bold; margin:8px 0 0; }
 </style>
 </head>
 <body>
 <main>
 <h1>订阅 WorkTimer</h1>
-<p class="note">内网收不到更新时，填邮箱。最新版安装包由 earoot@163.com 寄出，请认准这个发件人。压缩包里有 Win10/11 和 Win7 两个安装程序，信里写着版本号，装好后看窗口标题对照。</p>
+<p class="ver" id="ver">最新版本：正在获取…</p>
+<p class="note">内网收不到更新时，填邮箱。上面就是现在的最新版本，装好后看窗口标题对照。安装包由 earoot@163.com 寄出，请认准这个发件人。压缩包里有 Win10/11 和 Win7 两个安装程序。</p>
 <form id="f">
 <label>邮箱<br><input type="email" name="email" required placeholder="name@example.com"></label>
 <label><input type="radio" name="mode" value="once" checked> 只要这一版</label>
@@ -28,6 +30,14 @@ button { margin-top:18px; font:16px sans-serif; padding:10px 18px; background:#8
 </main>
 <script>
 const API = "https://1407920495-4qprkfktiz.ap-guangzhou.tencentscf.com";
+const ver = document.getElementById("ver");
+fetch(API + "?meta=1").then((r) => r.text()).then((text) => {
+  let version = "";
+  try { version = String((JSON.parse(text).version || "")).trim(); } catch (e) {}
+  ver.textContent = version ? ("最新版本：" + version) : "最新版本暂时取不到，刷新再看。";
+}).catch(() => {
+  ver.textContent = "最新版本暂时取不到，刷新再看。";
+});
 document.getElementById("f").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const out = document.getElementById("out");

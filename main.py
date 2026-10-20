@@ -3484,14 +3484,22 @@ class WorkTimer:
             _fit_card(dlg, min_w=300, min_h=160, near=near)
 
         def fail(msg: str) -> None:
+            store.append_log(f"update: {(msg or '')[:180]}")
             head, hint = updater.friendly_error(msg)
             url = str(self.cfg.get("subscribe_url") or "").strip()
             if url and updater.is_network_error(msg):
                 finish_subscribe(head, url)
                 return
+            if url and updater.is_busy_error(msg):
+                finish_subscribe(
+                    head,
+                    url,
+                    "更新服务这会儿有点忙。可以过几分钟再试，也可以扫下面的码，把安装包寄到邮箱。",
+                )
+                return
             finish_idle(head, hint, error=True)
 
-        def finish_subscribe(head: str, url: str) -> None:
+        def finish_subscribe(head: str, url: str, detail_text: str = "") -> None:
             if not alive():
                 return
             state["phase"] = "idle"
@@ -3507,7 +3515,7 @@ class WorkTimer:
             except Exception:
                 pass
             status.set(head)
-            detail.set("手机扫下面的码，填邮箱。可以只要这一版，也可以以后每版都寄到邮箱。")
+            detail.set(detail_text or "手机扫下面的码，填邮箱。可以只要这一版，也可以以后每版都寄到邮箱。")
             import qrcode
 
             code = qrcode.QRCode(border=1, box_size=4, error_correction=qrcode.constants.ERROR_CORRECT_M)

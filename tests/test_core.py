@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 from datetime import date, datetime
 from pathlib import Path
 
@@ -1096,6 +1097,7 @@ class FxTests(unittest.TestCase):
             "HTTP 404": "暂时还没有新版本",
             "HTTP 403": "现在没法更新",
             "HTTP 502": "更新这边有点忙",
+            "HTTP 429": "更新这边有点忙",
             "网络错误：[Errno 11001] getaddrinfo failed": "现在连不上网",
             "连接超时": "现在连不上网",
             "sha256 校验失败": "下载的文件不完整",
@@ -1103,6 +1105,11 @@ class FxTests(unittest.TestCase):
         }
         for raw, head in cases.items():
             self.assertEqual(updater.friendly_error(raw)[0], head, raw)
+        self.assertFalse(updater._retryable(urllib.error.URLError(TimeoutError("timed out"))))
+        busy = urllib.error.HTTPError("https://example.test", 429, "Too Many", None, None)
+        self.assertTrue(updater._retryable(busy))
+        self.assertTrue(updater.is_busy_error("HTTP 429"))
+        self.assertFalse(updater.is_network_error("HTTP 429"))
         head, hint = updater.friendly_error("something exploded")
         self.assertEqual(head, "这次没更新成功")
         self.assertNotIn("exploded", hint)
