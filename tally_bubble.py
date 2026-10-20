@@ -42,39 +42,39 @@ def scale_for(card_h: int) -> float:
     return max(0.85, min(1.6, card_h / 92.0))
 
 
-def _keyboard(d: ImageDraw.ImageDraw, x: int, cy: int, s: int) -> int:
+def _keyboard(d: ImageDraw.ImageDraw, x: int, cy: int, s: int, color=_ICON) -> int:
     w, h = int(s * 1.45), int(s * 0.95)
     top = cy - h // 2
     lw_ = max(2, s // 7)
-    d.rounded_rectangle((x, top, x + w, top + h), radius=max(2, s // 5), outline=_ICON, width=lw_)
+    d.rounded_rectangle((x, top, x + w, top + h), radius=max(2, s // 5), outline=color, width=lw_)
     dot = max(2, s // 8)
     for row in range(2):
         for col in range(4):
             dx = x + int(w * (0.2 + col * 0.2))
             dy = top + int(h * (0.3 + row * 0.22))
-            d.rectangle((dx - dot // 2, dy - dot // 2, dx + dot // 2, dy + dot // 2), fill=_ICON)
+            d.rectangle((dx - dot // 2, dy - dot // 2, dx + dot // 2, dy + dot // 2), fill=color)
     by = top + int(h * 0.76)
-    d.rectangle((x + int(w * 0.28), by - dot // 2, x + int(w * 0.72), by + dot // 2), fill=_ICON)
+    d.rectangle((x + int(w * 0.28), by - dot // 2, x + int(w * 0.72), by + dot // 2), fill=color)
     return w
 
 
-def _mouse(d: ImageDraw.ImageDraw, x: int, cy: int, s: int) -> int:
+def _mouse(d: ImageDraw.ImageDraw, x: int, cy: int, s: int, color=_ICON) -> int:
     w, h = int(s * 0.78), int(s * 1.1)
     top = cy - h // 2
     lw_ = max(2, s // 7)
-    d.rounded_rectangle((x, top, x + w, top + h), radius=w // 2, outline=_ICON, width=lw_)
+    d.rounded_rectangle((x, top, x + w, top + h), radius=w // 2, outline=color, width=lw_)
     mid = x + w // 2
-    d.line((mid, top + lw_, mid, top + int(h * 0.38)), fill=_ICON, width=lw_)
+    d.line((mid, top + lw_, mid, top + int(h * 0.38)), fill=color, width=lw_)
     return w
 
 
-def _wheel(d: ImageDraw.ImageDraw, x: int, cy: int, s: int) -> int:
+def _wheel(d: ImageDraw.ImageDraw, x: int, cy: int, s: int, color=_ICON) -> int:
     w = int(s * 0.8)
     half = int(s * 0.5)
     gap = max(2, s // 8)
     mid = x + w // 2
-    d.polygon([(mid, cy - half), (x + w, cy - gap), (x, cy - gap)], fill=_ICON)
-    d.polygon([(mid, cy + half), (x + w, cy + gap), (x, cy + gap)], fill=_ICON)
+    d.polygon([(mid, cy - half), (x + w, cy - gap), (x, cy - gap)], fill=color)
+    d.polygon([(mid, cy + half), (x + w, cy + gap), (x, cy + gap)], fill=color)
     return w
 
 
@@ -111,6 +111,78 @@ def render(keys: int, clicks: int, wheels: int, scale: float = 1.0) -> Image.Ima
         d.text((x, ty), text, font=font, fill=_TEXT)
         x += tw + sep
     return im.resize((max(1, w // _SS), max(1, h // _SS)), Image.Resampling.LANCZOS)
+
+
+def _row(counts: tuple[int, int, int], scale: float, ink, shade) -> Image.Image | None:
+    """两倍画一行图标加数字，再缩小。放不下就返回 None，调用方把 scale 再降一档。"""
+    k = scale * _SS
+    font = _font(max(8, int(round(11 * k))))
+    icon = max(6, int(round(11 * k)))
+    inner = max(2, int(round(3 * k)))
+    sep = max(4, int(round(8 * k)))
+    parts = (
+        (_keyboard, activity.fmt_count(counts[0])),
+        (_mouse, activity.fmt_count(counts[1])),
+        (_wheel, activity.fmt_count(counts[2])),
+    )
+    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    widths = []
+    for draw_icon, text in parts:
+        guess = {_keyboard: 1.45, _mouse: 0.78, _wheel: 0.8}[draw_icon]
+        widths.append((int(icon * guess), int(probe.textlength(text, font=font))))
+    w = sum(iw + inner + tw for iw, tw in widths) + sep * (len(parts) - 1)
+    h = int(round(16 * k))
+    if w < 4 or h < 4:
+        return None
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    cy = h // 2
+    box = probe.textbbox((0, 0), "0", font=font)
+    ty = cy - (box[1] + box[3]) // 2
+    for color, dx, dy in ((shade, _SS, _SS), (ink, 0, 0)):
+        x = 0
+        for (draw_icon, text), (iw, tw) in zip(parts, widths):
+            draw_icon(d, x + dx, cy + dy, icon, color)
+            x += iw + inner
+            d.text((x + dx, ty + dy), text, font=font, fill=color)
+            x += tw + sep
+    return im.resize((max(1, w // _SS), max(1, h // _SS)), Image.Resampling.LANCZOS)
+
+
+def _ink(light: bool):
+    if light:
+        return (48, 56, 72, 230), (255, 255, 255, 170)
+    return (236, 240, 246, 235), (0, 0, 0, 140)
+
+
+def fit_row(counts: tuple[int, int, int], room: int, *, light: bool) -> Image.Image | None:
+    """缩到能放进 room 为止。"""
+    if room < 48:
+        return None
+    ink, shade = _ink(light)
+    for scale in (1.0, 0.9, 0.8, 0.7, 0.6):
+        got = _row(counts, scale, ink, shade)
+        if got is not None and got.width <= room:
+            return got
+    return None
+
+
+def paint_top(
+    img: Image.Image,
+    box: tuple[int, int, int, int],
+    counts: tuple[int, int, int],
+    *,
+    light: bool,
+) -> int:
+    """画在卡片内部顶边，居中。返回标题要下移的像素。"""
+    x0, y0, x1, _y1 = (int(v) for v in box)
+    row = fit_row(counts, x1 - x0 - 6, light=light)
+    if row is None:
+        return 0
+    x = x0 + max(0, (x1 - x0 - row.width) // 2)
+    y = y0 + 2
+    img.alpha_composite(row, (x, y))
+    return row.height + 2
 
 
 def place(card_x: int, card_y: int, card_w: int, card_h: int, bw: int, bh: int,

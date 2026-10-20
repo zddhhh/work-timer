@@ -397,7 +397,7 @@ class WorklogDialogMixin:
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left")
         tk.Checkbutton(
-            tool, text="在计时器上方显示", variable=card_on, command=toggle_card,
+            tool, text="在计时器顶部显示", variable=card_on, command=toggle_card,
             fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left", padx=(12, 0))

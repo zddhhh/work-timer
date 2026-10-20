@@ -1676,6 +1676,19 @@ class ActivityTests(unittest.TestCase):
         bubble.follow((10, 10, 248, 92))
         self.assertEqual((bubble.x, bubble.y), (0, 0))
 
+    def test_tally_row_stays_inside_the_top_band(self):
+        import tally_bubble
+
+        img = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        shift = tally_bubble.paint_top(img, (2, 4, 142, 88), (1284, 86, 12), light=False)
+        box = img.getbbox()
+        self.assertIsNotNone(box)
+        self.assertGreaterEqual(shift, 10)
+        self.assertLessEqual(shift, 24)
+        self.assertLessEqual(box[3], 4 + shift)
+        self.assertLessEqual(box[2], 142)
+        self.assertGreaterEqual(box[0], 2)
+
     def test_surface_ring_is_full_minus_window(self):
         import backdrop
 

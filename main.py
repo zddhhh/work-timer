@@ -36,7 +36,6 @@ import single_instance
 import skin_settings
 import store
 import suofen
-import tally_bubble
 import themes
 import uninstall
 import updater
@@ -172,7 +171,6 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._last_pin_rotate = 0.0
         self._last_key = ""
         self._present_hz = 0
-        self._tally = tally_bubble.TallyBubble()
         self._tally_at = 0.0
         self._tally_counts = (0, 0, 0)
         self._fest_day = datetime.now().strftime("%Y-%m-%d")
@@ -220,7 +218,6 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.win.set_mouse_leave_handler(self._on_mouse_leave)
         self.win.set_right_click_handler(self._request_menu)
         self.win.set_request_show_handler(self._on_request_show)
-        self.win.set_geometry_handler(self._follow_tally)
         self._esc_hidden = False
 
         area = layered_win.work_area()
@@ -942,31 +939,17 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.cfg["auto_start"] = on
         store.save_config(self.cfg)
 
-    def _follow_tally(self) -> None:
-        """计时器一挪，胶囊在同一条消息里跟上。"""
-        if not activity.show_on_card(self.cfg) or self._esc_hidden:
-            return
-        w = self.win
-        self._tally.follow((w.x, w.y, w.width, w.height))
-
-    def _sync_tally(self) -> None:
-        """键鼠次数小胶囊跟着卡片走。次数最多一秒刷四次，位置每圈都对一下。"""
-        hwnd = self.win.hwnd
-        if (
-            not activity.show_on_card(self.cfg)
-            or self._esc_hidden
-            or not hwnd
-            or not layered_win.user32.IsWindowVisible(hwnd)
-            or layered_win.user32.IsIconic(hwnd)
-        ):
-            self._tally.hide()
-            return
+    def _tally_for_paint(self) -> tuple[int, int, int] | None:
+        """顶部次数。最多一秒读四次，数字写进绘制键，变了才重画。"""
+        if not activity.show_on_card(self.cfg):
+            return None
         now = time.monotonic()
         if now - self._tally_at >= 0.25:
             self._tally_at = now
-            self._tally_counts = activity.totals(self.cfg, date.today())
-        self._tally.show(self._tally_counts, (self.win.x, self.win.y, self._win_w, self._win_h))
-        self._tally.pump()
+            counts = activity.totals(self.cfg, date.today())
+            if counts != self._tally_counts:
+                self._tally_counts = counts
+        return self._tally_counts
 
     def _show_after_esc(self) -> None:
         self.win.show()
@@ -993,7 +976,6 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             return
         self.win.dismiss_popup()
         self.win.hide()
-        self._tally.hide()
         self._esc_hidden = True
 
     def _poll_key_hide(self) -> None:
@@ -1531,6 +1513,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         try:
             now = datetime.now()
             mode = self._display_mode()
+            tally = self._tally_for_paint()
             base = self._theme()
             w, h = self._win_w, self._win_h
             phase = time.monotonic()
@@ -1649,6 +1632,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             if theme.kind == "neonflow" and self._mouse_lx >= 0:
                 hz = max(hz, 45)
             self._present_hz = hz
+            if tally is not None:
+                key = f"{key}-y{tally[0]}-{tally[1]}-{tally[2]}"
 
             if key == self._last_key:
                 return
@@ -1692,6 +1677,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     meow_mins=total // 60,
                     meow_drinking=drinking,
                     ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
+                    tally=tally,
                 )
                 kinetic.paint(
                     img,
@@ -1732,6 +1718,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     meow_mins=total // 60,
                     meow_drinking=drinking,
                     ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
+                    tally=tally,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -1850,14 +1837,12 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     self._sync_layout_from_window()
                     self._meow.resizing(True, time.monotonic())
                     self._paint()
-                    self._sync_tally()
                     time.sleep(0.001)
                     continue
                 if dragging:
                     was_dragging = True
                     self._refresh_surface(force=True)
                     self._paint()
-                    self._sync_tally()
                     time.sleep(0.001)
                     continue
                 if was_resizing or resized:
@@ -1908,7 +1893,6 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._worklog_tick()
                 self._refresh_surface()
                 self._paint()
-                self._sync_tally()
                 now = time.monotonic()
                 self._prune_thunder_hits(now)
                 self._prune_ink_hits(now)
@@ -1945,7 +1929,6 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._persist_pos()
         self._persist_size()
         store.flush_pending(force=True)
-        self._tally.destroy()
         self.win.destroy()
         if self._tk is not None:
             self._tk.destroy()

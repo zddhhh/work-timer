@@ -18,6 +18,7 @@ import fx
 import meow
 import ornaments
 import store
+import tally_bubble
 
 DEFAULT_THEME_ID = "ghost"
 
@@ -661,6 +662,7 @@ def paint_card(
     meow_mins: int = 30,
     meow_drinking: bool = False,
     ghost_ptr: tuple[int, int] | None = None,
+    tally: tuple[int, int, int] | None = None,
 ) -> None:
     d = ImageDraw.Draw(img)
     kind = theme.kind
@@ -774,7 +776,35 @@ def paint_card(
         title_y, flip_pad, row_y, row_w, row_h = fx.flip_row_layout(
             text_w, h, title_h=title_h, has_sub=bool(sub),
         )
-    title_x = _centered_text_x(d, title, font_title, text_w)
+    title_x = None
+    if tally is not None and meow_lay is not None:
+        # 仪仗队顶上已经贴着标题，次数跟标题同一行，倒计时不再往下压到猫头
+        title_w = int(d.textlength(title, font=font_title)) if title else 0
+        beside = tally_bubble.fit_row(
+            tally, max(48, text_w - title_w - 16), light=ctx.card_light,
+        )
+        if beside is not None:
+            gap = max(6, int(8 * meow_lay.s))
+            group = title_w + gap + beside.width
+            title_x = max(4, (text_w - group) // 2)
+            ty = int(title_y + max(0, (title_h - beside.height) // 2))
+            img.alpha_composite(beside, (title_x + title_w + gap, max(int(box[1]), ty)))
+    elif tally is not None:
+        # 次数贴在卡片内部顶边。标题和倒计时下移，避免叠在一起。
+        shift = tally_bubble.paint_top(
+            img, (2, box[1], max(50, text_w - 2), box[3]), tally, light=ctx.card_light,
+        )
+        if shift:
+            title_y += shift
+            if show_flip:
+                row_y += shift
+                row_h = max(16, row_h - shift)
+            elif big:
+                title_bottom = title_y + title_h + 1
+                if big_y < title_bottom:
+                    big_y = title_bottom
+    if title_x is None:
+        title_x = _centered_text_x(d, title, font_title, text_w)
     if meow_lay is not None and title:
         d.text(
             (title_x, title_y), title, font=font_title, fill=title_fill,
