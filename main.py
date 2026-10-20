@@ -77,6 +77,7 @@ def _kinetic_font(w: int, n: int) -> ImageFont.ImageFont:
 
 
 _ALPHA_FLOOR_LUT = bytes([1] + list(range(1, 256)))
+_HIT_MASK: dict[int, bytes] = {}
 
 
 def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
@@ -89,7 +90,14 @@ def _rgba_to_bgra(img: Image.Image) -> tuple[bytes, bytes]:
         "RGBA",
         (ImageChops.multiply(r, a), ImageChops.multiply(g, a), ImageChops.multiply(b, a), a),
     )
-    return pm.tobytes("raw", "BGRA"), b"\xff" * (w * h)
+    n = w * h
+    mask = _HIT_MASK.get(n)
+    if mask is None:
+        mask = b"\xff" * n
+        if len(_HIT_MASK) > 4:
+            _HIT_MASK.clear()
+        _HIT_MASK[n] = mask
+    return pm.tobytes("raw", "BGRA"), mask
 
 
 _CARD_BG = "#161a22"
@@ -1004,6 +1012,9 @@ class WorkTimer:
         self._update_dialog_open = False
         self._last_pin_rotate = 0.0
         self._last_key = ""
+        self._present_hz = 0
+        self._tally_sec = -1
+        self._tally_line = ""
         self._fest_day = datetime.now().strftime("%Y-%m-%d")
         self._wall_at = datetime.now()
         self._mono_at = time.monotonic()
@@ -2383,6 +2394,8 @@ class WorkTimer:
         ui["month_sum"].set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
         if ui.get("act_on") is not None:
             ui["act_on"].set(activity.enabled(self.cfg))
+        if ui.get("card_on") is not None:
+            ui["card_on"].set(activity.show_on_card(self.cfg))
         self._paint_activity_chart(ui)
 
     def _paint_activity_chart(self, ui: dict | None = None) -> None:
@@ -2479,10 +2492,25 @@ class WorkTimer:
         sheet.pack(anchor="w")
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
 
+        card_on = tk.BooleanVar(value=activity.show_on_card(self.cfg))
+
         def toggle_act() -> None:
             on = bool(act_on.get())
             activity.set_enabled(self.cfg, on)
-            self.win.listen_raw_input(on)
+            if not on:
+                card_on.set(False)
+            self.win.listen_raw_input(activity.enabled(self.cfg))
+            self._tally_sec = -1
+            self._last_key = ""
+            store.save_config(self.cfg)
+            self._paint_activity_chart(ui)
+
+        def toggle_card() -> None:
+            activity.set_show_on_card(self.cfg, bool(card_on.get()))
+            act_on.set(activity.enabled(self.cfg))
+            self.win.listen_raw_input(activity.enabled(self.cfg))
+            self._tally_sec = -1
+            self._last_key = ""
             store.save_config(self.cfg)
             self._paint_activity_chart(ui)
 
@@ -2573,6 +2601,11 @@ class WorkTimer:
             fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left")
+        tk.Checkbutton(
+            tool, text="倒计时上显示", variable=card_on, command=toggle_card,
+            fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
+        ).pack(side="left", padx=(12, 0))
         picks = tk.Frame(tool, bg=_CARD_BG)
         picks.pack(side="right")
         tk.Label(
@@ -2643,6 +2676,7 @@ class WorkTimer:
             "week_sum": week_sum,
             "month_sum": month_sum,
             "act_on": act_on,
+            "card_on": card_on,
             "today_lbl": today_lbl,
             "week_lbl": week_lbl,
             "day_var": day_var,
@@ -4010,6 +4044,7 @@ class WorkTimer:
                 if call:
                     shown_title = call
                     key = f"{key}-m{call}"
+            fps = 0
             if ornaments.has_skin(theme.kind):
                 if theme.kind == "thunder":
                     # 落雷那半秒要满帧，平时只有雨在下
@@ -4076,6 +4111,32 @@ class WorkTimer:
                 sub = "喝过了再点"
                 accent = theme.warn if blink else theme.big
                 key = f"hydrate-wait-{int(blink)}-{theme.id}-{w}x{h}"
+
+            tally = ""
+            if (
+                not self._hydrate_waiting
+                and not kinetic.playing(self._kinetic, phase)
+                and activity.show_on_card(self.cfg)
+            ):
+                sec = now.hour * 3600 + now.minute * 60 + now.second
+                if sec != self._tally_sec:
+                    self._tally_sec = sec
+                    self._tally_line = activity.card_line(self.cfg, now.date())
+                tally = self._tally_line
+                if tally:
+                    key = f"{key}|{tally}"
+            hz = fps
+            if kinetic.playing(self._kinetic, phase):
+                hz = 60
+            if celebrating:
+                hz = max(hz, 30)
+            if thunder_hits:
+                hz = max(hz, 45)
+            if ink_hits:
+                hz = max(hz, 40)
+            if theme.kind == "neonflow" and self._mouse_lx >= 0:
+                hz = max(hz, 45)
+            self._present_hz = hz
 
             if key == self._last_key:
                 return
@@ -4159,6 +4220,7 @@ class WorkTimer:
                     meow_mins=total // 60,
                     meow_drinking=drinking,
                     ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
+                    tally=tally,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -4353,7 +4415,9 @@ class WorkTimer:
                         and (self._mouse_lx >= 0 or self._neon_needs_frames(now))
                     )
                 ):
-                    time.sleep(1.0 / FPS)
+                    # 睡到这张皮实际在画的帧率。60Hz 空转时，大半次醒来发现画面没变。
+                    hz = self._present_hz if self._present_hz > 0 else FPS
+                    time.sleep(1.0 / min(FPS, hz))
                 else:
                     # 无动画皮时 _paint 只在秒数变化才重绘，主循环没必要 60Hz 空转
                     time.sleep(1.0 / IDLE_FPS)

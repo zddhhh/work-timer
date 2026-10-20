@@ -624,6 +624,12 @@ def _halo_text(
     d.text((x, y), text, font=font, fill=fill)
 
 
+def _fit_tally(d: ImageDraw.ImageDraw, text: str, font, limit: int) -> str:
+    if d.textlength(text, font=font) <= limit:
+        return text
+    return text.replace("键盘", "键").replace("鼠标", "鼠").replace("滚轮", "轮")
+
+
 def card_box(w: int, h: int) -> tuple[int, int, int, int]:
     if h < 72 or w < 200:
         return (2, 2, w - 3, h - 3)
@@ -661,6 +667,7 @@ def paint_card(
     meow_mins: int = 30,
     meow_drinking: bool = False,
     ghost_ptr: tuple[int, int] | None = None,
+    tally: str = "",
 ) -> None:
     d = ImageDraw.Draw(img)
     kind = theme.kind
@@ -676,6 +683,20 @@ def paint_card(
     pad_x = max(10, min(22, w // 12))
     title_y = max(8, int(h * 0.11))
     big_y = int(h * (0.42 if sub else 0.38))
+    text_w = int(w * 0.58) if kind in ("huajing", "suofen") else w
+    tally_text = ""
+    tally_beside = False
+    tally_extra = 0
+    if tally and not sub:
+        title_w = d.textlength(title, font=font_title) if title else 0
+        room = int(text_w - title_w - pad_x - 12)
+        tally_text = _fit_tally(d, tally, font_sub, max(24, room))
+        tally_beside = room >= 24 and d.textlength(tally_text, font=font_sub) <= room
+        if kind == meow.KIND:
+            tally_text = _fit_tally(d, tally, font_sub, max(24, int(text_w * 0.55)))
+            tally_beside = True
+        if not tally_beside:
+            tally_extra = fx._font_line_height(font_sub, tally_text or "键") + 2
     title_h = fx._font_line_height(font_title, title or "距")
     now = time.monotonic()
     pulse = 0.84 + 0.16 * math.sin(now * (1.15 if stage == "done" else (0.85 if stage == "warn" else 0.5)))
@@ -765,16 +786,18 @@ def paint_card(
             big_y = int(round(meow_lay.cy + 1.5 * meow_lay.s - (bb[1] + bb[3]) / 2.0))
     if show_flip:
         title_y, flip_pad, row_y, row_w, row_h = fx.flip_row_layout(
-            w, h, title_h=title_h, has_sub=bool(sub),
+            w, h, title_h=title_h + tally_extra, has_sub=bool(sub),
         )
         if meow_lay is not None:
             title_y, row_y, row_h = meow_lay.title_y, meow_lay.row_y, meow_lay.row_h
-    text_w = int(w * 0.58) if kind in ("huajing", "suofen") else w
     if show_flip and kind in ("huajing", "suofen"):
         title_y, flip_pad, row_y, row_w, row_h = fx.flip_row_layout(
-            text_w, h, title_h=title_h, has_sub=bool(sub),
+            text_w, h, title_h=title_h + tally_extra, has_sub=bool(sub),
         )
-    title_x = _centered_text_x(d, title, font_title, text_w)
+    if tally_beside:
+        title_x = max(4, pad_x // 2) if kind in ("huajing", "suofen") else pad_x
+    else:
+        title_x = _centered_text_x(d, title, font_title, text_w)
     if meow_lay is not None and title:
         d.text(
             (title_x, title_y), title, font=font_title, fill=title_fill,
@@ -811,6 +834,8 @@ def paint_card(
             stroke=True, sticker=True, bold=False,
         )
     elif big:
+        if tally_extra and meow_lay is None:
+            big_y = int(title_y + title_h + tally_extra + 2)
         big_x = _centered_text_x(d, big, font_big, text_w)
         _halo_text(
             d, (big_x, big_y), big, font_big, accent_fill,
@@ -820,6 +845,21 @@ def paint_card(
         _halo_text(
             d, (pad_x, int(h * 0.78)), sub, font_sub, sub_fill,
             ghost=ghost, compact=compact_text,
+        )
+    if tally_text:
+        if tally_beside:
+            tw = d.textlength(tally_text, font=font_sub)
+            tx = max(0, int(text_w - tw - max(4, pad_x // 2)))
+            ty = int(title_y)
+        else:
+            if kind in ("huajing", "suofen"):
+                tx = max(4, pad_x // 2)
+            else:
+                tx = _centered_text_x(d, tally_text, font_sub, text_w)
+            ty = int(title_y + title_h + 1)
+        _halo_text(
+            d, (tx, ty), tally_text, font_sub, sub_fill,
+            ghost=False, compact=compact_text,
         )
     if meow_lay is not None:
         (meow_troupe or meow.default_troupe()).paint(

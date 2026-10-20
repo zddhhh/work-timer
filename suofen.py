@@ -9,12 +9,40 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageSequence
 
 KIND = "suofen"
-_AMBIENT = {
-    "idle": ("点一下先", "等下先"),
-    "run": ("莫慌嘛", "发你激励先"),
-    "warn": ("快走先", "莫走丢先"),
-    "done": ("发激励啦", "拿去先"),
+# 每个动作一句柳州话，同一轮里不换，下一轮再换一句。
+_TALK = {
+    "hold": {
+        "idle": ("点一下先", "等下先", "来玩先"),
+        "run": ("莫慌嘛", "发你激励先", "得行先"),
+        "warn": ("快走先", "莫走丢", "时间少咯"),
+    },
+    "side": {
+        "idle": ("看你先", "笑哪样", "转过来咯"),
+        "run": ("看你先", "笑哪样", "转过来咯"),
+        "warn": ("看下钟", "还不走", "转过来催"),
+    },
+    "bounce": {
+        "idle": ("蹦两下", "跳下先", "好耍嘛"),
+        "run": ("蹦两下", "跳下先", "高兴咯"),
+        "warn": ("跳起走", "蹦一下", "快走咯"),
+    },
+    "raise": {
+        "idle": ("激励在这", "举高点", "拿去先"),
+        "run": ("举高点", "激励在这", "发你咯"),
+        "warn": ("拿了就走", "举给你", "莫留咯"),
+    },
+    "back": {
+        "idle": ("莫看我", "背过去", "等下转来"),
+        "run": ("莫看我", "背过去", "等下转来"),
+        "warn": ("背过去咯", "莫留了", "快走嘛"),
+    },
+    "look": {
+        "idle": ("又来咯", "看下先", "转回来了"),
+        "run": ("又来咯", "看下先", "转回来了"),
+        "warn": ("还在不", "走不走", "看你先"),
+    },
 }
+_DONE = ("发激励啦", "拿去先", "得行咯")
 _NUM = {1: "一", 2: "两", 3: "三", 5: "五", 8: "八"}
 _PAY = (
     "得了{n}捆激励",
@@ -26,6 +54,8 @@ POP_SEC = 2.4
 # 原图第 3 帧是残缺的中间张，不用。4、5、6 几乎是同一张，来回切会看成重影。
 _FRAMES: list[Image.Image] | None = None
 _DURS: list[int] | None = None
+_BACKDROP: dict[tuple[int, int], Image.Image] = {}
+_FITTED: dict[tuple[int, int, int], Image.Image] = {}
 _pop_at: float | None = None
 _pop_line = ""
 _rng = random.Random()
@@ -64,9 +94,18 @@ def fps(stage: str, now: float) -> int:
     return 16
 
 
-def _ambient(stage: str, phase: float) -> str:
-    lines = _AMBIENT.get(stage, _AMBIENT["run"])
-    return lines[int(phase / 3.4) % len(lines)]
+def _line(stage: str, phase: float) -> str:
+    if stage == "done":
+        return _DONE[int(phase / 2.4) % len(_DONE)]
+    return _talk(stage, phase)
+
+
+def _talk(stage: str, phase: float) -> str:
+    _local, beat = _resident_beat(phase)
+    table = _TALK.get(beat[3], _TALK["hold"])
+    pool = table.get(stage) or table["run"]
+    slot = int(phase // _LOOP) + _BEATS.index(beat)
+    return pool[slot % len(pool)]
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -207,18 +246,29 @@ def _at(frames: list[Image.Image], idx: int) -> Image.Image:
     return frames[idx if idx < len(frames) else 0]
 
 
-# 常驻一轮：抱着红包 → 侧过脸笑一下 → 再抱着 → 把红包举起来。
-# 用差得开的姿势，不左右滑同一张图，避免又拖出重影。
-_LOOP = 7.2
+# 常驻一轮：抱着轻轻颠 → 侧过脸 → 抱着蹦两下 → 举红包跳一下 → 背过身 → 再转回来。
+# 只用差得开的姿势，不左右滑同一张图，避免又拖出重影。
+# (秒, 帧, 跳法, 台词)
+_BEATS = (
+    (1.9, 4, "bob", "hold"),
+    (1.6, 1, "turn", "side"),
+    (1.7, 4, "double", "bounce"),
+    (1.6, 2, "big", "raise"),
+    (1.5, 0, "hop", "back"),
+    (1.5, 1, "turn", "look"),
+)
+_LOOP = sum(b[0] for b in _BEATS)
 
 
-def _resident_frame(phase: float) -> int:
+def _resident_beat(phase: float) -> tuple[float, tuple]:
     cyc = phase % _LOOP
-    if 2.3 <= cyc < 3.9:
-        return 1
-    if 5.0 <= cyc < 6.35:
-        return 2
-    return 4
+    start = 0.0
+    for beat in _BEATS:
+        dur = beat[0]
+        if cyc < start + dur:
+            return cyc - start, beat
+        start += dur
+    return 0.0, _BEATS[-1]
 
 
 def _pose(stage: str, phase: float) -> Image.Image | None:
@@ -227,30 +277,42 @@ def _pose(stage: str, phase: float) -> Image.Image | None:
         return None
     if pop_age(phase) is not None or stage == "done":
         return _at(frames, 2)
-    return _at(frames, _resident_frame(phase))
+    _local, beat = _resident_beat(phase)
+    return _at(frames, beat[1])
+
+
+def _motion(local: float, dur: float, kind: str) -> float:
+    """跳起高度。1 是点中那一下的高度，常驻的蹦跳矮一些。"""
+    if kind == "bob":
+        return abs(math.sin(local / 0.48 * math.pi)) * 0.18
+    if kind == "double":
+        half = max(0.2, dur / 2)
+        return math.sin((local % half) / half * math.pi) * 0.62
+    amp = {"turn": 0.36, "hop": 0.5, "big": 0.92}.get(kind, 0.4)
+    return math.sin(min(1.0, local / max(0.2, dur)) * math.pi) * amp
 
 
 def _hop(stage: str, phase: float) -> float:
-    """跳起的高度，按身高原比例。举起红包时垫一下，点中就跳高。"""
+    """跳起的高度，按身高原比例。点中就跳高，平时按当前这个动作蹦。"""
     age = pop_age(phase)
     if age is not None and age < 0.62:
         return math.sin(age / 0.62 * math.pi)
     if stage == "done":
         cyc = phase % 3.2
         if cyc < 0.34:
-            return math.sin(cyc / 0.34 * math.pi) * 0.16
+            return math.sin(cyc / 0.34 * math.pi) * 0.28
         return 0.0
-    cyc = phase % _LOOP
-    if 5.0 <= cyc < 5.72:
-        return math.sin((cyc - 5.0) / 0.72 * math.pi) * 0.2
-    return 0.0
+    local, beat = _resident_beat(phase)
+    return _motion(local, beat[0], beat[2])
 
 
-def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
-    w, h = layer.size
-    if w < 8 or h < 8:
-        return
-    d = ImageDraw.Draw(layer)
+def _backdrop(w: int, h: int) -> Image.Image:
+    key = (w, h)
+    got = _BACKDROP.get(key)
+    if got is not None:
+        return got
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
     for y in range(h):
         t = y / max(1, h - 1)
         d.line([(0, y), (w, y)], fill=(int(255 - 4 * t), int(244 - 14 * t), int(224 - 16 * t), 255))
@@ -260,9 +322,37 @@ def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
         outline=(176, 42, 36, 255),
         width=max(2, h // 46),
     )
+    if len(_BACKDROP) > 3:
+        _BACKDROP.clear()
+    _BACKDROP[key] = im
+    return im
+
+
+def _fitted(frame_i: int, sprite: Image.Image, sw: int, sh: int) -> Image.Image:
+    key = (frame_i, sw, sh)
+    got = _FITTED.get(key)
+    if got is not None:
+        return got
+    got = sprite.resize((sw, sh), Image.Resampling.BOX)
+    if len(_FITTED) > 16:
+        _FITTED.clear()
+    _FITTED[key] = got
+    return got
+
+
+def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
+    w, h = layer.size
+    if w < 8 or h < 8:
+        return
+    layer.alpha_composite(_backdrop(w, h))
+    d = ImageDraw.Draw(layer)
     sprite = _pose(stage, phase)
     if sprite is None:
         return
+    frames, _durs = _load()
+    frame_i = 2 if pop_age(phase) is not None or stage == "done" else _resident_beat(phase)[1][1]
+    if frame_i >= len(frames):
+        frame_i = 0
     top = max(4, int(h * 0.05))
     foot = h - max(4, int(h * 0.06))
     avail = max(8, foot - top)
@@ -272,13 +362,12 @@ def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
     if sw > max_w:
         sw = max_w
         sh = max(1, int(sprite.height * sw / sprite.width))
-    fitted = sprite.resize((sw, sh), Image.Resampling.BOX)
-    # 身体中线固定在右侧。侧脸、举红包换姿势时人还站在原地。
+    fitted = _fitted(frame_i, sprite, sw, sh)
+    # 身体中线固定在右侧。侧脸、举红包、背过身时人还站在原地。
     cx = w - max(10, int(w * 0.16))
     ox = max(4, min(w - sw - 4, cx - sw // 2))
     hop = _hop(stage, phase)
-    breathe = 0 if pop_age(phase) is not None or stage == "done" else int(math.sin(phase * 1.6) * max(1, sh // 90))
-    oy = int(foot - sh - hop * sh * 0.22 - breathe)
+    oy = int(foot - sh - hop * sh * 0.22)
     _shadow(d, ox + sw // 2, foot, int(sw * (1 - 0.25 * hop)))
     if stage == "done" and pop_age(phase) is None:
         _toss(d, ox, oy, sw, sh, phase)
@@ -286,7 +375,7 @@ def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
     age = pop_age(phase)
     if age is not None:
         _burst(d, ox, oy, sw, sh, age)
-    line = callout(phase) or _ambient(stage, phase)
+    line = callout(phase) or _line(stage, phase)
     _bubble(d, ox, max(0, oy), sw, sh, w, h, line, pop=age is not None)
 
 

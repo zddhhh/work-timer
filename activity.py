@@ -16,6 +16,29 @@ def enabled(cfg: dict) -> bool:
 def set_enabled(cfg: dict, on: bool) -> None:
     book = _book(cfg)
     book["on"] = bool(on)
+    if not on:
+        book["on_card"] = False
+
+
+def show_on_card(cfg: dict) -> bool:
+    """倒计时卡片上显示今天的键盘、鼠标、滚轮次数。开着就一定在记。"""
+    raw = cfg.get(_KEY)
+    return bool(isinstance(raw, dict) and raw.get("on") and raw.get("on_card"))
+
+
+def set_show_on_card(cfg: dict, on: bool) -> None:
+    book = _book(cfg)
+    book["on_card"] = bool(on)
+    if on:
+        book["on"] = True
+
+
+def card_line(cfg: dict, d: date, *, short: bool = False) -> str:
+    c = counts(cfg, d)
+    keys, clicks, wheels = fmt_count(c["keys"]), fmt_count(c["clicks"]), fmt_count(c["wheels"])
+    if short:
+        return f"键 {keys}  鼠 {clicks}  轮 {wheels}"
+    return f"键盘 {keys}  鼠标 {clicks}  滚轮 {wheels}"
 
 
 def _book(cfg: dict) -> dict:
@@ -68,6 +91,7 @@ def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
         cleaned[k] = _clean_day(v)
     book["days"] = cleaned
     book["on"] = bool(book.get("on"))
+    book["on_card"] = bool(book.get("on")) and bool(book.get("on_card"))
 
 
 def _hours24(v) -> list[int]:

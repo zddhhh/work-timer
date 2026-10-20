@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时账本按天翻只限当前这一周；发激励啦平时会侧脸、举红包"
+    "- 倒计时上可显示今天的键鼠次数；发激励啦会蹦跳、转身，并换着说柳州话"
 )
 
 

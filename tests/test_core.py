@@ -269,6 +269,24 @@ class MeowTests(unittest.TestCase):
         sizes = {suofen._pose("run", t).size for t in (0.2, 3.0, 5.4)}
         self.assertGreaterEqual(len(sizes), 3)
 
+    def test_suofen_line_follows_the_pose(self):
+        import suofen
+
+        hold = suofen._talk("run", 0.4)
+        side = suofen._talk("run", 2.2)
+        bounce = suofen._talk("run", 4.0)
+        self.assertIn(hold, suofen._TALK["hold"]["run"])
+        self.assertIn(side, suofen._TALK["side"]["run"])
+        self.assertIn(bounce, suofen._TALK["bounce"]["run"])
+        self.assertEqual(suofen._talk("run", 2.2), suofen._talk("run", 2.8))
+        self.assertNotEqual(suofen._talk("run", 2.2), suofen._talk("run", 2.2 + suofen._LOOP))
+        self.assertNotEqual(suofen._pose("run", 2.2).size, suofen._pose("run", 7.0).size)
+        self.assertGreater(suofen._hop("run", 4.2), suofen._hop("run", 0.05))
+        card = __import__("PIL").Image.new("RGBA", (320, 120), (0, 0, 0, 0))
+        suofen.paint(card, 2.2, stage="run")
+        again = suofen._backdrop(320, 120)
+        self.assertIs(again, suofen._backdrop(320, 120))
+
     def test_paint_all_stages_and_sizes(self):
         import meow
 
@@ -1630,6 +1648,28 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(c["clicks_h"][11], 1)
         self.assertEqual(c["hours"][11], 2)
         self.assertEqual(c["wheels_h"][11], 1)
+
+    def test_card_line_follows_the_display_switch(self):
+        import activity
+
+        cfg = {}
+        d = date(2026, 10, 20)
+        self.assertFalse(activity.show_on_card(cfg))
+        activity.set_show_on_card(cfg, True)
+        self.assertTrue(activity.enabled(cfg))
+        self.assertTrue(activity.show_on_card(cfg))
+        now = datetime(2026, 10, 20, 9, 0)
+        activity.note(cfg, "key", now)
+        activity.note(cfg, "click", now)
+        activity.note(cfg, "wheel", now)
+        line = activity.card_line(cfg, d)
+        self.assertIn("键盘 1", line)
+        self.assertIn("鼠标 1", line)
+        self.assertIn("滚轮 1", line)
+        self.assertIn("键 1", activity.card_line(cfg, d, short=True))
+        activity.set_enabled(cfg, False)
+        self.assertFalse(activity.show_on_card(cfg))
+        self.assertFalse(activity.enabled(cfg))
 
     def test_chart_series_and_render(self):
         import activity
