@@ -31,9 +31,10 @@ class SubscribeTests(unittest.TestCase):
         self.assertIn("只要这一版", html)
         self.assertIn("以后每版都寄", html)
         self.assertIn('name="email"', html)
-        self.assertIn("Windows 8.1", html)
-        self.assertIn("Windows 8", html)
-        self.assertIn("Windows 7", html)
+        self.assertIn("Windows 8.1、10、11", html)
+        self.assertIn("Windows 7、8", html)
+        self.assertNotIn('value="win81"', html)
+        self.assertNotIn('value="win8"', html)
 
     def test_signup_once_sends_current_and_does_not_stay(self):
         got = self.fn.signup({}, "a@x.com", "once", "1.3.57")
@@ -43,13 +44,41 @@ class SubscribeTests(unittest.TestCase):
 
     def test_signup_auto_stays_and_second_time_skips_same_version(self):
         first = self.fn.signup({}, "A@X.com", "auto", "1.3.57")
-        self.assertEqual(first["state"]["auto"], [{"email": "a@x.com", "os": "win10"}])
+        self.assertEqual(first["state"]["auto"], [{"email": "a@x.com", "os": "main"}])
         first["state"]["mailed"]["a@x.com"] = "1.3.57"
         second = self.fn.signup(first["state"], "a@x.com", "auto", "1.3.57")
         self.assertFalse(second["send"])
         self.assertIn("翻翻邮件", second["text"])
         self.assertIn("已经寄过了", second["text"])
-        self.assertEqual(second["state"]["auto"], [{"email": "a@x.com", "os": "win10"}])
+        self.assertEqual(second["state"]["auto"], [{"email": "a@x.com", "os": "main"}])
+
+    def test_two_classes_are_independent(self):
+        first = self.fn.signup({}, "a@x.com", "auto", "1.3.59", "", "main")
+        first["state"]["mailed"]["a@x.com"] = self.fn.remember_sent(None, "1.3.59", "main")
+        other = self.fn.signup(first["state"], "a@x.com", "once", "1.3.59", "", "win7")
+        self.assertTrue(other["send"])
+        self.assertIn("Windows 7、8", other["text"])
+        self.assertEqual(other["state"]["auto"], [{"email": "a@x.com", "os": "main"}])
+        both = self.fn.signup(other["state"], "a@x.com", "auto", "1.3.59", "", "win7")
+        both["state"]["mailed"]["a@x.com"] = self.fn.remember_sent(
+            both["state"]["mailed"]["a@x.com"], "1.3.59", "win7",
+        )
+        self.assertEqual(
+            sorted(both["state"]["auto"], key=lambda item: item["os"]),
+            [{"email": "a@x.com", "os": "main"}, {"email": "a@x.com", "os": "win7"}],
+        )
+        again = self.fn.signup(both["state"], "a@x.com", "once", "1.3.59", "", "main")
+        self.assertFalse(again["send"])
+        self.assertIn("翻翻邮件", again["text"])
+        self.assertNotIn("还可以再要", again["text"])
+        self.assertEqual(again["state"]["auto"], [{"email": "a@x.com", "os": "win7"}])
+        self.assertEqual(
+            self.fn.due_auto(
+                {"last_version": "1.3.59", "auto": both["state"]["auto"], "mailed": {}},
+                "1.3.60",
+            ),
+            [{"email": "a@x.com", "os": "main"}, {"email": "a@x.com", "os": "win7"}],
+        )
 
     def test_manual_removes_auto(self):
         state = {"auto": ["a@x.com"], "mailed": {}}
@@ -61,14 +90,14 @@ class SubscribeTests(unittest.TestCase):
         state = {"last_version": "1.3.57", "auto": ["a@x.com"], "mailed": {"a@x.com": "1.3.57"}}
         self.assertEqual(self.fn.due_auto(state, "1.3.57"), [])
         self.assertEqual(self.fn.due_auto({"auto": ["a@x.com"]}, "1.3.57"), [])
-        self.assertEqual(self.fn.due_auto(state, "1.3.58"), [{"email": "a@x.com", "os": "win10"}])
+        self.assertEqual(self.fn.due_auto(state, "1.3.58"), [{"email": "a@x.com", "os": "main"}])
 
     def test_mail_shows_version_and_sender_without_the_checksum(self):
         note = "WorkTimer 1.3.58\n\n- 说明一条\n\n# sha256(WorkTimer-Setup.exe): deadbeef\n# sha256: deadbeef\n"
         text = self.fn.mail_text("1.3.58", "earoot@163.com", note, "win8")
         self.assertIn("最新版本：1.3.58", text)
         self.assertIn("earoot@163.com", text)
-        self.assertIn("Windows 8", text)
+        self.assertIn("Windows 7、8", text)
         self.assertIn("只有 WorkTimer-Win7-Setup.exe", text)
         self.assertNotIn("Windows 10", text)
         self.assertIn("说明一条", text)
@@ -78,7 +107,7 @@ class SubscribeTests(unittest.TestCase):
             "a@x.com", "1.3.58", "earoot@163.com", note,
             [("WorkTimer-Win7-Setup.exe", b"win7")], "win8",
         )
-        self.assertIn("Windows 8", msg["Subject"])
+        self.assertIn("Windows 7、8", msg["Subject"])
         self.assertNotIn("sha256", msg.get_body(preferencelist=("plain",)).get_content().lower())
         self.assertEqual(msg["X-WorkTimer-Win7"], hashlib.sha256(b"win7").hexdigest())
         packed = next(msg.iter_attachments()).get_payload(decode=True)
@@ -88,7 +117,7 @@ class SubscribeTests(unittest.TestCase):
         got = self.fn.signup({}, "a@x.com", "once", "1.3.58", "earoot@163.com")
         self.assertIn("最新版 1.3.58", got["text"])
         self.assertIn("earoot@163.com", got["text"])
-        self.assertIn("Windows 10 / 11", got["text"])
+        self.assertIn("Windows 8.1、10、11", got["text"])
 
     def test_same_package_asks_to_check_the_mailbox(self):
         state = {"mailed": {"a@x.com": {"version": "1.3.59", "os": "win10"}}, "auto": []}

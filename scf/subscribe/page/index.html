@@ -29,7 +29,7 @@ button:disabled { opacity:.6; }
 <div id="signup">
 <h1>用邮箱收安装包</h1>
 <p class="ver" id="ver">最新版本：正在获取…</p>
-<p class="note">内网收不到更新时用。先选系统，只寄那一份。发信邮箱是 earoot@163.com，请认准这个发件人。Windows 8.1、10、11 用同一份，Windows 8 和 Windows 7 用另一份。</p>
+<p class="note">内网收不到更新时用。两类分开寄，互不影响：要过新系统的，还能再要旧系统的。同一类的同一个版本只寄一次。长期订阅只跟着你这次选的那一类，两类都要以后每版都收，就各订一次。发信邮箱是 earoot@163.com，请认准这个发件人。</p>
 <form id="f">
 <fieldset>
 <legend>邮箱</legend>
@@ -37,16 +37,14 @@ button:disabled { opacity:.6; }
 </fieldset>
 <fieldset>
 <legend>系统</legend>
-<label class="choice"><input type="radio" name="os" value="win10" checked> Windows 10 / 11</label>
-<label class="choice"><input type="radio" name="os" value="win81"> Windows 8.1</label>
-<label class="choice"><input type="radio" name="os" value="win8"> Windows 8</label>
-<label class="choice"><input type="radio" name="os" value="win7"> Windows 7</label>
+<label class="choice"><input type="radio" name="os" value="main" checked> Windows 8.1、10、11</label>
+<label class="choice"><input type="radio" name="os" value="win7"> Windows 7、8</label>
 </fieldset>
 <fieldset>
 <legend>寄送</legend>
 <label class="choice"><input type="radio" name="mode" value="once" checked> 只要这一版</label>
 <label class="choice"><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
-<p class="hint">选「以后每版都寄」，邮件底部有取消链接。</p>
+<p class="hint">选「以后每版都寄」，邮件底部有取消链接，点开会停掉这个邮箱以后的自动寄送。</p>
 </fieldset>
 <button type="submit">寄给我</button>
 </form>

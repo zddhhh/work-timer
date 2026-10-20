@@ -38,13 +38,12 @@ from email.message import EmailMessage
 API = "https://api.gitcode.com/api/v5"
 ASSET = "WorkTimer-Setup.exe"
 WIN7_ASSET = "WorkTimer-Win7-Setup.exe"
-# 主安装包从 Windows 8.1 起。Windows 8（不是 8.1）和 Windows 7 用同一份旧安装包。
+# 两类安装包。8.1 起用主包，Windows 8 和 Windows 7 用另一份。寄过其中一类，还可以再要另一类。
 SYSTEMS = {
-    "win10": ("Windows 10 / 11", ASSET),
-    "win81": ("Windows 8.1", ASSET),
-    "win8": ("Windows 8", WIN7_ASSET),
-    "win7": ("Windows 7", WIN7_ASSET),
+    "main": ("Windows 8.1、10、11", ASSET),
+    "win7": ("Windows 7、8", WIN7_ASSET),
 }
+_OS_ALIAS = {"win10": "main", "win81": "main", "win8": "win7", "main": "main", "win7": "win7"}
 STATE_KEY = "/subscribe/state.json"
 PAGE_URL = "https://zddhhh.github.io/worktimer-subscribe/"
 DAILY_CAP = 40
@@ -100,7 +99,8 @@ def _http(event: dict) -> dict:
     decision = signup(state, email, mode, release["version"], sender, os_key)
     if decision["send"]:
         _mail_one(email, release, os_key, unsub=(mode == "auto"))
-        decision["state"].setdefault("mailed", {})[email] = {"version": release["version"], "os": os_key}
+        mailed = decision["state"].setdefault("mailed", {})
+        mailed[email] = remember_sent(mailed.get(email), release["version"], os_key)
         _bump_sent(decision["state"])
     _save_state(decision["state"])
     if decision["send"]:
@@ -128,7 +128,8 @@ def _fanout() -> str:
         if _sent_today(state) >= DAILY_CAP:
             break
         _mail_one(person["email"], release, person["os"], unsub=True)
-        state.setdefault("mailed", {})[person["email"]] = {"version": version, "os": person["os"]}
+        mailed = state.setdefault("mailed", {})
+        mailed[person["email"]] = remember_sent(mailed.get(person["email"]), version, person["os"])
         _bump_sent(state)
         sent.append(person["email"])
     if sent and len(sent) == len(due):
@@ -139,18 +140,16 @@ def _fanout() -> str:
 
 def _clean_os(raw: str) -> str | None:
     key = (raw or "").strip().lower()
-    if key in SYSTEMS:
-        return key
-    return None
+    return _OS_ALIAS.get(key)
 
 
 def _entry(item: object) -> dict[str, str] | None:
     if isinstance(item, str):
         email = item.strip().lower()
-        os_key = "win10"
+        os_key = "main"
     elif isinstance(item, dict):
         email = str(item.get("email") or "").strip().lower()
-        os_key = _clean_os(str(item.get("os") or "")) or "win10"
+        os_key = _clean_os(str(item.get("os") or "")) or "main"
     else:
         return None
     if not email:
@@ -158,24 +157,40 @@ def _entry(item: object) -> dict[str, str] | None:
     return {"email": email, "os": os_key}
 
 
-def _same_package(left: str, right: str) -> bool:
-    return SYSTEMS[left][1] == SYSTEMS[right][1]
+def _package(os_key: str) -> str:
+    return "win7" if SYSTEMS[_clean_os(os_key) or "main"][1] == WIN7_ASSET else "main"
+
+
+def packages_sent(record: object, version: str) -> set[str]:
+    """这一版已经寄过哪几类。老记录只记了版本号，当成主安装包，Win7 那份还可以再寄。"""
+    if record == version:
+        return {"main"}
+    if not isinstance(record, dict) or record.get("version") != version:
+        return set()
+    raw = record.get("os")
+    items = raw if isinstance(raw, list) else [raw]
+    found = set()
+    for item in items:
+        key = _clean_os(str(item or ""))
+        if key:
+            found.add(_package(key))
+    return found
+
+
+def remember_sent(record: object, version: str, os_key: str) -> dict:
+    found = set(packages_sent(record, version))
+    found.add(_package(os_key))
+    return {"version": version, "os": sorted(found)}
 
 
 def already_sent(record: object, version: str, os_key: str) -> bool:
-    """老记录只存版本号，那一封里两份安装包都有。新记录按系统记，同一份安装包不重寄。"""
-    if record == version:
-        return True
-    if isinstance(record, dict) and record.get("version") == version:
-        prev = _clean_os(str(record.get("os") or "")) or "win10"
-        return _same_package(prev, os_key)
-    return False
+    return _package(os_key) in packages_sent(record, version)
 
 
-def signup(state: dict, email: str, mode: str, version: str, sender: str = "", os_key: str = "win10") -> dict:
+def signup(state: dict, email: str, mode: str, version: str, sender: str = "", os_key: str = "main") -> dict:
     """决定要不要寄这一版，以及名单怎么改。不碰网络。"""
     email = email.strip().lower()
-    os_key = _clean_os(os_key) or "win10"
+    os_key = _clean_os(os_key) or "main"
     state = {
         "last_version": state.get("last_version") or "",
         "auto": list(state.get("auto") or []),
@@ -183,20 +198,33 @@ def signup(state: dict, email: str, mode: str, version: str, sender: str = "", o
         "day": state.get("day") or "",
         "sent_count": int(state.get("sent_count") or 0),
     }
+    # 两类各算一份：再要另一类不会把这一类的长期订阅冲掉。
+    # 「只要这一版」只停掉这一类，另一类还在的话继续寄。
+    was_auto = False
     auto = []
     for item in state["auto"]:
         entry = _entry(item)
-        if entry is None or entry["email"] == email:
+        if entry is None:
+            continue
+        if entry["email"] == email and entry["os"] == os_key:
+            was_auto = True
             continue
         auto.append(entry)
     if mode == "auto":
         auto.append({"email": email, "os": os_key})
     state["auto"] = auto
     label = SYSTEMS[os_key][0]
-    if already_sent(state["mailed"].get(email), version, os_key):
-        text = f"翻翻邮件，最新版 {version} 已经寄过了。"
+    other = "win7" if os_key == "main" else "main"
+    other_label = SYSTEMS[other][0]
+    record = state["mailed"].get(email)
+    if already_sent(record, version, os_key):
+        text = f"翻翻邮件，{label} 的 {version} 已经寄过了。"
+        if not already_sent(record, version, other):
+            text += f"{other_label} 还可以再要。"
         if mode == "auto":
-            text += "以后的新版本也会寄。"
+            text += "以后这一类的新版本也会寄。"
+        elif was_auto:
+            text += "这一类以后不再自动寄。"
         return {"state": state, "send": False, "text": text}
     if _sent_today(state) >= DAILY_CAP:
         return {"state": state, "send": False, "text": "今天寄得太多了，明天再试。"}
@@ -204,9 +232,11 @@ def signup(state: dict, email: str, mode: str, version: str, sender: str = "", o
     if sender:
         text += f"发信邮箱是 {sender}，请核对发件人再打开。"
     if mode == "auto":
-        text += "以后每次新版本也会寄。不想要了，用邮件里的链接取消。"
+        text += "以后这一类的新版本也会寄。不想要了，用邮件里的链接取消。"
     else:
         text += "只要这一版。"
+        if not already_sent(record, version, other):
+            text += f"{other_label} 还可以另要一份。"
     return {"state": state, "send": True, "text": text}
 
 
@@ -290,7 +320,7 @@ def _form(error: str = "", sender: str = "") -> str:
     if sender:
         lead = (
             f"安装包由 {_esc(sender)} 寄出，请认准这个发件人。"
-            "先选自己的系统，只寄那一份。信里写着最新版本号。"
+            "两类分开寄，互不影响。同一类的同一个版本只寄一次。"
         )
     else:
         lead = "电脑连不上更新时，先选自己的系统，安装包寄到邮箱。"
@@ -313,11 +343,8 @@ button {{ margin-top:8px; padding:10px 18px; font-size:16px; background:#b02a24;
 <form method="post">
 <label>邮箱<br><input type="email" name="email" required placeholder="name@example.com"></label>
 <label>系统</label>
-<label><input type="radio" name="os" value="win10" checked> Windows 10 / 11</label>
-<label><input type="radio" name="os" value="win81"> Windows 8.1</label>
-<label><input type="radio" name="os" value="win8"> Windows 8</label>
-<label><input type="radio" name="os" value="win7"> Windows 7</label>
-<p>Windows 8.1、10、11 用同一份。Windows 8 和 Windows 7 用另一份。</p>
+<label><input type="radio" name="os" value="main" checked> Windows 8.1、10、11</label>
+<label><input type="radio" name="os" value="win7"> Windows 7、8</label>
 <label><input type="radio" name="mode" value="once" checked> 只要这一版</label>
 <label><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
 <button type="submit">寄给我</button>
@@ -511,8 +538,8 @@ def unsubscribe(state: dict, token: str, secret: str) -> dict:
     return {"ok": True, "changed": found, "state": state, "text": text}
 
 
-def mail_text(version: str, sender: str, note: str = "", system: str = "win10", unsub_url: str = "") -> str:
-    os_key = _clean_os(system) or "win10"
+def mail_text(version: str, sender: str, note: str = "", system: str = "main", unsub_url: str = "") -> str:
+    os_key = _clean_os(system) or "main"
     label, asset = SYSTEMS[os_key]
     lines = [
         f"最新版本：{version}",
@@ -591,10 +618,10 @@ def build_mail(
     sender: str,
     note: str,
     files: list[tuple[str, bytes]],
-    system: str = "win10",
+    system: str = "main",
     unsub_url: str = "",
 ) -> EmailMessage:
-    os_key = _clean_os(system) or "win10"
+    os_key = _clean_os(system) or "main"
     msg = EmailMessage()
     msg["Subject"] = f"WorkTimer 最新版 {version}（{SYSTEMS[os_key][0]}）"
     msg["From"] = sender
@@ -622,8 +649,8 @@ def _cancel(token: str) -> dict:
     return _html(200, _message_html(title, result["text"]))
 
 
-def _mail_one(email: str, release: dict, system: str = "win10", unsub: bool = False) -> None:
-    os_key = _clean_os(system) or "win10"
+def _mail_one(email: str, release: dict, system: str = "main", unsub: bool = False) -> None:
+    os_key = _clean_os(system) or "main"
     asset = SYSTEMS[os_key][1]
     files = [(asset, _download(release["downloads"][asset]))]
     link = cancel_link(email, _env("SMTP_PASSWORD")) if unsub and _env("SMTP_PASSWORD") else ""
