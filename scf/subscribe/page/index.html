@@ -17,7 +17,7 @@ button { margin-top:18px; font:16px sans-serif; padding:10px 18px; background:#8
 <body>
 <main>
 <h1>订阅 WorkTimer</h1>
-<p class="note">内网收不到更新时，填邮箱。安装包会寄过来。</p>
+<p class="note">内网收不到更新时，填邮箱。最新版安装包由 earoot@163.com 寄出，请认准这个发件人。压缩包里有 Win10/11 和 Win7 两个安装程序，信里写着版本号，装好后看窗口标题对照。</p>
 <form id="f">
 <label>邮箱<br><input type="email" name="email" required placeholder="name@example.com"></label>
 <label><input type="radio" name="mode" value="once" checked> 只要这一版</label>
@@ -33,7 +33,7 @@ document.getElementById("f").addEventListener("submit", async (ev) => {
   const out = document.getElementById("out");
   const btn = ev.target.querySelector("button");
   btn.disabled = true;
-  out.innerHTML = "<p>正在寄，安装包比较大，稍等。</p>";
+  out.innerHTML = "<p>正在寄，两个安装包比较大，稍等。</p>";
   const body = new URLSearchParams(new FormData(ev.target));
   try {
     const resp = await fetch(API, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } });

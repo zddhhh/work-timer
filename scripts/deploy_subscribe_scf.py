@@ -133,8 +133,8 @@ def _upsert(cli, zip_b64: str, env: dict) -> None:
         req.Runtime = RUNTIME
         req.Handler = "index.main_handler"
         req.Code = code
-        req.MemorySize = 256
-        req.Timeout = 300
+        req.MemorySize = 512
+        req.Timeout = 600
         req.Description = "弹性下班计时器邮箱订阅：收表单并寄安装包"
         variables = []
         for k, v in env.items():
@@ -159,8 +159,8 @@ def _upsert(cli, zip_b64: str, env: dict) -> None:
         _wait_active(cli)
         cfg = models.UpdateFunctionConfigurationRequest()
         cfg.FunctionName = FUNCTION_NAME
-        cfg.MemorySize = 256
-        cfg.Timeout = 300
+        cfg.MemorySize = 512
+        cfg.Timeout = 600
         cfg.Description = "弹性下班计时器邮箱订阅：收表单并寄安装包"
         variables = []
         for k, v in env.items():

@@ -12,10 +12,8 @@
 """
 from __future__ import annotations
 
-import io
 import json
 import smtplib
-import zipfile
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -44,51 +42,35 @@ def load_smtp(path: Path | None = None) -> dict | None:
     }
 
 
-def _zip_setup(setup: Path) -> bytes:
-    """163 会拒收 exe 附件，压成 zip 再寄。"""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
-        zf.write(setup, setup.name)
-    return buf.getvalue()
+def _subscribe():
+    import importlib.util
+
+    path = ROOT / "scf" / "subscribe" / "index.py"
+    spec = importlib.util.spec_from_file_location("subscribe_scf_mail", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def build_message(
     version: str,
     note: str,
     setup: Path,
-    digest: str,
     sender: str,
     recipients: tuple[str, ...],
     cc: tuple[str, ...] = (),
+    win7: Path | None = None,
 ) -> EmailMessage:
     if not recipients:
         raise ValueError("没有收件人")
-    packed = f"WorkTimer-{version}.zip"
-    msg = EmailMessage()
-    msg["Subject"] = f"WorkTimer {version} 安装包"
-    msg["From"] = sender
-    msg["To"] = ", ".join(recipients)
+    files = [(setup.name, setup.read_bytes())]
+    if win7 is not None:
+        files.append((win7.name, win7.read_bytes()))
+    msg = _subscribe().build_mail(recipients[0], version, sender, note, files)
+    if len(recipients) > 1:
+        msg.replace_header("To", ", ".join(recipients))
     if cc:
         msg["Cc"] = ", ".join(cc)
-    msg.set_content(
-        "\n".join(
-            [
-                f"WorkTimer {version} 安装包在附件的压缩包里。",
-                "解压后双击 WorkTimer-Setup.exe 即可安装。",
-                "",
-                note.strip(),
-                "",
-                f"sha256: {digest}",
-                f"发布页：{RELEASE_PAGE}",
-            ]
-        )
-    )
-    msg.add_attachment(
-        _zip_setup(setup),
-        maintype="application",
-        subtype="zip",
-        filename=packed,
-    )
     return msg
 
 
@@ -102,6 +84,7 @@ def send_release(
     if not recipients:
         return
     setup = next((p for p in setups if p.name == "WorkTimer-Setup.exe"), None)
+    win7 = next((p for p in setups if p.name == "WorkTimer-Win7-Setup.exe"), None)
     if setup is None:
         raise SystemExit("没有主安装包，没法发邮件")
     cfg = load_smtp()
@@ -110,7 +93,7 @@ def send_release(
             "缺少 release_mail.secret.json（host/port/user/password/from），"
             f"安装包还没寄到 {', '.join(recipients)}"
         )
-    msg = build_message(version, note, setup, digests[setup.name], cfg["from"], recipients)
+    msg = build_message(version, note, setup, cfg["from"], recipients, win7=win7)
     print(f"寄安装包到 {', '.join(recipients)} …")
     port = cfg["port"]
     if port == 465:

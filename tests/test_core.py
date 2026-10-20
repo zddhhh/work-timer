@@ -1931,11 +1931,23 @@ class ReleaseMailTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             setup = Path(tmp) / "WorkTimer-Setup.exe"
             setup.write_bytes(b"setup-bytes")
+            win7 = Path(tmp) / "WorkTimer-Win7-Setup.exe"
+            win7.write_bytes(b"win7-bytes")
             msg = mail.build_message(
-                "1.3.56", "- 说明", setup, "abc", "from@example.com", ("to@example.com",)
+                "1.3.56",
+                "- 说明\nsha256: abcdef",
+                setup,
+                "from@example.com",
+                ("to@example.com",),
+                win7=win7,
             )
+        body = msg.get_body(preferencelist=("plain",)).get_content()
         self.assertEqual(msg["To"], "to@example.com")
         self.assertIsNone(msg["Cc"])
+        self.assertIn("最新版本：1.3.56", body)
+        self.assertIn("from@example.com", body)
+        self.assertNotIn("sha256", body.lower())
+        self.assertNotIn("abcdef", body)
         self.assertIn("1.3.56", msg["Subject"])
         names = [part.get_filename() for part in msg.iter_attachments()]
         self.assertEqual(names, ["WorkTimer-1.3.56.zip"])
