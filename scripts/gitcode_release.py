@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 键鼠次数改成计时器上方的小胶囊；发激励啦的话不再盖住倒计时；拖动更跟手"
+    "- 计时器上方的次数胶囊跟着拖动一起走，不再落在后面"
 )
 
 

@@ -1672,6 +1672,9 @@ class ActivityTests(unittest.TestCase):
         self.assertGreaterEqual(y2, 2 + 92)
         x3, _y = tally_bubble.place(1900, 500, 248, 92, small.width, small.height, area)
         self.assertLessEqual(x3 + small.width, 1920)
+        bubble = tally_bubble.TallyBubble()
+        bubble.follow((10, 10, 248, 92))
+        self.assertEqual((bubble.x, bubble.y), (0, 0))
 
     def test_surface_ring_is_full_minus_window(self):
         import backdrop

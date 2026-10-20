@@ -391,6 +391,7 @@ class LayeredPetWindow:
         self._on_mouse_move: Callable[[int, int], None] | None = None
         self._on_mouse_leave: Callable[[], None] | None = None
         self._live_tick: Callable[[], None] | None = None
+        self._on_geometry: Callable[[], None] | None = None
         self._on_raw_input: Callable[[bytes], None] | None = None
         self._raw_listening = False
         self._popup_open = False
@@ -527,6 +528,20 @@ class LayeredPetWindow:
                 height,
                 SWP_NOZORDER | SWP_NOACTIVATE,
             )
+        self._notify_geometry()
+
+    def set_geometry_handler(self, fn: Callable[[], None] | None) -> None:
+        """位置或大小一变就调用，发生在鼠标消息里，不等主循环。"""
+        self._on_geometry = fn
+
+    def _notify_geometry(self) -> None:
+        fn = self._on_geometry
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception:
+            pass
 
     def set_right_click_handler(self, fn: Callable[[int, int], None]) -> None:
         self._on_right_click = fn
@@ -649,6 +664,7 @@ class LayeredPetWindow:
         self.x, self.y = clamp_pos(int(x), int(y), self.width, self.height)
         if self._has_pixels:
             self._blit(move=True)
+            self._notify_geometry()
             return
         if self.hwnd:
             user32.SetWindowPos(
@@ -660,6 +676,7 @@ class LayeredPetWindow:
                 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             )
+        self._notify_geometry()
 
     def move(self, x: int, y: int) -> None:
         self._apply_pos(x, y)

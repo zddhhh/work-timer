@@ -220,6 +220,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.win.set_mouse_leave_handler(self._on_mouse_leave)
         self.win.set_right_click_handler(self._request_menu)
         self.win.set_request_show_handler(self._on_request_show)
+        self.win.set_geometry_handler(self._follow_tally)
         self._esc_hidden = False
 
         area = layered_win.work_area()
@@ -940,6 +941,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             return
         self.cfg["auto_start"] = on
         store.save_config(self.cfg)
+
+    def _follow_tally(self) -> None:
+        """计时器一挪，胶囊在同一条消息里跟上。"""
+        if not activity.show_on_card(self.cfg) or self._esc_hidden:
+            return
+        w = self.win
+        self._tally.follow((w.x, w.y, w.width, w.height))
 
     def _sync_tally(self) -> None:
         """键鼠次数小胶囊跟着卡片走。次数最多一秒刷四次，位置每圈都对一下。"""

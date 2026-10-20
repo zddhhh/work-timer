@@ -227,6 +227,20 @@ class TallyBubble:
             lw.user32.ShowWindow(self.hwnd, lw.SW_SHOWNOACTIVATE)
             self._shown = True
 
+    def follow(self, card: tuple[int, int, int, int]) -> None:
+        """只挪位置。拖动时和计时器走同一条鼠标消息，不重画、不等主循环。"""
+        if not self.hwnd or not self._shown or self.w < 2:
+            return
+        cx, cy, cw, ch = card
+        r = lw.monitor_work_at(cx + cw // 2, cy + ch // 2)
+        x, y = place(cx, cy, cw, ch, self.w, self.h, (int(r.left), int(r.top), int(r.right), int(r.bottom)))
+        if (x, y) == (self.x, self.y):
+            return
+        self.x, self.y = x, y
+        lw.user32.SetWindowPos(
+            self.hwnd, lw.HWND_TOPMOST, x, y, 0, 0, lw.SWP_NOSIZE | lw.SWP_NOACTIVATE,
+        )
+
     def hide(self) -> None:
         if self.hwnd and self._shown:
             lw.user32.ShowWindow(self.hwnd, 0)
