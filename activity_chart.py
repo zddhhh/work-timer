@@ -1,4 +1,8 @@
-"""工时账本里的键鼠次数图：三个总数，下面按小时分成三行。"""
+"""工时账本里的键鼠次数图。
+
+口径只有一套：键盘、鼠标、滚轮。今天按小时看这三项，这周按天把同一项加总。
+不和账本左边的「待了多久」混在一起。
+"""
 from __future__ import annotations
 
 import math
@@ -12,6 +16,8 @@ import activity
 
 W, H = 584, 292
 IDLE_READOUT = "移到柱上，看这一小时各是多少"
+WEEK_IDLE = "移到某一天，看这三项各是多少"
+_WD = "一二三四五六日"
 READOUT = (16, 258, 568, 280)
 _FONT: dict[tuple, ImageFont.ImageFont] = {}
 
@@ -105,24 +111,40 @@ def week_pack(cfg: dict, days: list[date], today: date) -> list[dict]:
     out = []
     for d in days:
         c = activity.counts(cfg, d)
+        mode, _, _, _ = hourly_series(c)
         out.append(
             {
                 "date": d,
+                "mode": mode,
                 "keys": c["keys"],
                 "clicks": c["clicks"],
                 "wheels": c["wheels"],
-                "total": c["keys"] + c["clicks"] + c["wheels"],
+                "combined": sum(c["hours"]) if mode == "combined" else 0,
                 "today": d == today,
                 "weekend": d.weekday() >= 5,
+                "future": d > today,
             }
         )
     return out
 
 
-def signature(today: dict, days: list[dict], *, enabled: bool, this_week: bool) -> tuple:
+def week_totals(days: list[dict]) -> tuple[int, int, int]:
+    """这周三项合计。只加已经分开记的天，旧的「只记了总数」不混进来。"""
+    keys = clicks = wheels = 0
+    for row in days:
+        if row.get("future") or row.get("mode") == "combined":
+            continue
+        keys += int(row.get("keys") or 0)
+        clicks += int(row.get("clicks") or 0)
+        wheels += int(row.get("wheels") or 0)
+    return keys, clicks, wheels
+
+
+def signature(today: dict, days: list[dict], *, enabled: bool, this_week: bool, view: str = "today") -> tuple:
     return (
         enabled,
         this_week,
+        view,
         today["mode"],
         today["keys"],
         today["clicks"],
@@ -131,7 +153,10 @@ def signature(today: dict, days: list[dict], *, enabled: bool, this_week: bool) 
         tuple(today["clicks_h"]),
         tuple(today["wheels_h"]),
         tuple(today["hours"]),
-        tuple((row["keys"], row["clicks"], row["wheels"], row["today"]) for row in days),
+        tuple(
+            (row["keys"], row["clicks"], row["wheels"], row.get("combined", 0), row["today"], row.get("mode"))
+            for row in days
+        ),
     )
 
 
@@ -185,15 +210,144 @@ def _paint_readout(im: Image.Image, text: str, *, active: bool = False) -> None:
     _text(dr, ((x0 + x1) / 2, (y0 + y1) / 2), text, size=12, fill=_WHITE if active else _MUTED, anchor="mm")
 
 
+def _day_text(row: dict) -> str:
+    d = row["date"]
+    head = f"周{_WD[d.weekday()]} {d.month}/{d.day}"
+    if row.get("future"):
+        return f"{head}    还没到"
+    if row.get("mode") == "combined":
+        return f"{head}    操作 {activity.fmt_count(row.get('combined') or 0)}（这天还没分开记）"
+    if row.get("mode") == "empty":
+        return f"{head}    还没记下"
+    return (
+        f"{head}    键盘 {activity.fmt_count(row['keys'])}"
+        f"    鼠标 {activity.fmt_count(row['clicks'])}"
+        f"    滚轮 {activity.fmt_count(row['wheels'])}"
+    )
+
+
+def _busiest_caption(days: list[dict]) -> str:
+    best = None
+    best_n = 0
+    combined = 0
+    for row in days:
+        if row.get("future"):
+            continue
+        if row.get("mode") == "combined":
+            combined += 1
+            n = int(row.get("combined") or 0)
+        elif row.get("mode") == "empty":
+            n = 0
+        else:
+            n = int(row["keys"]) + int(row["clicks"]) + int(row["wheels"])
+        if n > best_n:
+            best_n = n
+            best = row
+    if best is None:
+        return "这周还没记下次数"
+    d = best["date"]
+    text = f"最勤 周{_WD[d.weekday()]}"
+    if combined:
+        text += f"  ·  有 {combined} 天只记了总数"
+    return text
+
+
+def _render_week(
+    days: list[dict],
+    *,
+    enabled: bool,
+    w: int,
+    h: int,
+) -> tuple[Image.Image, list[dict]]:
+    im = Image.new("RGBA", (w, h), _PAGE)
+    dr = ImageDraw.Draw(im)
+    _round(dr, (0, 0, w - 1, h - 1), _PANEL, radius=12)
+    hits: list[dict] = []
+    if not enabled:
+        _text(dr, (w / 2, h / 2 - 10), "打开开关，开始数今天敲了多少、点了多少", size=13, fill=_WHITE, anchor="mm")
+        _text(dr, (w / 2, h / 2 + 12), "只记次数，不记按了哪个键，也不上传", size=11, fill=_MUTED, anchor="mm")
+        return im, hits
+
+    inset = 18
+    keys, clicks, wheels = week_totals(days)
+    stats_y = 16
+    items = (("键盘", keys, _KEY), ("鼠标", clicks, _CLICK), ("滚轮", wheels, _WHEEL))
+    col_w = (w - inset * 2) / 3
+    for i, (name, val, color) in enumerate(items):
+        cx = inset + (i + 0.5) * col_w
+        if i:
+            x = int(inset + i * col_w)
+            dr.line((x, stats_y + 4, x, stats_y + 44), fill=_GRID, width=1)
+        _text(dr, (cx, stats_y + 2), name, size=11, fill=color, anchor="mt")
+        _text(dr, (cx, stats_y + 42), activity.fmt_count(val), size=22, fill=_WHITE, anchor="ms", bold=True)
+    _text(dr, (inset, 78), _busiest_caption(days), size=11, fill=_MUTED, anchor="lm")
+
+    plot_l, plot_r = 24, w - inset
+    plot_top, base = 96, 228
+    bar_room = base - plot_top
+    group_w = (plot_r - plot_l) / max(1, len(days))
+    dr.line((plot_l + 8, base, plot_r - 8, base), fill=_LINE, width=1)
+    values = []
+    for row in days:
+        if row.get("future") or row.get("mode") == "empty":
+            continue
+        if row.get("mode") == "combined":
+            values.append(int(row.get("combined") or 0))
+        else:
+            values.extend((int(row["keys"]), int(row["clicks"]), int(row["wheels"])))
+    vmax = max(values or [0])
+    for i, row in enumerate(days):
+        gx0 = plot_l + i * group_w
+        gx1 = gx0 + group_w
+        if not row.get("future") and row.get("mode") != "empty" and vmax > 0:
+            if row.get("mode") == "combined":
+                series = ((int(row.get("combined") or 0), _COMBINED),)
+            else:
+                series = (
+                    (int(row["keys"]), _KEY),
+                    (int(row["clicks"]), _CLICK),
+                    (int(row["wheels"]), _WHEEL),
+                )
+            bar_w = max(6, int((group_w - 18) / max(1, len(series))) - 2)
+            span = len(series) * bar_w + (len(series) - 1) * 3
+            left = gx0 + (group_w - span) / 2
+            for j, (v, color) in enumerate(series):
+                if not v:
+                    continue
+                x0 = int(left + j * (bar_w + 3))
+                y0 = int(base - (v / vmax) * (bar_room - 8))
+                _bar(dr, (x0, y0, x0 + bar_w, base), color, radius=2)
+        label_fill = _TODAY if row.get("today") else (_DIM if row.get("weekend") else _MUTED)
+        d = row["date"]
+        mid = (gx0 + gx1) / 2
+        if row.get("today"):
+            _round(dr, (mid - 12, base + 4, mid + 12, base + 24), (48, 58, 76, 255), radius=8)
+        _text(dr, (mid, base + 8), _WD[d.weekday()], size=11, fill=label_fill, anchor="mt", bold=bool(row.get("today")))
+        hits.append(
+            {
+                "x0": int(gx0),
+                "x1": int(gx1),
+                "y0": plot_top - 6,
+                "y1": base + 26,
+                "text": _day_text(row),
+            }
+        )
+    _paint_readout(im, WEEK_IDLE)
+    return im, hits
+
+
 def render(
     today: dict,
     days: list[dict],
     *,
     enabled: bool,
     this_week: bool,
+    view: str = "today",
     w: int = W,
     h: int = H,
 ) -> tuple[Image.Image, list[dict]]:
+    if view == "week":
+        return _render_week(days, enabled=enabled, w=w, h=h)
     im = Image.new("RGBA", (w, h), _PAGE)
     dr = ImageDraw.Draw(im)
     _round(dr, (0, 0, w - 1, h - 1), _PANEL, radius=12)
@@ -275,14 +429,25 @@ def render(
     return im, hits
 
 
-def paint_into(ui: dict, cfg: dict, *, today: date, days: list[date], enabled: bool, this_week: bool) -> None:
+def paint_into(
+    ui: dict,
+    cfg: dict,
+    *,
+    today: date,
+    days: list[date],
+    enabled: bool,
+    this_week: bool,
+    view: str = "today",
+) -> None:
     """账本开着时重画。数据没变就跳过，避免每秒重建图片。"""
+    view = "week" if view == "week" else "today"
     pack = today_pack(cfg, today)
     week = week_pack(cfg, days, today)
-    sig = signature(pack, week, enabled=enabled, this_week=this_week)
+    sig = signature(pack, week, enabled=enabled, this_week=this_week, view=view)
     if ui.get("chart_sig") == sig and ui.get("chart_base") is not None:
         return
-    im, hits = render(pack, week, enabled=enabled, this_week=this_week)
+    im, hits = render(pack, week, enabled=enabled, this_week=this_week, view=view)
+    ui["chart_idle"] = WEEK_IDLE if view == "week" else IDLE_READOUT
     ui["chart_base"] = im
     ui["chart_hits"] = hits
     ui["chart_sig"] = sig
@@ -294,11 +459,12 @@ def apply_hover(ui: dict, x: int, y: int) -> None:
     base = ui.get("chart_base")
     if base is None:
         return
-    text = hover_text(ui.get("chart_hits") or [], x, y) or IDLE_READOUT
+    text = hover_text(ui.get("chart_hits") or [], x, y) or str(ui.get("chart_idle") or IDLE_READOUT)
     if text == ui.get("chart_hover") and ui.get("chart_photo") is not None:
         return
     im = base.copy()
-    _paint_readout(im, text, active=text != IDLE_READOUT)
+    idle = str(ui.get("chart_idle") or IDLE_READOUT)
+    _paint_readout(im, text, active=text != idle)
     photo = ImageTk.PhotoImage(im)
     lbl = ui.get("chart_lbl")
     if lbl is not None:

@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1623,6 +1623,22 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(pack["mode"], "split")
         self.assertEqual(pack["clicks_h"][14], 2)
         self.assertEqual(pack["keys_h"][9], 1)
+
+        monday = d - timedelta(days=d.weekday())
+        split_days = activity_chart.week_pack(
+            cfg, [monday + timedelta(days=i) for i in range(7)], d,
+        )
+        self.assertEqual(activity_chart.week_totals(split_days), (1, 2, 0))
+        week_im, week_hits = activity_chart.render(pack, split_days, enabled=True, this_week=True, view="week")
+        self.assertEqual(week_im.size, (activity_chart.W, activity_chart.H))
+        self.assertEqual(len(week_hits), 7)
+        self.assertTrue(any("键盘" in h["text"] and "鼠标" in h["text"] for h in week_hits))
+        self.assertEqual(
+            activity_chart.week_totals(
+                [{"mode": "split", "keys": 1, "clicks": 2, "wheels": 3}, {"mode": "combined", "keys": 9, "clicks": 9, "wheels": 0}],
+            ),
+            (1, 2, 3),
+        )
 
         old = {"keys": 3, "clicks": 5, "wheels": 0, "hours": [0] * 24}
         old["hours"][10] = 8

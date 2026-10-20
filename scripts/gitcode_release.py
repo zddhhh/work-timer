@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 检查更新碰到服务繁忙时会说明过几分钟再试，报名页直接显示最新版本号"
+    "- 工时账本的次数图可以看这一周，和今天按小时看的是同一套键盘、鼠标、滚轮"
 )
 
 

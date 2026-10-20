@@ -2366,13 +2366,25 @@ class WorkTimer:
             return
         today = date.today()
         days = worklog.week_dates(ui["anchor"])
+        this_week = days[0] <= today <= days[-1]
+        view = "today"
+        chooser = ui.get("chart_view")
+        if chooser is not None:
+            view = str(chooser.get() or "today")
+        title = ui.get("chart_title")
+        if title is not None:
+            if view == "week":
+                title.set("本周敲了多少下" if this_week else "这周敲了多少下")
+            else:
+                title.set("今天敲了多少下")
         activity_chart.paint_into(
             ui,
             self.cfg,
             today=today,
             days=days,
             enabled=activity.enabled(self.cfg),
-            this_week=days[0] <= today <= days[-1],
+            this_week=this_week,
+            view=view,
         )
 
     def _build_worklog_dialog(self) -> dict:
@@ -2451,9 +2463,23 @@ class WorkTimer:
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
         head = tk.Frame(right, bg=_CARD_BG)
         head.pack(fill="x", pady=(0, 6))
+        chart_title = tk.StringVar(value="今天敲了多少下")
+        chart_view = tk.StringVar(value="today")
         tk.Label(
-            head, text="今天敲了多少下", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
+            head, textvariable=chart_title, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(side="left")
+        view_box = tk.Frame(head, bg=_CARD_BG)
+        view_box.pack(side="left", padx=(12, 0))
+
+        def on_chart_view() -> None:
+            self._paint_activity_chart(ui)
+
+        for label, value in (("今天", "today"), ("这周", "week")):
+            tk.Radiobutton(
+                view_box, text=label, variable=chart_view, value=value, command=on_chart_view,
+                fg=_CARD_MUTED, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+                activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
+            ).pack(side="left")
 
         def toggle_act() -> None:
             on = bool(act_on.get())
@@ -2480,6 +2506,8 @@ class WorkTimer:
             "week_sum": week_sum,
             "month_sum": month_sum,
             "act_on": act_on,
+            "chart_title": chart_title,
+            "chart_view": chart_view,
             "chart_lbl": chart_lbl,
             "chart_photo": None,
             "chart_hits": [],
