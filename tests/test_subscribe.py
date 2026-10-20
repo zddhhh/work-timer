@@ -31,6 +31,9 @@ class SubscribeTests(unittest.TestCase):
         self.assertIn("只要这一版", html)
         self.assertIn("以后每版都寄", html)
         self.assertIn('name="email"', html)
+        self.assertIn("Windows 8.1", html)
+        self.assertIn("Windows 8", html)
+        self.assertIn("Windows 7", html)
 
     def test_signup_once_sends_current_and_does_not_stay(self):
         got = self.fn.signup({}, "a@x.com", "once", "1.3.57")
@@ -40,11 +43,13 @@ class SubscribeTests(unittest.TestCase):
 
     def test_signup_auto_stays_and_second_time_skips_same_version(self):
         first = self.fn.signup({}, "A@X.com", "auto", "1.3.57")
-        self.assertEqual(first["state"]["auto"], ["a@x.com"])
+        self.assertEqual(first["state"]["auto"], [{"email": "a@x.com", "os": "win10"}])
         first["state"]["mailed"]["a@x.com"] = "1.3.57"
         second = self.fn.signup(first["state"], "a@x.com", "auto", "1.3.57")
         self.assertFalse(second["send"])
-        self.assertEqual(second["state"]["auto"], ["a@x.com"])
+        self.assertIn("翻翻邮件", second["text"])
+        self.assertIn("已经寄过了", second["text"])
+        self.assertEqual(second["state"]["auto"], [{"email": "a@x.com", "os": "win10"}])
 
     def test_manual_removes_auto(self):
         state = {"auto": ["a@x.com"], "mailed": {}}
@@ -56,34 +61,43 @@ class SubscribeTests(unittest.TestCase):
         state = {"last_version": "1.3.57", "auto": ["a@x.com"], "mailed": {"a@x.com": "1.3.57"}}
         self.assertEqual(self.fn.due_auto(state, "1.3.57"), [])
         self.assertEqual(self.fn.due_auto({"auto": ["a@x.com"]}, "1.3.57"), [])
-        self.assertEqual(self.fn.due_auto(state, "1.3.58"), ["a@x.com"])
+        self.assertEqual(self.fn.due_auto(state, "1.3.58"), [{"email": "a@x.com", "os": "win10"}])
 
     def test_mail_shows_version_and_sender_without_the_checksum(self):
         note = "WorkTimer 1.3.58\n\n- 说明一条\n\n# sha256(WorkTimer-Setup.exe): deadbeef\n# sha256: deadbeef\n"
-        text = self.fn.mail_text("1.3.58", "earoot@163.com", note)
+        text = self.fn.mail_text("1.3.58", "earoot@163.com", note, "win8")
         self.assertIn("最新版本：1.3.58", text)
         self.assertIn("earoot@163.com", text)
-        self.assertIn("WorkTimer-Win7-Setup.exe", text)
+        self.assertIn("Windows 8", text)
+        self.assertIn("只有 WorkTimer-Win7-Setup.exe", text)
+        self.assertNotIn("Windows 10", text)
         self.assertIn("说明一条", text)
         self.assertNotIn("sha256", text.lower())
         self.assertNotIn("deadbeef", text)
-        files = [("WorkTimer-Setup.exe", b"main"), ("WorkTimer-Win7-Setup.exe", b"win7")]
-        msg = self.fn.build_mail("a@x.com", "1.3.58", "earoot@163.com", note, files)
-        self.assertEqual(msg["Subject"], "WorkTimer 最新版 1.3.58")
+        msg = self.fn.build_mail(
+            "a@x.com", "1.3.58", "earoot@163.com", note,
+            [("WorkTimer-Win7-Setup.exe", b"win7")], "win8",
+        )
+        self.assertIn("Windows 8", msg["Subject"])
         self.assertNotIn("sha256", msg.get_body(preferencelist=("plain",)).get_content().lower())
-        self.assertEqual(msg["X-WorkTimer-Setup"], hashlib.sha256(b"main").hexdigest())
         self.assertEqual(msg["X-WorkTimer-Win7"], hashlib.sha256(b"win7").hexdigest())
         packed = next(msg.iter_attachments()).get_payload(decode=True)
-        self.assertEqual(
-            zipfile.ZipFile(io.BytesIO(packed)).namelist(),
-            ["WorkTimer-Setup.exe", "WorkTimer-Win7-Setup.exe"],
-        )
+        self.assertEqual(zipfile.ZipFile(io.BytesIO(packed)).namelist(), ["WorkTimer-Win7-Setup.exe"])
 
     def test_signup_names_the_sender(self):
         got = self.fn.signup({}, "a@x.com", "once", "1.3.58", "earoot@163.com")
         self.assertIn("最新版 1.3.58", got["text"])
         self.assertIn("earoot@163.com", got["text"])
-        self.assertIn("Win7", got["text"])
+        self.assertIn("Windows 10 / 11", got["text"])
+
+    def test_same_package_asks_to_check_the_mailbox(self):
+        state = {"mailed": {"a@x.com": {"version": "1.3.59", "os": "win10"}}, "auto": []}
+        again = self.fn.signup(state, "a@x.com", "once", "1.3.59", "", "win81")
+        self.assertFalse(again["send"])
+        self.assertIn("翻翻邮件", again["text"])
+        other = self.fn.signup(state, "a@x.com", "once", "1.3.59", "", "win7")
+        self.assertTrue(other["send"])
+        self.assertIn("Windows 7", other["text"])
 
     def test_busy_list_is_not_called_a_mail_failure(self):
         err = urllib.error.HTTPError("https://example.test", 429, "Too Many Requests", None, None)

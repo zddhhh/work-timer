@@ -19,9 +19,14 @@ button { margin-top:18px; font:16px sans-serif; padding:10px 18px; background:#8
 <main>
 <h1>订阅 WorkTimer</h1>
 <p class="ver" id="ver">最新版本：正在获取…</p>
-<p class="note">内网收不到更新时，填邮箱。上面就是现在的最新版本，装好后看窗口标题对照。安装包由 earoot@163.com 寄出，请认准这个发件人。压缩包里有 Win10/11 和 Win7 两个安装程序。</p>
+<p class="note">内网收不到更新时，先选系统再填邮箱。上面就是现在的最新版本，装好后看窗口标题对照。安装包由 earoot@163.com 寄出，请认准这个发件人。Windows 8.1、10、11 用同一份，Windows 8 和 Windows 7 用另一份。</p>
 <form id="f">
 <label>邮箱<br><input type="email" name="email" required placeholder="name@example.com"></label>
+<label>系统</label>
+<label><input type="radio" name="os" value="win10" checked> Windows 10 / 11</label>
+<label><input type="radio" name="os" value="win81"> Windows 8.1</label>
+<label><input type="radio" name="os" value="win8"> Windows 8</label>
+<label><input type="radio" name="os" value="win7"> Windows 7</label>
 <label><input type="radio" name="mode" value="once" checked> 只要这一版</label>
 <label><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
 <button type="submit">寄给我</button>
@@ -43,7 +48,7 @@ document.getElementById("f").addEventListener("submit", async (ev) => {
   const out = document.getElementById("out");
   const btn = ev.target.querySelector("button");
   btn.disabled = true;
-  out.innerHTML = "<p>正在寄，两个安装包比较大，稍等。</p>";
+  out.innerHTML = "<p>正在寄，稍等。</p>";
   const body = new URLSearchParams(new FormData(ev.target));
   try {
     const resp = await fetch(API, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
