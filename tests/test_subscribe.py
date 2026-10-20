@@ -109,6 +109,26 @@ class SubscribeTests(unittest.TestCase):
         self.assertEqual(self.fn.query_params({"queryString": "meta=1"}), {"meta": "1"})
         self.assertEqual(self.fn.query_params({}), {})
 
+    def test_auto_mail_carries_a_cancel_link_that_only_that_person_can_use(self):
+        secret = "test-secret"
+        link = self.fn.cancel_link("A@X.com", secret, "https://example.test/sub")
+        self.assertTrue(link.startswith("https://example.test/sub/?cancel="))
+        text = self.fn.mail_text("1.3.59", "earoot@163.com", "", "win10", link)
+        self.assertIn(link, text)
+        self.assertIn("不想再收以后的新版本", text)
+        plain = self.fn.mail_text("1.3.59", "earoot@163.com", "", "win10")
+        self.assertNotIn("cancel=", plain)
+        token = link.split("cancel=", 1)[1]
+        state = {"auto": [{"email": "a@x.com", "os": "win8"}, {"email": "b@y.com", "os": "win7"}], "mailed": {}}
+        gone = self.fn.unsubscribe(state, token, secret)
+        self.assertTrue(gone["changed"])
+        self.assertEqual(gone["state"]["auto"], [{"email": "b@y.com", "os": "win7"}])
+        again = self.fn.unsubscribe(gone["state"], token, secret)
+        self.assertFalse(again["changed"])
+        self.assertIn("没有长期订阅", again["text"])
+        self.assertFalse(self.fn.unsubscribe(state, token + "x", secret)["ok"])
+        self.assertFalse(self.fn.unsubscribe(state, token, "other-secret")["ok"])
+
     def test_bad_email_rejected(self):
         self.assertIsNone(self.fn._clean_email("not-an-email"))
         self.assertIsNone(self.fn._clean_email("a@b.com\nBcc: evil@x.com"))

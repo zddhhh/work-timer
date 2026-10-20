@@ -5,33 +5,57 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>订阅 WorkTimer</title>
 <style>
-body { margin:0; font:16px/1.5 "Microsoft YaHei",sans-serif; background:#f6f1e8; color:#3a241c; }
-main { max-width:420px; margin:24px auto; padding:0 16px 32px; }
-h1 { font-size:22px; }
-label { display:block; margin:14px 0 6px; }
-input[type=email] { width:100%; box-sizing:border-box; font:16px sans-serif; padding:10px; }
-button { margin-top:18px; font:16px sans-serif; padding:10px 18px; background:#8c2f2f; color:#fff; border:0; }
-.note { color:#6b5346; font-size:14px; }
-.ver { font-size:18px; font-weight:bold; margin:8px 0 0; }
+body { margin:0; font:16px/1.55 "Microsoft YaHei",sans-serif; background:#efe6d8; color:#3a241c; }
+main { max-width:440px; margin:28px auto; padding:22px 20px 26px; background:#fbf7f1; border-radius:16px; box-shadow:0 10px 30px rgba(58,36,28,.08); }
+h1 { font-size:22px; margin:4px 0 8px; }
+.brand { margin:0; font-size:13px; letter-spacing:.08em; color:#8c2f2f; }
+.ver { display:inline-block; margin:0 0 12px; padding:4px 10px; border-radius:999px; background:#f3e6d4; font-weight:bold; }
+.note { color:#6b5346; font-size:14px; margin:0 0 18px; }
+fieldset { margin:0 0 14px; padding:12px 12px 8px; border:1px solid #eadfce; border-radius:12px; }
+legend { padding:0 6px; font-size:13px; color:#6b5346; }
+label.choice { display:block; margin:0 0 6px; padding:8px 10px; border-radius:8px; background:#fff; }
+label.choice:has(input:checked) { background:#f8ebe3; outline:1px solid #e4c7b8; }
+input[type=email] { width:100%; box-sizing:border-box; font:16px sans-serif; padding:10px 12px; border:1px solid #eadfce; border-radius:8px; }
+button { width:100%; margin-top:6px; font:16px sans-serif; padding:12px 18px; background:#8c2f2f; color:#fff; border:0; border-radius:10px; }
+button:disabled { opacity:.6; }
+.hint { margin:8px 2px 0; color:#6b5346; font-size:13px; }
+#out, #cancel { margin-top:16px; }
+#out h1, #cancel h1 { font-size:18px; }
 </style>
 </head>
 <body>
 <main>
-<h1>订阅 WorkTimer</h1>
+<p class="brand">弹性下班计时器</p>
+<div id="signup">
+<h1>用邮箱收安装包</h1>
 <p class="ver" id="ver">最新版本：正在获取…</p>
-<p class="note">内网收不到更新时，先选系统再填邮箱。上面就是现在的最新版本，装好后看窗口标题对照。安装包由 earoot@163.com 寄出，请认准这个发件人。Windows 8.1、10、11 用同一份，Windows 8 和 Windows 7 用另一份。</p>
+<p class="note">内网收不到更新时用。先选系统，只寄那一份。发信邮箱是 earoot@163.com，请认准这个发件人。Windows 8.1、10、11 用同一份，Windows 8 和 Windows 7 用另一份。</p>
 <form id="f">
-<label>邮箱<br><input type="email" name="email" required placeholder="name@example.com"></label>
-<label>系统</label>
-<label><input type="radio" name="os" value="win10" checked> Windows 10 / 11</label>
-<label><input type="radio" name="os" value="win81"> Windows 8.1</label>
-<label><input type="radio" name="os" value="win8"> Windows 8</label>
-<label><input type="radio" name="os" value="win7"> Windows 7</label>
-<label><input type="radio" name="mode" value="once" checked> 只要这一版</label>
-<label><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
+<fieldset>
+<legend>邮箱</legend>
+<input type="email" name="email" required placeholder="name@example.com">
+</fieldset>
+<fieldset>
+<legend>系统</legend>
+<label class="choice"><input type="radio" name="os" value="win10" checked> Windows 10 / 11</label>
+<label class="choice"><input type="radio" name="os" value="win81"> Windows 8.1</label>
+<label class="choice"><input type="radio" name="os" value="win8"> Windows 8</label>
+<label class="choice"><input type="radio" name="os" value="win7"> Windows 7</label>
+</fieldset>
+<fieldset>
+<legend>寄送</legend>
+<label class="choice"><input type="radio" name="mode" value="once" checked> 只要这一版</label>
+<label class="choice"><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
+<p class="hint">选「以后每版都寄」，邮件底部有取消链接。</p>
+</fieldset>
 <button type="submit">寄给我</button>
 </form>
 <div id="out"></div>
+</div>
+<div id="cancel" hidden>
+<h1>取消长期订阅</h1>
+<p id="cancel-text">正在取消…</p>
+</div>
 </main>
 <script>
 const API = "https://1407920495-4qprkfktiz.ap-guangzhou.tencentscf.com";
@@ -43,6 +67,34 @@ fetch(API + "?meta=1").then((r) => r.text()).then((text) => {
 }).catch(() => {
   ver.textContent = "最新版本暂时取不到，刷新再看。";
 });
+
+function showReply(box, title, text) {
+  box.innerHTML = "<h1></h1><p></p>";
+  box.querySelector("h1").textContent = title || "已提交";
+  box.querySelector("p").textContent = text || "";
+}
+
+const cancelToken = new URLSearchParams(location.search).get("cancel");
+if (cancelToken) {
+  document.getElementById("signup").hidden = true;
+  const panel = document.getElementById("cancel");
+  panel.hidden = false;
+  const body = new URLSearchParams();
+  body.set("cancel", cancelToken);
+  fetch(API, { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } })
+    .then((r) => r.text())
+    .then((html) => {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const title = (doc.querySelector("h1") || {}).textContent || "已取消";
+      const text = (doc.querySelector("p") || {}).textContent || "";
+      panel.querySelector("h1").textContent = title;
+      document.getElementById("cancel-text").textContent = text;
+    })
+    .catch(() => {
+      document.getElementById("cancel-text").textContent = "没取消成，过会儿再打开这个链接。";
+    });
+}
+
 document.getElementById("f").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const out = document.getElementById("out");
@@ -56,9 +108,7 @@ document.getElementById("f").addEventListener("submit", async (ev) => {
     const doc = new DOMParser().parseFromString(html, "text/html");
     const title = (doc.querySelector("h1") || {}).textContent || "";
     const text = (doc.querySelector("p") || {}).textContent || html;
-    out.innerHTML = "<h1></h1><p></p>";
-    out.querySelector("h1").textContent = title || "已提交";
-    out.querySelector("p").textContent = text;
+    showReply(out, title, text);
   } catch (e) {
     out.innerHTML = "<p>没寄成，过会儿再试。</p>";
   } finally {

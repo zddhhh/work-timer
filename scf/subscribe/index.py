@@ -22,6 +22,7 @@
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import io
@@ -45,6 +46,7 @@ SYSTEMS = {
     "win7": ("Windows 7", WIN7_ASSET),
 }
 STATE_KEY = "/subscribe/state.json"
+PAGE_URL = "https://zddhhh.github.io/worktimer-subscribe/"
 DAILY_CAP = 40
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,120}\.[^@\s]{1,24}$")
 
@@ -83,6 +85,8 @@ def _http(event: dict) -> dict:
     if method != "POST":
         return _html(405, _message_html("不支持", "用报名页提交。"))
     form = _form_values(event)
+    if form.get("cancel"):
+        return _cancel(form.get("cancel") or "")
     email = _clean_email(form.get("email") or "")
     mode = "auto" if form.get("mode") == "auto" else "once"
     os_key = _clean_os(form.get("os") or "")
@@ -95,7 +99,7 @@ def _http(event: dict) -> dict:
     sender = _sender()
     decision = signup(state, email, mode, release["version"], sender, os_key)
     if decision["send"]:
-        _mail_one(email, release, os_key)
+        _mail_one(email, release, os_key, unsub=(mode == "auto"))
         decision["state"].setdefault("mailed", {})[email] = {"version": release["version"], "os": os_key}
         _bump_sent(decision["state"])
     _save_state(decision["state"])
@@ -123,7 +127,7 @@ def _fanout() -> str:
     for person in due:
         if _sent_today(state) >= DAILY_CAP:
             break
-        _mail_one(person["email"], release, person["os"])
+        _mail_one(person["email"], release, person["os"], unsub=True)
         state.setdefault("mailed", {})[person["email"]] = {"version": version, "os": person["os"]}
         _bump_sent(state)
         sent.append(person["email"])
@@ -200,7 +204,7 @@ def signup(state: dict, email: str, mode: str, version: str, sender: str = "", o
     if sender:
         text += f"发信邮箱是 {sender}，请核对发件人再打开。"
     if mode == "auto":
-        text += "以后每次新版本也会寄。"
+        text += "以后每次新版本也会寄。不想要了，用邮件里的链接取消。"
     else:
         text += "只要这一版。"
     return {"state": state, "send": True, "text": text}
@@ -452,7 +456,62 @@ def public_note(note: str) -> str:
     return text
 
 
-def mail_text(version: str, sender: str, note: str = "", system: str = "win10") -> str:
+def unsub_token(email: str, secret: str) -> str:
+    """邮箱和签名绑在一起，别人改一个字母就对不上。"""
+    email = email.strip().lower()
+    sig = hmac.new(secret.encode(), email.encode(), hashlib.sha256).hexdigest()[:32]
+    blob = base64.urlsafe_b64encode(email.encode()).decode().rstrip("=")
+    return f"{blob}.{sig}"
+
+
+def parse_unsub(token: str, secret: str) -> str | None:
+    if not secret or "." not in (token or ""):
+        return None
+    blob, sig = token.rsplit(".", 1)
+    pad = "=" * (-len(blob) % 4)
+    try:
+        email = base64.urlsafe_b64decode(blob + pad).decode("utf-8")
+    except (ValueError, UnicodeError):
+        return None
+    email = _clean_email(email) or ""
+    if not email:
+        return None
+    expect = hmac.new(secret.encode(), email.encode(), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(expect, sig):
+        return None
+    return email
+
+
+def cancel_link(email: str, secret: str, page: str = PAGE_URL) -> str:
+    return page.rstrip("/") + "/?cancel=" + urllib.parse.quote(unsub_token(email, secret))
+
+
+def unsubscribe(state: dict, token: str, secret: str) -> dict:
+    """从长期名单里拿掉。不碰网络。签不对就什么都不改。"""
+    email = parse_unsub(token, secret)
+    state = dict(state or {})
+    state["auto"] = list(state.get("auto") or [])
+    if not email:
+        return {"ok": False, "changed": False, "state": state, "text": "这个链接不对。"}
+    auto = []
+    found = False
+    for item in state["auto"]:
+        entry = _entry(item)
+        if entry is None:
+            continue
+        if entry["email"] == email:
+            found = True
+            continue
+        auto.append(entry)
+    state["auto"] = auto
+    if found:
+        text = "已经取消长期订阅，以后的新版本不再寄到这个邮箱。"
+    else:
+        text = "这个邮箱没有长期订阅，不用取消。"
+    return {"ok": True, "changed": found, "state": state, "text": text}
+
+
+def mail_text(version: str, sender: str, note: str = "", system: str = "win10", unsub_url: str = "") -> str:
     os_key = _clean_os(system) or "win10"
     label, asset = SYSTEMS[os_key]
     lines = [
@@ -478,6 +537,8 @@ def mail_text(version: str, sender: str, note: str = "", system: str = "win10") 
     extra = public_note(note)
     if extra:
         lines.extend(["", extra])
+    if unsub_url:
+        lines.extend(["", "不想再收以后的新版本，打开这个链接就停：", unsub_url])
     return "\n".join(lines)
 
 
@@ -531,13 +592,14 @@ def build_mail(
     note: str,
     files: list[tuple[str, bytes]],
     system: str = "win10",
+    unsub_url: str = "",
 ) -> EmailMessage:
     os_key = _clean_os(system) or "win10"
     msg = EmailMessage()
     msg["Subject"] = f"WorkTimer 最新版 {version}（{SYSTEMS[os_key][0]}）"
     msg["From"] = sender
     msg["To"] = email
-    msg.set_content(mail_text(version, sender, note, os_key))
+    msg.set_content(mail_text(version, sender, note, os_key, unsub_url))
     for name, blob in files:
         label = "Win7" if "win7" in name.lower() else "Setup"
         # 校验值只放邮件头，正文不展示这串数字。
@@ -551,11 +613,23 @@ def build_mail(
     return msg
 
 
-def _mail_one(email: str, release: dict, system: str = "win10") -> None:
+def _cancel(token: str) -> dict:
+    state = _load_state()
+    result = unsubscribe(state, token, _env("SMTP_PASSWORD"))
+    if result["changed"]:
+        _save_state(result["state"])
+    title = "已取消" if result["ok"] else "没取消"
+    return _html(200, _message_html(title, result["text"]))
+
+
+def _mail_one(email: str, release: dict, system: str = "win10", unsub: bool = False) -> None:
     os_key = _clean_os(system) or "win10"
     asset = SYSTEMS[os_key][1]
     files = [(asset, _download(release["downloads"][asset]))]
-    msg = build_mail(email, release["version"], _sender(), release.get("note") or "", files, os_key)
+    link = cancel_link(email, _env("SMTP_PASSWORD")) if unsub and _env("SMTP_PASSWORD") else ""
+    msg = build_mail(
+        email, release["version"], _sender(), release.get("note") or "", files, os_key, link,
+    )
     host = _env("SMTP_HOST") or "smtp.163.com"
     port = int(_env("SMTP_PORT") or "465")
     user = _env("SMTP_USER")
