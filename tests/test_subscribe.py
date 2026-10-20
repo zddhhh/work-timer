@@ -36,6 +36,31 @@ class SubscribeTests(unittest.TestCase):
         self.assertNotIn('value="win81"', html)
         self.assertNotIn('value="win8"', html)
 
+    def test_flow_over_limit_pauses_until_tomorrow(self):
+        import smtplib
+
+        fn = _fn()
+        saved = []
+        state = {"last_version": "1.3.60", "auto": [{"email": "a@x.com", "os": "main"}], "mailed": {}}
+        fn._load_state = lambda: state
+        fn._save_state = lambda s: saved.append(dict(s))
+        fn._latest_release = lambda: {"version": "1.3.66", "downloads": {}}
+        calls = []
+
+        def boom(*_a, **_k):
+            calls.append(1)
+            raise smtplib.SMTPDataError(550, b"Requested action aborted: flow over limit")
+
+        fn._mail_one = boom
+        got = fn._fanout()
+        self.assertIn("寄满", got)
+        self.assertEqual(state.get("smtp_full"), fn._today())
+        self.assertEqual(state.get("last_version"), "1.3.60")
+        again = fn._fanout()
+        self.assertIn("明天", again)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("寄满", fn._public_error(smtplib.SMTPDataError(550, b"flow over limit")))
+
     def test_signup_once_sends_current_and_does_not_stay(self):
         got = self.fn.signup({}, "a@x.com", "once", "1.3.57")
         self.assertTrue(got["send"])

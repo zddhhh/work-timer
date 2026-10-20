@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import ctypes
 import os
+import threading
 from ctypes import wintypes
+
+from PIL import Image, ImageStat
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -123,64 +126,34 @@ class _RingSampler:
         self._old = gdi32.SelectObject(hdc_mem, hbmp)
         return True
 
-    def stats(
-        self,
-        hdc_screen,
-        left: int,
-        top: int,
-        rw: int,
-        rh: int,
-        win_x: int,
-        win_y: int,
-        win_w: int,
-        win_h: int,
-    ) -> tuple[float, tuple[int, int, int]] | None:
+    def capture(self, hdc_screen, left: int, top: int, rw: int, rh: int) -> Image.Image | None:
         if rw < 2 or rh < 2 or rw > _MAX_W or rh > _MAX_H:
             return None
         if not self._ensure(hdc_screen):
             return None
+        # BitBlt 会等一次 DWM 合成（约 16ms），整块只截这一次
         if not gdi32.BitBlt(self._hdc_mem, 0, 0, rw, rh, hdc_screen, left, top, SRCCOPY):
             return None
-        buf = (ctypes.c_ubyte * (_MAX_W * _MAX_H * 4)).from_address(self._bits.value)
-        luma_sum = 0.0
-        rs = gs = bs = 0.0
-        count = 0
-        step = 2
-        inner_l = win_x - left
-        inner_t = win_y - top
-        inner_r = inner_l + win_w
-        inner_b = inner_t + win_h
-        for y in range(0, rh, step):
-            row = y * _MAX_W * 4
-            for x in range(0, rw, step):
-                if inner_l <= x < inner_r and inner_t <= y < inner_b:
-                    continue
-                i = row + x * 4
-                b, g, r = buf[i], buf[i + 1], buf[i + 2]
-                luma_sum += 0.2126 * r + 0.7152 * g + 0.0722 * b
-                rs += r
-                gs += g
-                bs += b
-                count += 1
-        if count <= 0:
-            return None
-        rgb = (int(rs / count), int(gs / count), int(bs / count))
-        return luma_sum / count, rgb
+        raw = ctypes.string_at(self._bits.value, _MAX_W * rh * 4)
+        return Image.frombuffer("RGB", (_MAX_W, rh), raw, "raw", "BGRX", 0, 1).crop((0, 0, rw, rh))
 
-    def luma(
-        self,
-        hdc_screen,
-        left: int,
-        top: int,
-        rw: int,
-        rh: int,
-        win_x: int,
-        win_y: int,
-        win_w: int,
-        win_h: int,
-    ) -> float | None:
-        got = self.stats(hdc_screen, left, top, rw, rh, win_x, win_y, win_w, win_h)
-        return None if got is None else got[0]
+
+def _box_sums(img: Image.Image, box: tuple[int, int, int, int]) -> tuple[int, float, float, float]:
+    """框内像素数与 R/G/B 总和；框会先裁到图内。"""
+    l, t, r, b = box
+    l, t = max(0, l), max(0, t)
+    r, b = min(img.width, r), min(img.height, b)
+    if r <= l or b <= t:
+        return 0, 0.0, 0.0, 0.0
+    s = ImageStat.Stat(img.crop((l, t, r, b))).sum
+    return (r - l) * (b - t), s[0], s[1], s[2]
+
+
+def _mean(n: int, rs: float, gs: float, bs: float) -> tuple[float, tuple[int, int, int]] | None:
+    if n <= 0:
+        return None
+    luma = (0.2126 * rs + 0.7152 * gs + 0.0722 * bs) / n
+    return luma, (int(rs / n), int(gs / n), int(bs / n))
 
 
 _SAMPLER = _RingSampler()
@@ -218,27 +191,74 @@ def sample_around(x: int, y: int, w: int, h: int, *, strip: int = 8) -> tuple[fl
     if not hdc:
         return None
     try:
-        around = _SAMPLER.stats(hdc, left, top, rw, rh, x, y, w, h)
-        ix = x + max(4, w // 5)
-        iy = y + max(4, h // 5)
-        iw = max(4, w - 2 * max(4, w // 5))
-        ih = max(4, h - 2 * max(4, h // 5))
-        behind = _SAMPLER.stats(hdc, ix, iy, iw, ih, -1, -1, 0, 0)
-        if around is None:
-            return behind
-        if behind is None:
-            return around
-        la, ca = around
-        lb, cb = behind
-        luma = lb * 0.7 + la * 0.3
-        rgb = (
-            int(cb[0] * 0.7 + ca[0] * 0.3),
-            int(cb[1] * 0.7 + ca[1] * 0.3),
-            int(cb[2] * 0.7 + ca[2] * 0.3),
-        )
-        return luma, rgb
+        img = _SAMPLER.capture(hdc, left, top, rw, rh)
     finally:
         user32.ReleaseDC(None, hdc)
+    if img is None:
+        return None
+    wx, wy = x - left, y - top
+    full = _box_sums(img, (0, 0, rw, rh))
+    win = _box_sums(img, (wx, wy, wx + w, wy + h))
+    around = _mean(*(a - b for a, b in zip(full, win)))
+    mx, my = max(4, w // 5), max(4, h // 5)
+    ix, iy = wx + mx, wy + my
+    behind = _mean(*_box_sums(img, (ix, iy, ix + max(4, w - 2 * mx), iy + max(4, h - 2 * my))))
+    if around is None:
+        return behind
+    if behind is None:
+        return around
+    la, ca = around
+    lb, cb = behind
+    luma = lb * 0.7 + la * 0.3
+    rgb = (
+        int(cb[0] * 0.7 + ca[0] * 0.3),
+        int(cb[1] * 0.7 + ca[1] * 0.3),
+        int(cb[2] * 0.7 + ca[2] * 0.3),
+    )
+    return luma, rgb
+
+
+class AsyncSampler:
+    """后台线程跑 sample_around：截屏要等合成，别让主循环和拖动陪着等。
+
+    request() 只记下最新的窗口位置，take() 取走最近一次结果（没有新结果返回 None）。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._rect: tuple[int, int, int, int] | None = None
+        self._got: tuple[float, tuple[int, int, int]] | None = None
+        self._thread: threading.Thread | None = None
+
+    def request(self, x: int, y: int, w: int, h: int) -> None:
+        with self._lock:
+            self._rect = (int(x), int(y), int(w), int(h))
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="surface-sampler", daemon=True)
+            self._thread.start()
+        self._wake.set()
+
+    def take(self) -> tuple[float, tuple[int, int, int]] | None:
+        with self._lock:
+            got, self._got = self._got, None
+        return got
+
+    def _run(self) -> None:
+        while True:
+            self._wake.wait()
+            self._wake.clear()
+            with self._lock:
+                rect, self._rect = self._rect, None
+            if rect is None:
+                continue
+            try:
+                got = sample_around(*rect)
+            except Exception:  # noqa: BLE001
+                got = None
+            if got is not None:
+                with self._lock:
+                    self._got = got
 
 
 def sample_luma_around(x: int, y: int, w: int, h: int, *, strip: int = 8) -> float | None:

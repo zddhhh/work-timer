@@ -282,7 +282,14 @@ class MeowTests(unittest.TestCase):
         self.assertNotEqual(suofen._talk("run", 2.2), suofen._talk("run", 2.2 + suofen._LOOP))
         self.assertNotEqual(suofen._pose("run", 2.2).size, suofen._pose("run", 7.0).size)
         self.assertGreater(suofen._hop("run", 4.2), suofen._hop("run", 0.05))
-        card = __import__("PIL").Image.new("RGBA", (320, 120), (0, 0, 0, 0))
+        from PIL import ImageDraw
+
+        probe = Image.new("RGBA", (248, 84), (0, 0, 0, 0))
+        d = ImageDraw.Draw(probe)
+        suofen._bubble(d, 160, 4, 80, 76, 248, 84, "得了五捆激励", pop=True)
+        box = probe.getbbox()
+        self.assertGreaterEqual(box[0], int(248 * suofen.TEXT_SHARE))
+        card = Image.new("RGBA", (320, 120), (0, 0, 0, 0))
         suofen.paint(card, 2.2, stage="run")
         again = suofen._backdrop(320, 120)
         self.assertIs(again, suofen._backdrop(320, 120))
@@ -1649,6 +1656,54 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(c["hours"][11], 2)
         self.assertEqual(c["wheels_h"][11], 1)
 
+    def test_tally_bubble_sits_above_and_falls_below_at_top(self):
+        import tally_bubble
+
+        small = tally_bubble.render(12, 3, 0, scale=1.0)
+        big = tally_bubble.render(123456, 9999, 88, scale=1.5)
+        self.assertGreater(big.width, small.width)
+        self.assertGreater(big.height, small.height)
+        self.assertEqual(small.getpixel((small.width // 2, 1))[3] > 0, True)
+        area = (0, 0, 1920, 1040)
+        x, y = tally_bubble.place(800, 500, 248, 92, small.width, small.height, area)
+        self.assertLess(y + small.height, 500)
+        self.assertAlmostEqual(x + small.width / 2, 800 + 124, delta=1)
+        _x, y2 = tally_bubble.place(800, 2, 248, 92, small.width, small.height, area)
+        self.assertGreaterEqual(y2, 2 + 92)
+        x3, _y = tally_bubble.place(1900, 500, 248, 92, small.width, small.height, area)
+        self.assertLessEqual(x3 + small.width, 1920)
+
+    def test_surface_ring_is_full_minus_window(self):
+        import backdrop
+
+        img = Image.new("RGB", (20, 10), (200, 100, 0))
+        img.paste((0, 0, 0), (5, 2, 15, 8))
+        full = backdrop._box_sums(img, (0, 0, 20, 10))
+        win = backdrop._box_sums(img, (5, 2, 15, 8))
+        self.assertEqual(win, (60, 0.0, 0.0, 0.0))
+        luma, rgb = backdrop._mean(*(a - b for a, b in zip(full, win)))
+        self.assertEqual(rgb, (200, 100, 0))
+        self.assertAlmostEqual(luma, 0.2126 * 200 + 0.7152 * 100, places=3)
+        self.assertEqual(backdrop._box_sums(img, (30, 30, 40, 40))[0], 0)
+        self.assertIsNone(backdrop._mean(0, 0.0, 0.0, 0.0))
+
+    def test_async_sampler_hands_back_the_latest_result(self):
+        import time as _time
+
+        import backdrop
+
+        s = backdrop.AsyncSampler()
+        self.assertIsNone(s.take())
+        s.request(100, 100, 248, 92)
+        got = None
+        deadline = _time.monotonic() + 2.0
+        while got is None and _time.monotonic() < deadline:
+            _time.sleep(0.02)
+            got = s.take()
+        self.assertIsNotNone(got)
+        self.assertEqual(len(got[1]), 3)
+        self.assertIsNone(s.take())
+
     def test_card_line_follows_the_display_switch(self):
         import activity
 
@@ -1662,11 +1717,9 @@ class ActivityTests(unittest.TestCase):
         activity.note(cfg, "key", now)
         activity.note(cfg, "click", now)
         activity.note(cfg, "wheel", now)
-        line = activity.card_line(cfg, d)
-        self.assertIn("键盘 1", line)
-        self.assertIn("鼠标 1", line)
-        self.assertIn("滚轮 1", line)
-        self.assertIn("键 1", activity.card_line(cfg, d, short=True))
+        activity.note(cfg, "key", now)
+        self.assertEqual(activity.totals(cfg, d), (2, 1, 1))
+        self.assertEqual(activity.totals(cfg, date(2026, 10, 19)), (0, 0, 0))
         activity.set_enabled(cfg, False)
         self.assertFalse(activity.show_on_card(cfg))
         self.assertFalse(activity.enabled(cfg))

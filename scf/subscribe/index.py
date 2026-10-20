@@ -29,6 +29,7 @@ import io
 import json
 import re
 import smtplib
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -97,8 +98,19 @@ def _http(event: dict) -> dict:
     release = _latest_release()
     sender = _sender()
     decision = signup(state, email, mode, release["version"], sender, os_key)
+    if decision["send"] and state.get("smtp_full") == _today():
+        _save_state(decision["state"])
+        return _html(200, _message_html("记下了", _full_text(mode)))
     if decision["send"]:
-        _mail_one(email, release, os_key, unsub=(mode == "auto"))
+        try:
+            _mail_one(email, release, os_key, unsub=(mode == "auto"))
+        except Exception as e:  # noqa: BLE001
+            if not _flow_out(e):
+                raise
+            _log_error(e)
+            decision["state"]["smtp_full"] = _today()
+            _save_state(decision["state"])
+            return _html(200, _message_html("记下了", _full_text(mode)))
         mailed = decision["state"].setdefault("mailed", {})
         mailed[email] = remember_sent(mailed.get(email), release["version"], os_key)
         _bump_sent(decision["state"])
@@ -123,11 +135,22 @@ def _fanout() -> str:
     due = due_auto(state, version)
     if not due:
         return f"没有要寄的人（最新 {version}）"
+    if state.get("smtp_full") == _today():
+        return f"发信邮箱今天寄满了，明天再寄 {version}"
     sent = []
     for person in due:
         if _sent_today(state) >= DAILY_CAP:
             break
-        _mail_one(person["email"], release, person["os"], unsub=True)
+        try:
+            _mail_one(person["email"], release, person["os"], unsub=True)
+        except Exception as e:  # noqa: BLE001
+            if not _flow_out(e):
+                _save_state(state)
+                raise
+            _log_error(e)
+            state["smtp_full"] = _today()
+            _save_state(state)
+            return f"发信邮箱今天寄满了，已寄 {len(sent)} 人，明天再寄 {version}"
         mailed = state.setdefault("mailed", {})
         mailed[person["email"]] = remember_sent(mailed.get(person["email"]), version, person["os"])
         _bump_sent(state)
@@ -275,19 +298,31 @@ def _is_newer(latest: str, current: str) -> bool:
     return a > b
 
 
-def _sent_today(state: dict) -> int:
+def _today() -> str:
     from datetime import datetime, timezone, timedelta
 
-    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
-    if state.get("day") != today:
+    return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+
+
+def _flow_out(e: BaseException) -> bool:
+    """163 当天发信流量用完：550 flow over limit。第二天自动恢复。"""
+    return "over limit" in (str(e) or "").lower()
+
+
+def _full_text(mode: str) -> str:
+    if mode == "auto":
+        return "发信邮箱今天寄满了。已经记下，明天自动寄给你。"
+    return "发信邮箱今天寄满了，明天再来要。"
+
+
+def _sent_today(state: dict) -> int:
+    if state.get("day") != _today():
         return 0
     return int(state.get("sent_count") or 0)
 
 
 def _bump_sent(state: dict) -> None:
-    from datetime import datetime, timezone, timedelta
-
-    today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+    today = _today()
     if state.get("day") != today:
         state["day"] = today
         state["sent_count"] = 0
@@ -387,6 +422,8 @@ def _esc(text: str) -> str:
 def _public_error(e: BaseException) -> str:
     text = str(e) or e.__class__.__name__
     low = text.lower()
+    if "over limit" in low:
+        return "发信邮箱今天寄满了，明天再试。"
     if "554" in text:
         return "邮箱把这封信退了，过一会儿再试。"
     if "429" in text or "too many" in low or "invokes this api is too large" in low:
@@ -570,8 +607,6 @@ def mail_text(version: str, sender: str, note: str = "", system: str = "main", u
 
 
 def _get_json(url: str, token: str) -> object:
-    import time
-
     headers = {"User-Agent": "WorkTimer-Subscribe", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -663,6 +698,19 @@ def _mail_one(email: str, release: dict, system: str = "main", unsub: bool = Fal
     password = _env("SMTP_PASSWORD")
     if not user or not password:
         raise RuntimeError("发信账号还没配")
+    last: BaseException | None = None
+    for attempt in range(3):
+        try:
+            _smtp_send(host, port, user, password, msg)
+            return
+        except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, ConnectionError, TimeoutError) as e:
+            last = e
+            _log_error(e)
+            time.sleep(4 + attempt * 6)
+    raise last  # type: ignore[misc]
+
+
+def _smtp_send(host: str, port: int, user: str, password: str, msg) -> None:
     if port == 465:
         server = smtplib.SMTP_SSL(host, port, timeout=300)
     else:
@@ -672,7 +720,11 @@ def _mail_one(email: str, release: dict, system: str = "main", unsub: bool = Fal
         server.login(user, password)
         server.send_message(msg)
     finally:
-        server.quit()
+        # 163 先断开时 quit() 会再抛一次，把真正的原因盖住
+        try:
+            server.quit()
+        except (smtplib.SMTPException, OSError):
+            server.close()
 
 
 def _load_state() -> dict:

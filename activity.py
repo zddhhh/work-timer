@@ -21,7 +21,7 @@ def set_enabled(cfg: dict, on: bool) -> None:
 
 
 def show_on_card(cfg: dict) -> bool:
-    """倒计时卡片上显示今天的键盘、鼠标、滚轮次数。开着就一定在记。"""
+    """计时器上方显示今天的键盘、鼠标、滚轮次数。开着就一定在记。"""
     raw = cfg.get(_KEY)
     return bool(isinstance(raw, dict) and raw.get("on") and raw.get("on_card"))
 
@@ -33,12 +33,14 @@ def set_show_on_card(cfg: dict, on: bool) -> None:
         book["on"] = True
 
 
-def card_line(cfg: dict, d: date, *, short: bool = False) -> str:
-    c = counts(cfg, d)
-    keys, clicks, wheels = fmt_count(c["keys"]), fmt_count(c["clicks"]), fmt_count(c["wheels"])
-    if short:
-        return f"键 {keys}  鼠 {clicks}  轮 {wheels}"
-    return f"键盘 {keys}  鼠标 {clicks}  滚轮 {wheels}"
+def totals(cfg: dict, d: date) -> tuple[int, int, int]:
+    """只取三个总数，不整理每小时的数组。主循环里常调，要便宜。"""
+    raw = cfg.get(_KEY)
+    days = raw.get("days") if isinstance(raw, dict) else None
+    item = days.get(d.strftime("%Y-%m-%d")) if isinstance(days, dict) else None
+    if not isinstance(item, dict):
+        return 0, 0, 0
+    return _n(item.get("keys")), _n(item.get("clicks")), _n(item.get("wheels"))
 
 
 def _book(cfg: dict) -> dict:

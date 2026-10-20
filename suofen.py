@@ -51,6 +51,8 @@ _PAY = (
     "这回{n}捆",
 )
 POP_SEC = 2.4
+# 卡片左边这一份给标题和倒计时，和 themes.paint_card 的 text_w 一致
+TEXT_SHARE = 0.58
 # 原图第 3 帧是残缺的中间张，不用。4、5、6 几乎是同一张，来回切会看成重影。
 _FRAMES: list[Image.Image] | None = None
 _DURS: list[int] | None = None
@@ -435,16 +437,24 @@ def _bubble(
     *,
     pop: bool,
 ) -> None:
+    # 左边 58% 是标题和倒计时，气泡只在人物这一侧，放不下就缩字
+    floor = int(card_w * TEXT_SHARE) + 2
+    room = max(16, card_w - 4 - floor)
     size = max(11, min(18, sw // 5)) if pop else max(9, min(15, sw // 6))
-    font = _font(size)
-    box = d.textbbox((0, 0), text, font=font)
-    tw, th = box[2] - box[0], box[3] - box[1]
-    pad = max(3, size // 3)
-    bw, bh = tw + pad * 2, th + pad * 2
-    floor = int(card_w * (0.34 if pop else 0.50))
+    while True:
+        font = _font(size)
+        box = d.textbbox((0, 0), text, font=font)
+        tw, th = box[2] - box[0], box[3] - box[1]
+        pad = max(3, size // 3)
+        bw, bh = tw + pad * 2, th + pad * 2
+        if bw <= room or size <= 8:
+            break
+        size -= 1
     right = min(card_w - 4, ox + int(sw * (0.42 if pop else 0.72)))
     left = max(floor, right - bw)
     right = min(card_w - 4, left + bw)
+    if right - left < bw:
+        left = max(floor, right - bw)
     top = max(3, oy - bh - 2) if pop else max(3, oy + int(sh * 0.02))
     if not pop and top + bh > oy + sh * 0.45:
         top = max(3, oy - bh + 4)

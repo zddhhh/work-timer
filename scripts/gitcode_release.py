@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 倒计时上可显示今天的键鼠次数；发激励啦会蹦跳、转身，并换着说柳州话"
+    "- 键鼠次数改成计时器上方的小胶囊；发激励啦的话不再盖住倒计时；拖动更跟手"
 )
 
 

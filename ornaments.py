@@ -97,6 +97,11 @@ def has_skin(kind: str) -> bool:
     return kind in _SKIN_LAYERS or kind in _PROC_KINDS
 
 
+def uses_env(kind: str) -> bool:
+    """贴图皮肤会混一点窗后环境色；程序化皮肤和华境不看。"""
+    return kind in _SKIN_LAYERS and kind != "huajing"
+
+
 def _orbit_xy(
     phase: float,
     span_x: float,
