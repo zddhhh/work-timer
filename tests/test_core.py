@@ -1725,6 +1725,62 @@ class HabitTests(unittest.TestCase):
         self.assertIn("到岗比前几周晚了", text)
 
 
+class WorklogScrollTests(unittest.TestCase):
+    def test_tall_screen_keeps_the_middle_full_height(self):
+        import worklog_ui
+
+        view, scroll = worklog_ui.scroll_view(640, 860, 1080)
+        self.assertEqual((view, scroll), (640, False))
+
+    def test_short_screen_only_shrinks_the_middle(self):
+        import worklog_ui
+
+        view, scroll = worklog_ui.scroll_view(640, 860, 720)
+        self.assertTrue(scroll)
+        self.assertLess(view, 640)
+        self.assertGreaterEqual(view, 180)
+        self.assertLessEqual(860 - (640 - view) + 24, 720 - 48)
+
+    def test_summary_stays_outside_the_scroller(self):
+        import tkinter as tk
+
+        import worklog_ui
+
+        root = tk.Tk()
+        root.withdraw()
+
+        class Host(worklog_ui.WorklogDialogMixin):
+            def __init__(self) -> None:
+                self.cfg = {}
+
+            def _tk_root(self):
+                return root
+
+            def _dialog_near(self):
+                return (40, 40)
+
+        host = Host()
+        ui = host._build_worklog_dialog()
+        dlg = ui["dlg"]
+        try:
+            host._fill_worklog(ui)
+            self.assertIs(ui["month_lbl"].master, ui["sums"])
+            self.assertIs(ui["sums"].master, dlg)
+            self.assertIs(ui["sheet"].master, ui["scroll"])
+            host._fit_worklog_scroll(ui, screen_h=720)
+            dlg.update_idletasks()
+            self.assertTrue(ui["scroll_sb"].winfo_manager())
+            self.assertLess(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
+            self.assertLessEqual(int(dlg.winfo_reqheight()) + 24, 720 - 48 + 8)
+            host._fit_worklog_scroll(ui, screen_h=1600)
+            dlg.update_idletasks()
+            self.assertEqual(ui["scroll_sb"].winfo_manager(), "")
+            self.assertEqual(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
+        finally:
+            dlg.destroy()
+            root.destroy()
+
+
 class ActivityTests(unittest.TestCase):
     def test_counts_and_report_without_storing_keys(self):
         import activity

@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时账本周合计下面多一句习惯，只跟自己的前几周比"
+    "- 工时账本在矮屏幕上中间可以滚动，合计和按钮留在画面里"
 )
 
 

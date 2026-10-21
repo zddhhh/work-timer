@@ -27,6 +27,25 @@ from card_ui import (
 )
 
 
+def scroll_view(
+    sheet_h: int,
+    natural_h: int,
+    screen_h: int,
+    *,
+    pad: int = 24,
+    margin: int = 48,
+    floor: int = 180,
+) -> tuple[int, bool]:
+    """中间区域给多高。屏幕装得下就用内容原高，装不下就只缩短中间。"""
+    limit = max(240, int(screen_h) - int(margin))
+    sheet_h = max(1, int(sheet_h))
+    overflow = int(natural_h) + int(pad) - limit
+    if overflow <= 0:
+        return sheet_h, False
+    view = min(sheet_h, max(int(floor), sheet_h - overflow))
+    return view, view < sheet_h
+
+
 class WorklogDialogMixin:
     """WorkTimer 的一部分，方法里的 self 就是 WorkTimer。"""
 
@@ -292,10 +311,29 @@ class WorklogDialogMixin:
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=868)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(6, 14))
+        err = tk.StringVar(value="")
+        err_row = _pack_err_line(dlg, err, wrap=pair_w)
+        err_row.pack_configure(padx=16)
+        sums = tk.Frame(dlg, bg=_CARD_BG)
+        sums.pack(side="bottom", fill="x", padx=16)
+        week_sum = tk.StringVar()
+        habit_sum = tk.StringVar()
+        month_sum = tk.StringVar()
+        tk.Label(
+            sums, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
+            wraplength=pair_w, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+        habit_lbl = tk.Label(
+            sums, textvariable=habit_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
+            wraplength=pair_w, justify="left",
+        )
+        month_lbl = tk.Label(
+            sums, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=pair_w, justify="left",
+        )
+        month_lbl.pack(anchor="w", pady=(2, 4))
         body = tk.Frame(dlg, bg=_CARD_BG)
         body.pack(side="top", fill="both", expand=True, padx=16)
-        err = tk.StringVar(value="")
-        _pack_err_line(body, err, wrap=pair_w)
         top = tk.Frame(body, bg=_CARD_BG)
         top.pack(fill="x", pady=(8, 6))
         tk.Label(
@@ -304,8 +342,21 @@ class WorklogDialogMixin:
         week_var = tk.StringVar()
         nav = tk.Frame(top, bg=_CARD_BG)
         nav.pack(side="right")
-        sheet = tk.Frame(body, bg=_CARD_BG)
-        sheet.pack(anchor="w")
+        scroll_host = tk.Frame(body, bg=_CARD_BG)
+        scroll_host.pack(anchor="nw", fill="y", expand=True)
+        scroll = tk.Canvas(
+            scroll_host, bg=_CARD_BG, highlightthickness=0, bd=0, relief="flat",
+            width=pair_w, height=200,
+        )
+        scroll_sb = tk.Scrollbar(
+            scroll_host, orient="vertical", command=scroll.yview, width=8,
+            bg="#3a4254", activebackground="#5a6478", troughcolor=_CARD_BG,
+            relief="flat", bd=0, highlightthickness=0,
+        )
+        scroll.configure(yscrollcommand=scroll_sb.set)
+        scroll.pack(side="left", fill="y", expand=True)
+        sheet = tk.Frame(scroll, bg=_CARD_BG)
+        scroll_win = scroll.create_window((0, 0), window=sheet, anchor="nw", width=pair_w)
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
 
         card_on = tk.BooleanVar(value=activity.show_on_card(self.cfg))
@@ -468,22 +519,6 @@ class WorklogDialogMixin:
             diff.grid(row=i, column=4, sticky="ew", padx=(8, 14))
             slots.append({"date": date_lbl, "vin": vin, "vout": vout, "ein": ein, "eout": eout, "dur": dur, "diff": diff})
         tk.Frame(table, bg=head_bg, height=8).grid(row=8, column=0, columnspan=5, sticky="ew")
-        week_sum = tk.StringVar()
-        habit_sum = tk.StringVar()
-        month_sum = tk.StringVar()
-        tk.Label(
-            sheet, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
-            wraplength=pair_w, justify="left",
-        ).pack(anchor="w", pady=(10, 0))
-        habit_lbl = tk.Label(
-            sheet, textvariable=habit_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
-            wraplength=pair_w, justify="left",
-        )
-        month_lbl = tk.Label(
-            sheet, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
-            wraplength=pair_w, justify="left",
-        )
-        month_lbl.pack(anchor="w", pady=(2, 0))
 
         ui = {
             "dlg": dlg,
@@ -498,6 +533,12 @@ class WorklogDialogMixin:
             "habit_lbl": habit_lbl,
             "month_lbl": month_lbl,
             "month_sum": month_sum,
+            "sums": sums,
+            "sheet": sheet,
+            "scroll": scroll,
+            "scroll_sb": scroll_sb,
+            "scroll_win": scroll_win,
+            "pair_w": pair_w,
             "act_on": act_on,
             "card_on": card_on,
             "today_lbl": today_lbl,
@@ -632,7 +673,61 @@ class WorklogDialogMixin:
         _card_btn(bar, "关闭", close).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: save())
         dlg.bind("<Escape>", lambda _e: close())
+
+        def _wheel(event) -> None:
+            if int(sheet.winfo_reqheight()) <= int(scroll.winfo_height()) + 1:
+                return
+            scroll.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+        def _bind_wheel(widget) -> None:
+            widget.bind("<MouseWheel>", _wheel, add="+")
+            for child in widget.winfo_children():
+                _bind_wheel(child)
+
+        def _sync_scroll(_event=None) -> None:
+            height = max(1, int(sheet.winfo_reqheight()))
+            scroll.configure(scrollregion=(0, 0, pair_w, height))
+            scroll.itemconfigure(scroll_win, width=pair_w)
+            view = int(scroll.winfo_height())
+            if view <= 1:
+                return
+            shown = bool(scroll_sb.winfo_manager())
+            if height > view + 4 and not shown:
+                scroll_sb.pack(side="right", fill="y")
+            elif height <= view + 1 and shown:
+                scroll_sb.pack_forget()
+
+        sheet.bind("<Configure>", _sync_scroll, add="+")
+        scroll.bind("<Configure>", _sync_scroll, add="+")
+        _bind_wheel(scroll_host)
         return ui
+
+    def _fit_worklog_scroll(self, ui: dict, *, screen_h: int | None = None) -> None:
+        canvas = ui.get("scroll")
+        sheet = ui.get("sheet")
+        sb = ui.get("scroll_sb")
+        dlg = ui.get("dlg")
+        if canvas is None or sheet is None or dlg is None:
+            return
+        sheet.update_idletasks()
+        sheet_h = max(1, int(sheet.winfo_reqheight()))
+        pair_w = int(ui.get("pair_w") or sheet.winfo_reqwidth() or 1)
+        canvas.itemconfigure(ui["scroll_win"], width=pair_w)
+        canvas.configure(height=sheet_h, scrollregion=(0, 0, pair_w, sheet_h))
+        if sb is not None and sb.winfo_manager():
+            sb.pack_forget()
+        dlg.update_idletasks()
+        natural = max(1, int(dlg.winfo_reqheight()))
+        raw = int(screen_h if screen_h is not None else dlg.winfo_screenheight())
+        view, scroll = scroll_view(sheet_h, natural, raw)
+        canvas.configure(height=view, scrollregion=(0, 0, pair_w, sheet_h))
+        canvas.yview_moveto(0)
+        if sb is None:
+            return
+        if scroll and not sb.winfo_manager():
+            sb.pack(side="right", fill="y")
+        elif not scroll and sb.winfo_manager():
+            sb.pack_forget()
 
     def _open_worklog_dialog(self) -> None:
         self._worklog_tick(force=True)
@@ -643,5 +738,6 @@ class WorklogDialogMixin:
         ui["anchor"] = date.today()
         ui["chart_day"] = date.today()
         self._fill_worklog(ui)
-        _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=830, near=self._dialog_near())
+        self._fit_worklog_scroll(ui)
+        _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=420, near=self._dialog_near())
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
