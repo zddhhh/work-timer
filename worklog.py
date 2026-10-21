@@ -11,6 +11,7 @@ import csv
 import io
 from datetime import date, datetime, timedelta
 
+import activity
 import flex_time
 
 IDLE_LIMIT_SEC = 300
@@ -318,6 +319,218 @@ def summarize(rows: list[dict]) -> dict:
         "avg": (total // n) if n else None,
         "diff": sum(diffs) if diffs else None,
     }
+
+
+# 上午 8–12 点，下午 12–18 点，傍晚 18–22 点。只跟这个人自己的前几周比。
+_BANDS = ((8, 12, "上午"), (12, 18, "下午"), (18, 22, "傍晚"))
+
+
+def _median(values: list[int]) -> int:
+    xs = sorted(int(v) for v in values)
+    n = len(xs)
+    if n % 2:
+        return xs[n // 2]
+    return (xs[n // 2 - 1] + xs[n // 2]) // 2
+
+
+def _hours_of(cfg: dict, d: date) -> list[int]:
+    c = activity.counts(cfg, d)
+    if any(c["hours"]):
+        return list(c["hours"])
+    return [k + cl + w for k, cl, w in zip(c["keys_h"], c["clicks_h"], c["wheels_h"])]
+
+
+def _sum_hours(cfg: dict, dates: list[date], today: date) -> list[int]:
+    total = [0] * 24
+    for d in dates:
+        if d > today:
+            continue
+        for i, v in enumerate(_hours_of(cfg, d)):
+            total[i] += v
+    return total
+
+
+def _dominant_band(hours: list[int]) -> str | None:
+    scores = [(sum(hours[lo:hi]), name) for lo, hi, name in _BANDS]
+    scores.sort(reverse=True)
+    top, second = scores[0], scores[1]
+    whole = top[0] + second[0] + scores[2][0]
+    if top[0] < 12 or whole <= 0:
+        return None
+    if top[0] < second[0] * 1.5:
+        return None
+    if top[0] * 100 < whole * 45:
+        return None
+    return top[1]
+
+
+def _majority(names: list[str]) -> str | None:
+    if len(names) < 2:
+        return None
+    best, n = max(((name, names.count(name)) for name in set(names)), key=lambda item: item[1])
+    if n < 2 or n * 2 < len(names):
+        return None
+    return best
+
+
+def _peak_phrase(hours: list[int]) -> str:
+    peak = activity.peak_hours(hours)
+    if peak is None:
+        return ""
+    a, b = peak
+    if b - a == 1:
+        return f"最勤在 {a} 点"
+    return f"最勤在 {a}–{b} 点"
+
+
+def _finished(cfg: dict, dates: list[date], today: date) -> list[dict]:
+    rows = []
+    for d in dates:
+        if d > today:
+            continue
+        item = row(cfg, d, today=today)
+        if item["in"] is None or item["out"] is None or item.get("live"):
+            continue
+        rows.append(item)
+    return rows
+
+
+def _about_minutes(minutes: int) -> str:
+    m = max(1, abs(int(minutes)))
+    if m >= 60:
+        h, rem = divmod(m, 60)
+        if rem >= 40:
+            return f"大约 {h + 1} 小时"
+        if rem < 15 or h >= 3:
+            return f"大约 {h} 小时"
+        return f"大约 {h} 小时 {round(rem / 10) * 10} 分钟"
+    step = 10 if m >= 20 else 5
+    return f"大约 {max(step, round(m / step) * step)} 分钟"
+
+
+def _weekday_winner(cfg: dict, dates: list[date], today: date, *, min_seen: int) -> int | None:
+    totals = [0] * 7
+    seen = [0] * 7
+    for d in dates:
+        if d > today:
+            continue
+        n = sum(_hours_of(cfg, d))
+        if n <= 0:
+            continue
+        totals[d.weekday()] += n
+        seen[d.weekday()] += 1
+    ranked = [(totals[i], i) for i in range(7) if seen[i] >= min_seen and totals[i] > 0]
+    if not ranked:
+        return None
+    ranked.sort()
+    best, idx = ranked[-1]
+    second = ranked[-2][0] if len(ranked) > 1 else 0
+    if best < max(second * 1.5, 1):
+        return None
+    return idx
+
+
+def habit_text(cfg: dict, days: list[date], today: date, *, this_week: bool = True) -> str:
+    """周合计下面的一句习惯。样本不够就什么都不说。"""
+    if not days:
+        return ""
+    head = "本周" if this_week else "这周"
+    past = [d for d in days if d <= today]
+    hours = _sum_hours(cfg, past, today)
+    active_days = sum(1 for d in past if sum(_hours_of(cfg, d)) > 0)
+    finished = _finished(cfg, past, today)
+    if active_days < 3 and len(finished) < 3:
+        return ""
+
+    prior_days: list[date] = []
+    prior_bands: list[str] = []
+    monday = days[0]
+    for i in range(1, 5):
+        start = monday - timedelta(days=7 * i)
+        week = [start + timedelta(days=k) for k in range(7)]
+        prior_days.extend(week)
+        band = _dominant_band(_sum_hours(cfg, week, today))
+        if band:
+            prior_bands.append(band)
+    usual = _majority(prior_bands)
+    band = _dominant_band(hours)
+
+    sentences: list[str] = []
+    if band and usual and band != usual:
+        sentences.append(f"{head}{band}更忙，前几周都是{usual}。")
+    elif band:
+        morning = sum(hours[8:12])
+        afternoon = sum(hours[12:18])
+        peak = _peak_phrase(hours)
+        if usual == band:
+            body = f"这几周都是{band}更忙"
+        elif band == "下午" and afternoon > morning * 8 and morning < 12:
+            body = "上午几乎不动，忙集中在下午"
+        else:
+            body = f"{head}{band}更忙"
+        sentences.append(body + (f"，{peak}。" if peak else "。"))
+
+    this_in = [item["in"] for item in finished]
+    prior_in = [item["in"] for item in _finished(cfg, prior_days, today)]
+    if len(sentences) < 2 and len(this_in) >= 3 and len(prior_in) >= 4:
+        gap = _median(this_in) - _median(prior_in)
+        if abs(gap) >= 30:
+            way = "晚" if gap > 0 else "早"
+            sentences.append(f"{head}到岗比前几周{way}了{_about_minutes(gap)}。")
+
+    if len(sentences) < 2 and active_days >= 3:
+        now_day = _weekday_winner(cfg, past, today, min_seen=1)
+        old_day = _weekday_winner(cfg, prior_days, today, min_seen=2)
+        if now_day is not None and old_day is not None and now_day != old_day:
+            sentences.append(f"周{WEEKDAY_CN[old_day]}通常最忙，{head}换成了周{WEEKDAY_CN[now_day]}。")
+
+    if len(sentences) < 2 and len(this_in) >= 3 and not any("到岗" in line for line in sentences):
+        spread = max(this_in) - min(this_in)
+        clock = fmt_clock(_median(this_in))
+        if spread <= 30:
+            sentences.append(f"到岗多在 {clock} 前后，前后差不到半小时。")
+        elif spread >= 75:
+            sentences.append("到岗时间前后差了一个多小时。")
+        else:
+            sentences.append(f"到岗多在 {clock} 前后。")
+
+    if len(sentences) < 2:
+        late = sum(1 for item in finished if item["diff"] is not None and item["diff"] >= 20)
+        if late >= 3 and late * 2 >= len(finished):
+            sentences.append(f"{head}有 {late} 天晚走。")
+
+    if len(sentences) < 2 and len(finished) >= 3:
+        before, after = [], []
+        for item in finished:
+            slot = _hours_of(cfg, item["date"])
+            h = min(23, item["out"] // 60)
+            before.append(slot[h] + (slot[h - 1] if h else 0))
+            after.append(sum(slot[h + 1 :]))
+        if _median(before) >= 6 and _median(after) <= 2:
+            sentences.append("离开之后几乎没有操作。")
+
+    if len(sentences) < 2:
+        wheels = [0] * 24
+        other = [0] * 24
+        for d in past:
+            c = activity.counts(cfg, d)
+            for i in range(24):
+                wheels[i] += c["wheels_h"][i]
+                other[i] += c["keys_h"][i] + c["clicks_h"][i]
+        total = sum(wheels)
+        if total >= 20:
+            hot = [
+                i for i in range(24)
+                if wheels[i] >= 8 and wheels[i] >= other[i] and wheels[i] * 5 >= total
+            ]
+            hot.sort(key=lambda i: wheels[i], reverse=True)
+            hot = sorted(hot[:2])
+            if len(hot) == 1:
+                sentences.append(f"{hot[0]} 点滚轮明显多。")
+            elif len(hot) == 2:
+                sentences.append(f"{hot[0]} 点和 {hot[1]} 点滚轮明显多。")
+
+    return "".join(sentences[:2])
 
 
 def summary_text(label: str, s: dict) -> str:

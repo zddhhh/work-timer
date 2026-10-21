@@ -88,6 +88,7 @@ class WorklogDialogMixin:
                 touched = True
             break
         if not touched:
+            self._set_habit(ui, days, today)
             return
         rows = [worklog.row(self.cfg, d, today=today) for d in days]
         this_week = days[0] <= today <= days[-1]
@@ -95,6 +96,23 @@ class WorklogDialogMixin:
         m = ui["anchor"]
         mrows = [worklog.row(self.cfg, d, today=today) for d in worklog.month_dates(m.year, m.month)]
         ui["month_sum"].set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
+        self._set_habit(ui, days, today)
+
+    def _set_habit(self, ui: dict, days: list, today: date) -> None:
+        if ui.get("habit_sum") is None:
+            return
+        this_week = days[0] <= today <= days[-1]
+        text = worklog.habit_text(self.cfg, days, today, this_week=this_week)
+        ui["habit_sum"].set(text)
+        lbl = ui.get("habit_lbl")
+        month = ui.get("month_lbl")
+        if lbl is None:
+            return
+        shown = bool(lbl.winfo_manager())
+        if text and not shown:
+            lbl.pack(anchor="w", pady=(2, 0), before=month)
+        elif not text and shown:
+            lbl.pack_forget()
 
     def _ensure_worklog_ui(self) -> dict:
         ui = self._worklog_ui
@@ -189,6 +207,7 @@ class WorklogDialogMixin:
         m = ui["anchor"]
         mrows = [worklog.row(self.cfg, d, today=today) for d in worklog.month_dates(m.year, m.month)]
         ui["month_sum"].set(worklog.summary_text(f"{m.year} 年 {m.month} 月", worklog.summarize(mrows)))
+        self._set_habit(ui, days, today)
         if ui.get("act_on") is not None:
             ui["act_on"].set(activity.enabled(self.cfg))
         if ui.get("card_on") is not None:
@@ -270,7 +289,7 @@ class WorklogDialogMixin:
 
     def _build_worklog_dialog(self) -> dict:
         pair_w = activity_chart.W * 2 + activity_chart.GAP
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=830)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=868)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(6, 14))
         body = tk.Frame(dlg, bg=_CARD_BG)
@@ -450,15 +469,21 @@ class WorklogDialogMixin:
             slots.append({"date": date_lbl, "vin": vin, "vout": vout, "ein": ein, "eout": eout, "dur": dur, "diff": diff})
         tk.Frame(table, bg=head_bg, height=8).grid(row=8, column=0, columnspan=5, sticky="ew")
         week_sum = tk.StringVar()
+        habit_sum = tk.StringVar()
         month_sum = tk.StringVar()
         tk.Label(
             sheet, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
             wraplength=pair_w, justify="left",
         ).pack(anchor="w", pady=(10, 0))
-        tk.Label(
+        habit_lbl = tk.Label(
+            sheet, textvariable=habit_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
+            wraplength=pair_w, justify="left",
+        )
+        month_lbl = tk.Label(
             sheet, textvariable=month_sum, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
             wraplength=pair_w, justify="left",
-        ).pack(anchor="w", pady=(2, 0))
+        )
+        month_lbl.pack(anchor="w", pady=(2, 0))
 
         ui = {
             "dlg": dlg,
@@ -469,6 +494,9 @@ class WorklogDialogMixin:
             "err": err,
             "week_var": week_var,
             "week_sum": week_sum,
+            "habit_sum": habit_sum,
+            "habit_lbl": habit_lbl,
+            "month_lbl": month_lbl,
             "month_sum": month_sum,
             "act_on": act_on,
             "card_on": card_on,

@@ -1631,6 +1631,100 @@ class WorklogTests(unittest.TestCase):
         self.assertNotIn("2026-10-11", cfg["worklog"])
 
 
+class HabitTests(unittest.TestCase):
+    def _stamp(self, cfg, d, hours=None, wheels=None, arrived=None, left=None):
+        import activity
+
+        if hours or wheels:
+            activity.set_enabled(cfg, True)
+            days = cfg.setdefault("activity", {}).setdefault("days", {})
+            rec = days.setdefault(
+                d.isoformat(),
+                {
+                    "keys": 0, "clicks": 0, "wheels": 0,
+                    "hours": [0] * 24, "keys_h": [0] * 24,
+                    "clicks_h": [0] * 24, "wheels_h": [0] * 24,
+                },
+            )
+            for hour, n in (hours or {}).items():
+                rec["hours"][hour] += n
+                rec["keys_h"][hour] += n
+                rec["keys"] += n
+            for hour, n in (wheels or {}).items():
+                rec["hours"][hour] += n
+                rec["wheels_h"][hour] += n
+                rec["wheels"] += n
+        if arrived is not None:
+            cfg.setdefault("worklog", {})[d.isoformat()] = {
+                "in": arrived,
+                "out": left,
+                "target": arrived + 9 * 60,
+                "closed": True,
+            }
+
+    def test_short_week_says_nothing(self):
+        today = date(2026, 10, 23)
+        cfg = {}
+        self._stamp(cfg, date(2026, 10, 19), hours={14: 40, 15: 30})
+        text = worklog.habit_text(cfg, worklog.week_dates(today), today, this_week=True)
+        self.assertEqual(text, "")
+
+    def test_afternoon_habit_names_the_busy_hours(self):
+        today = date(2026, 10, 23)
+        cfg = {}
+        for d in (date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21)):
+            self._stamp(cfg, d, hours={14: 40, 15: 30})
+        text = worklog.habit_text(cfg, worklog.week_dates(today), today, this_week=True)
+        self.assertIn("上午几乎不动，忙集中在下午", text)
+        self.assertIn("最勤在 14–16 点", text)
+        self.assertNotIn("效率", text)
+        self.assertNotIn("开会", text)
+
+    def test_same_band_for_several_weeks(self):
+        today = date(2026, 10, 23)
+        cfg = {}
+        for day in range(5, 24):
+            self._stamp(cfg, date(2026, 10, day), hours={14: 20, 15: 16})
+        text = worklog.habit_text(cfg, worklog.week_dates(today), today, this_week=True)
+        self.assertIn("这几周都是下午更忙", text)
+
+    def test_this_week_moves_to_the_morning(self):
+        today = date(2026, 10, 23)
+        cfg = {}
+        for day in range(5, 17):
+            self._stamp(cfg, date(2026, 10, day), hours={14: 20, 15: 16})
+        for d in (date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21)):
+            self._stamp(cfg, d, hours={9: 30, 10: 28})
+        text = worklog.habit_text(cfg, worklog.week_dates(today), today, this_week=True)
+        self.assertIn("本周上午更忙，前几周都是下午", text)
+
+    def test_arrival_clusters_around_the_same_time(self):
+        today = date(2026, 10, 23)
+        cfg = {}
+        for d, arrived in (
+            (date(2026, 10, 19), 9 * 60 + 8),
+            (date(2026, 10, 20), 9 * 60 + 10),
+            (date(2026, 10, 21), 9 * 60 + 12),
+        ):
+            self._stamp(cfg, d, arrived=arrived, left=18 * 60)
+        text = worklog.habit_text(cfg, worklog.week_dates(today), today, this_week=True)
+        self.assertIn("到岗多在 9:10 前后", text)
+        self.assertIn("不到半小时", text)
+
+    def test_arrival_later_than_earlier_weeks(self):
+        today = date(2026, 10, 23)
+        cfg = {}
+        for day in range(5, 17):
+            d = date(2026, 10, day)
+            if d.weekday() >= 5:
+                continue
+            self._stamp(cfg, d, arrived=9 * 60, left=18 * 60)
+        for d in (date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21)):
+            self._stamp(cfg, d, arrived=10 * 60, left=18 * 60)
+        text = worklog.habit_text(cfg, worklog.week_dates(today), today, this_week=True)
+        self.assertIn("到岗比前几周晚了", text)
+
+
 class ActivityTests(unittest.TestCase):
     def test_counts_and_report_without_storing_keys(self):
         import activity
