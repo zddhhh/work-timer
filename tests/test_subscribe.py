@@ -102,6 +102,36 @@ class SubscribeTests(unittest.TestCase):
             [{"email": "a@x.com", "os": "main"}, {"email": "a@x.com", "os": "win7"}],
         )
 
+    def test_second_package_waits_until_tomorrow(self):
+        fn = self.fn
+        today = fn._today()
+        state = {
+            "last_version": "1.3.70",
+            "auto": [
+                {"email": "a@x.com", "os": "main"},
+                {"email": "b@y.com", "os": "main"},
+            ],
+            "mailed": {},
+            "pack_day": today,
+            "pack_count": 1,
+        }
+        got = fn.signup(dict(state), "c@z.com", "once", "1.3.71", "earoot@163.com")
+        self.assertFalse(got["send"])
+        self.assertIn("明天", got["text"])
+        self.assertEqual(got["state"]["pack_count"], 1)
+        saved = []
+        fn2 = _fn()
+        fn2._load_state = lambda: state
+        fn2._save_state = lambda item: saved.append(dict(item))
+        fn2._latest_release = lambda: {"version": "1.3.71", "tag": "v1.3.71", "note": "", "downloads": {}}
+        calls = []
+        fn2._mail_one = lambda *_a, **_k: calls.append(1)
+        text = fn2._fanout()
+        self.assertIn("明天", text)
+        self.assertEqual(calls, [])
+        self.assertEqual(state.get("last_version"), "1.3.70")
+        self.assertEqual(saved, [])
+
     def test_manual_removes_auto(self):
         state = {"auto": ["a@x.com"], "mailed": {}}
         got = self.fn.signup(state, "a@x.com", "once", "1.3.58")
@@ -123,19 +153,26 @@ class SubscribeTests(unittest.TestCase):
         self.assertIn("最新版本：1.3.58", text)
         self.assertIn("earoot@163.com", text)
         self.assertIn("Windows 7、8", text)
-        self.assertIn(url, text)
+        self.assertIn("安装包在附件里", text)
+        self.assertIn("WorkTimer-Win7-Setup-1.3.58.zip", text)
         self.assertIn("WorkTimer-Win7-Setup.exe", text)
-        self.assertNotIn("附件压缩包", text)
+        self.assertNotIn(url, text)
+        self.assertIn("不用打开网页", text)
         self.assertNotIn("Windows 10", text)
         self.assertIn("说明一条", text)
         self.assertNotIn("sha256", text.lower())
         self.assertNotIn("deadbeef", text)
+        payload = (
+            "WorkTimer-Win7-Setup-1.3.58.zip",
+            self.fn.package_zip("WorkTimer-Win7-Setup.exe", b"MZ-setup"),
+        )
         msg = self.fn.build_mail(
-            "a@x.com", "1.3.58", "earoot@163.com", note, "win8", download_url=url,
+            "a@x.com", "1.3.58", "earoot@163.com", note, "win8", payload=payload,
         )
         self.assertIn("Windows 7、8", msg["Subject"])
         self.assertNotIn("sha256", msg.get_body(preferencelist=("plain",)).get_content().lower())
-        self.assertEqual(list(msg.iter_attachments()), [])
+        files = list(msg.iter_attachments())
+        self.assertEqual([item.get_filename() for item in files], ["WorkTimer-Win7-Setup-1.3.58.zip"])
 
     def test_signup_names_the_sender(self):
         got = self.fn.signup({}, "a@x.com", "once", "1.3.58", "earoot@163.com")
