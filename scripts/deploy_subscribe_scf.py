@@ -145,7 +145,7 @@ def _upsert(cli, zip_b64: str, env: dict) -> None:
         req.Code = code
         req.MemorySize = 512
         req.Timeout = 600
-        req.Description = "弹性下班计时器邮箱订阅：收表单并寄安装包"
+        req.Description = "弹性下班计时器邮箱订阅：收表单并寄下载地址"
         variables = []
         for k, v in env.items():
             var = models.Variable()
@@ -171,7 +171,7 @@ def _upsert(cli, zip_b64: str, env: dict) -> None:
         cfg.FunctionName = FUNCTION_NAME
         cfg.MemorySize = 512
         cfg.Timeout = 600
-        cfg.Description = "弹性下班计时器邮箱订阅：收表单并寄安装包"
+        cfg.Description = "弹性下班计时器邮箱订阅：收表单并寄下载地址"
         variables = []
         for k, v in env.items():
             var = models.Variable()

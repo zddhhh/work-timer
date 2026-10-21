@@ -1,7 +1,6 @@
-"""订阅云函数：网页收邮箱，并用 163 把安装包寄出去。
+"""订阅云函数：网页收邮箱，并用 163 把下载地址寄出去。
 
-安装包在附件里，收件人不用自己下载，内网也能装。
-163 一天的发信流量只够大约一封安装包，所以同一天只寄一份，其余的排到第二天。
+不附安装包。一封带 20MB 附件的信就会把 163 当天的发信流量用完。
 
 控制台里建「事件函数」，运行环境 Python 3.10，入口 index.main_handler。
 内存 512 MB，超时 600 秒，打开公网访问。
@@ -28,7 +27,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import io
 import json
 import re
 import smtplib
@@ -36,7 +34,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 from email.message import EmailMessage
 
 API = "https://api.gitcode.com/api/v5"
@@ -51,8 +48,6 @@ _OS_ALIAS = {"win10": "main", "win81": "main", "win8": "win7", "main": "main", "
 STATE_KEY = "/subscribe/state.json"
 PAGE_URL = "https://zddhhh.github.io/worktimer-subscribe/"
 DAILY_CAP = 40
-# 一封安装包大约 20MB，163 当天的发信流量再寄第二封就会被拒。
-PACKAGE_CAP = 1
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,120}\.[^@\s]{1,24}$")
 
 
@@ -105,7 +100,7 @@ def _http(event: dict) -> dict:
     decision = signup(state, email, mode, release["version"], sender, os_key)
     if decision["send"] and _hold_mail(state):
         _save_state(decision["state"])
-        return _html(200, _message_html("记下了", _hold_text(state, mode)))
+        return _html(200, _message_html("记下了", _full_text(mode)))
     if decision["send"]:
         try:
             _mail_one(email, release, os_key, unsub=(mode == "auto"))
@@ -119,7 +114,6 @@ def _http(event: dict) -> dict:
         mailed = decision["state"].setdefault("mailed", {})
         mailed[email] = remember_sent(mailed.get(email), release["version"], os_key)
         _bump_sent(decision["state"])
-        _bump_pack(decision["state"])
     _save_state(decision["state"])
     if decision["send"]:
         title = "寄出了"
@@ -143,11 +137,9 @@ def _fanout() -> str:
         return f"没有要寄的人（最新 {version}）"
     if state.get("smtp_full") == _today():
         return f"发信邮箱今天寄满了，明天再寄 {version}"
-    if _packed_today(state) >= PACKAGE_CAP:
-        return f"今天已经寄过安装包了，明天再寄 {version}"
     sent = []
     for person in due:
-        if _sent_today(state) >= DAILY_CAP or _packed_today(state) >= PACKAGE_CAP:
+        if _sent_today(state) >= DAILY_CAP:
             break
         try:
             _mail_one(person["email"], release, person["os"], unsub=True)
@@ -162,7 +154,6 @@ def _fanout() -> str:
         mailed = state.setdefault("mailed", {})
         mailed[person["email"]] = remember_sent(mailed.get(person["email"]), version, person["os"])
         _bump_sent(state)
-        _bump_pack(state)
         sent.append(person["email"])
     if sent and len(sent) == len(due):
         state["last_version"] = version
@@ -232,8 +223,6 @@ def signup(state: dict, email: str, mode: str, version: str, sender: str = "", o
         "day": state.get("day") or "",
         "sent_count": int(state.get("sent_count") or 0),
         "smtp_full": state.get("smtp_full") or "",
-        "pack_day": state.get("pack_day") or "",
-        "pack_count": int(state.get("pack_count") or 0),
     }
     # 两类各算一份：再要另一类不会把这一类的长期订阅冲掉。
     # 「只要这一版」只停掉这一类，另一类还在的话继续寄。
@@ -263,11 +252,11 @@ def signup(state: dict, email: str, mode: str, version: str, sender: str = "", o
         elif was_auto:
             text += "这一类以后不再自动寄。"
         return {"state": state, "send": False, "text": text}
-    if _sent_today(state) >= DAILY_CAP or _packed_today(state) >= PACKAGE_CAP:
-        return {"state": state, "send": False, "text": _hold_text(state, mode)}
-    text = f"最新版 {version} 的 {label} 安装包会寄到 {email}。"
+    if _sent_today(state) >= DAILY_CAP or _hold_mail(state):
+        return {"state": state, "send": False, "text": _full_text(mode)}
+    text = f"最新版 {version} 的 {label} 下载地址会寄到 {email}。"
     if sender:
-        text += f"发信邮箱是 {sender}，请核对发件人再打开附件。"
+        text += f"发信邮箱是 {sender}，请核对发件人再点开。"
     if mode == "auto":
         text += "以后这一类的新版本也会寄。不想要了，用邮件里的链接取消。"
     else:
@@ -329,30 +318,8 @@ def _full_text(mode: str) -> str:
     return "发信邮箱今天寄满了，明天再来要。"
 
 
-def _packed_today(state: dict) -> int:
-    if state.get("pack_day") != _today():
-        return 0
-    return int(state.get("pack_count") or 0)
-
-
-def _bump_pack(state: dict) -> None:
-    today = _today()
-    if state.get("pack_day") != today:
-        state["pack_day"] = today
-        state["pack_count"] = 0
-    state["pack_count"] = int(state.get("pack_count") or 0) + 1
-
-
 def _hold_mail(state: dict) -> bool:
-    return state.get("smtp_full") == _today() or _packed_today(state) >= PACKAGE_CAP
-
-
-def _hold_text(state: dict, mode: str) -> str:
-    if state.get("smtp_full") == _today():
-        return _full_text(mode)
-    if mode == "auto":
-        return "今天的安装包已经寄出一份了。已经记下，明天寄给你。"
-    return "今天的安装包已经寄出一份了，明天再来要。"
+    return state.get("smtp_full") == _today()
 
 
 def _sent_today(state: dict) -> int:
@@ -394,11 +361,11 @@ def _form(error: str = "", sender: str = "") -> str:
     warn = f"<p class='err'>{_esc(error)}</p>" if error else ""
     if sender:
         lead = (
-            f"安装包由 {_esc(sender)} 寄出，在邮件附件里，不用自己下载。"
-            "两类分开寄。163 一天只能寄一份，多的人排到明天。"
+            f"下载地址由 {_esc(sender)} 寄出，请认准这个发件人。"
+            "两类分开寄，互不影响。同一类的同一个版本只寄一次。"
         )
     else:
-        lead = "电脑连不上更新时，先选自己的系统。安装包寄到邮箱附件里。"
+        lead = "电脑连不上更新时，先选自己的系统，下载地址寄到邮箱。"
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -412,7 +379,7 @@ input[type=email] {{ width:100%; box-sizing:border-box; padding:10px; font-size:
 button {{ margin-top:8px; padding:10px 18px; font-size:16px; background:#b02a24; color:#fff; border:0; border-radius:8px; }}
 .err {{ color:#b02a24; }}
 </style></head><body><main>
-<h1>用邮箱收安装包</h1>
+<h1>用邮箱收下载地址</h1>
 <p>{lead}</p>
 {warn}
 <form method="post">
@@ -628,19 +595,6 @@ def unsubscribe(state: dict, token: str, secret: str) -> dict:
     return {"ok": True, "changed": found, "state": state, "text": text}
 
 
-def package_name(version: str, asset: str) -> str:
-    stem = asset[:-4] if asset.lower().endswith(".exe") else asset
-    safe = "".join(ch if ch.isalnum() or ch in ".-" else "-" for ch in (version or "setup"))
-    return f"{stem}-{safe}.zip"
-
-
-def package_zip(asset: str, blob: bytes) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
-        zf.writestr(asset, blob)
-    return buf.getvalue()
-
-
 def mail_text(
     version: str,
     sender: str,
@@ -651,7 +605,6 @@ def mail_text(
 ) -> str:
     os_key = _clean_os(system) or "main"
     label, asset = SYSTEMS[os_key]
-    filename = package_name(version, asset)
     lines = [
         f"最新版本：{version}",
         f"这一封是给 {label} 的。",
@@ -662,14 +615,15 @@ def mail_text(
         lines.extend(
             [
                 f"这封信由 {sender} 发出。",
-                "发件人不是这个邮箱，就不要打开附件。",
+                "发件人不是这个邮箱，不要点里面的链接。",
                 "",
             ]
         )
     lines.extend(
         [
-            f"安装包在附件里，文件名 {filename}。",
-            f"解压后双击 {asset} 安装。不用打开网页。",
+            f"安装包不在附件里。用浏览器打开下面的地址，下载 {asset}：",
+            download_url or "https://gitcode.com/mdslanruo/work-timer/releases",
+            "下载后双击它安装。",
         ]
     )
     extra = public_note(note)
@@ -711,7 +665,6 @@ def build_mail(
     system: str = "main",
     unsub_url: str = "",
     download_url: str = "",
-    payload: tuple[str, bytes] | None = None,
 ) -> EmailMessage:
     os_key = _clean_os(system) or "main"
     msg = EmailMessage()
@@ -719,14 +672,6 @@ def build_mail(
     msg["From"] = sender
     msg["To"] = email
     msg.set_content(mail_text(version, sender, note, os_key, unsub_url, download_url))
-    if payload:
-        filename, blob = payload
-        msg.add_attachment(
-            blob,
-            maintype="application",
-            subtype="zip",
-            filename=filename,
-        )
     return msg
 
 
@@ -739,33 +684,14 @@ def _cancel(token: str) -> dict:
     return _html(200, _message_html(title, result["text"]))
 
 
-def fetch_asset(repo: str, tag: str, asset: str) -> bytes:
-    """在云函数里把安装包拉下来。收件人的内网不用访问这个地址。"""
-    url = download_link(repo, tag, asset)
-    req = urllib.request.Request(url, headers={"User-Agent": "WorkTimer-Subscribe"})
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        data = resp.read()
-    if len(data) < 1024 * 1024:
-        raise RuntimeError("安装包没下全")
-    return data
-
-
 def _mail_one(email: str, release: dict, system: str = "main", unsub: bool = False) -> None:
     os_key = _clean_os(system) or "main"
     asset = SYSTEMS[os_key][1]
     repo = _env("GITCODE_REPO") or "mdslanruo/work-timer"
-    version = str(release.get("version") or "")
-    blob = fetch_asset(repo, str(release.get("tag") or ""), asset)
-    filename = package_name(version, asset)
+    page = download_link(repo, str(release.get("tag") or ""), asset)
     link = cancel_link(email, _env("SMTP_PASSWORD")) if unsub and _env("SMTP_PASSWORD") else ""
     msg = build_mail(
-        email,
-        version,
-        _sender(),
-        release.get("note") or "",
-        os_key,
-        link,
-        payload=(filename, package_zip(asset, blob)),
+        email, release["version"], _sender(), release.get("note") or "", os_key, link, page,
     )
     host = _env("SMTP_HOST") or "smtp.163.com"
     port = int(_env("SMTP_PORT") or "465")

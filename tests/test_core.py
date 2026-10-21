@@ -2273,11 +2273,9 @@ class ReleaseMailTests(unittest.TestCase):
         self.assertNotIn("sha256", body.lower())
         self.assertNotIn("abcdef", body)
         self.assertIn("1.3.56", msg["Subject"])
-        self.assertIn("安装包在附件里", body)
-        self.assertNotIn(mail.RELEASE_PAGE, body)
-        files = list(msg.iter_attachments())
-        self.assertEqual(len(files), 1)
-        self.assertIn("WorkTimer-Setup", files[0].get_filename())
+        self.assertIn("安装包不在附件里", body)
+        self.assertIn(mail.RELEASE_PAGE, body)
+        self.assertEqual(list(msg.iter_attachments()), [])
 
     def test_smtp_secret_is_optional_until_the_file_is_complete(self):
         mail = self._mail()

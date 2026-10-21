@@ -68,14 +68,8 @@ def build_message(
         raise ValueError("没有主安装包")
     if win7 is not None and not win7.is_file():
         raise ValueError("没有 Win7 安装包")
-    # 一封信只附主安装包。再附 Win7 会把 163 当天的流量一起用完。
-    mod = _subscribe()
-    msg = mod.build_mail(
-        recipients[0],
-        version,
-        sender,
-        note,
-        payload=(mod.package_name(version, setup.name), mod.package_zip(setup.name, setup.read_bytes())),
+    msg = _subscribe().build_mail(
+        recipients[0], version, sender, note, download_url=RELEASE_PAGE,
     )
     if len(recipients) > 1:
         msg.replace_header("To", ", ".join(recipients))
