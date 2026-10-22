@@ -128,12 +128,23 @@ def _offscreen_bounds(bounds: str) -> str:
     return f"{size}+-20000+0"
 
 
+def _geom_wh(geom: str) -> tuple[int, int]:
+    cut = len(geom)
+    for mark in ("+", "-"):
+        i = geom.find(mark)
+        if 0 < i < cut:
+            cut = i
+    w, h = geom[:cut].split("x", 1)
+    return int(w), int(h)
+
+
 def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     """按内容把卡片撑开；藏着的卡片在屏幕外画完，再挪回来亮出。
 
     update_idletasks 只排版、不处理 WM_PAINT。直接亮出会先看到空底板和白色按钮块，
     控件再分几次画上去。必须 update() 让控件真正画完。
-    第一次 deiconify 时 -alpha 经常还不生效，所以先在屏幕外映射，量准尺寸再挪进来。
+    第一次 deiconify 时 -alpha 经常被打回 1，所以映射之后要再设一次 0，画完再挪进屏幕。
+    已经亮着时，尺寸没变就只刷新；要变高变宽就先透明，避免改尺寸那一帧闪出空底板。
     """
     try:
         withdrawn = dlg.state() == "withdrawn"
@@ -144,17 +155,29 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
         # 带着 WS_EX_TRANSPARENT 挪回屏幕会被当成「底下变了」整窗重画，必须先摘掉
         _click_through(dlg, False)
     bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
-    if visible:
-        dlg.geometry(bounds)
-        return
     try:
+        if visible:
+            if _geom_wh(dlg.geometry()) == _geom_wh(bounds):
+                dlg.update()
+                return
+            dlg.attributes("-alpha", 0.0)
+            dlg.update()
+            dlg.geometry(bounds)
+            dlg.update()
+            dlg.attributes("-alpha", 1.0)
+            return
         dlg.attributes("-alpha", 0.0)
         # 已映射（换页时先透明、或 _park_card 收起的）别再 deiconify：Tk 会整窗重显
         if withdrawn:
             dlg.geometry(_offscreen_bounds(bounds))
             dlg.deiconify()
             dlg.update()
+            dlg.attributes("-alpha", 0.0)
             bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
+            dlg.geometry(_offscreen_bounds(bounds))
+            dlg.update()
+            bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
+        dlg.attributes("-alpha", 0.0)
         dlg.geometry(bounds)
         dlg.update()
         dlg.attributes("-alpha", 1.0)

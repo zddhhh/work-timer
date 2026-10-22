@@ -427,6 +427,31 @@ class DialogAnchorTests(unittest.TestCase):
 
         self.assertEqual(main._offscreen_bounds("360x220+12+40"), "360x220+-20000+0")
         self.assertEqual(main._offscreen_bounds("360x220"), "360x220+-20000+0")
+        self.assertEqual(main._geom_wh("360x220+12+40"), (360, 220))
+        self.assertEqual(main._geom_wh("360x220+-20000+0"), (360, 220))
+        self.assertEqual(main._geom_wh("360x220-10+20"), (360, 220))
+
+    def test_refit_grows_and_stays_opaque(self):
+        import tkinter as tk
+
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            dlg = main._card_dialog(root, near=(80, 80), width=220, height=80)
+            tk.Label(dlg, text="短", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+            main._fit_card(dlg, min_w=200, min_h=80, near=(80, 80))
+            self.assertGreaterEqual(float(dlg.attributes("-alpha")), 0.99)
+            self.assertGreater(dlg.winfo_x(), -1000)
+            h1 = dlg.winfo_height()
+            tk.Label(dlg, text="第二行\n" * 8, bg=main._CARD_BG, fg=main._CARD_FG).pack()
+            main._fit_card(dlg, min_w=200, min_h=80, near=(80, 80))
+            self.assertGreaterEqual(float(dlg.attributes("-alpha")), 0.99)
+            self.assertGreater(dlg.winfo_x(), -1000)
+            self.assertGreater(dlg.winfo_height(), h1)
+        finally:
+            root.destroy()
 
 
 class GameDialogTests(unittest.TestCase):

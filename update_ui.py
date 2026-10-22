@@ -5,7 +5,6 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
 
 from PIL import Image, ImageTk
 
@@ -13,6 +12,7 @@ import changelog
 import store
 import updater
 from card_ui import (
+    _CARD_ACCENT,
     _CARD_BG,
     _CARD_FG,
     _CARD_MUTED,
@@ -65,10 +65,50 @@ class UpdateDialogMixin:
         # 更新前先让用户看到这版改了什么，别让人闭着眼点「现在更新」
         notes_box = tk.Frame(dlg, bg=_CARD_BG)
         notes_box.pack(fill="x", padx=18, anchor="w")
-        bar = ttk.Progressbar(dlg, mode="indeterminate", length=270)
-        if known is None:
-            bar.pack(pady=(12, 4), padx=18)
-            bar.start(12)
+        # 不用系统进度条：它是原生控件，第一次画上去常是一条白的，深色卡片上就像闪了一下
+        track = tk.Canvas(dlg, width=270, height=4, bg=_CARD_BG, highlightthickness=0, bd=0)
+        pulse = {"mode": "idle", "n": 0}
+        track_on = {"v": False}
+
+        def paint_track() -> None:
+            track.delete("all")
+            track.create_rectangle(0, 0, 270, 4, fill="#2a3140", outline="")
+            if pulse["mode"] == "busy":
+                x = (int(pulse["n"]) * 18) % 340 - 70
+                track.create_rectangle(max(0, x), 0, min(270, x + 70), 4, fill=_CARD_ACCENT, outline="")
+            elif pulse["mode"] == "pct":
+                width = max(0, min(270, int(270 * int(pulse["n"]) / 100)))
+                if width:
+                    track.create_rectangle(0, 0, width, 4, fill=_CARD_ACCENT, outline="")
+
+        def show_track() -> None:
+            if track_on["v"]:
+                return
+            track.pack(pady=(12, 4), padx=18)
+            track_on["v"] = True
+
+        def hide_track() -> None:
+            pulse["mode"] = "idle"
+            if not track_on["v"]:
+                return
+            try:
+                track.pack_forget()
+            except tk.TclError:
+                pass
+            track_on["v"] = False
+
+        def conceal() -> None:
+            """换内容前先透明。拆按钮、加说明都发生在看不见的时候。"""
+            try:
+                if dlg.state() == "withdrawn" or float(dlg.attributes("-alpha")) < 0.05:
+                    return
+                dlg.attributes("-alpha", 0.0)
+                dlg.update()
+            except tk.TclError:
+                pass
+
+        def present(min_w: int, min_h: int) -> None:
+            _fit_card(dlg, min_w=min_w, min_h=min_h, near=near)
 
         state: dict = {
             "closed": False,
@@ -83,10 +123,6 @@ class UpdateDialogMixin:
         def on_close() -> None:
             state["cancel"] = True
             state["closed"] = True
-            try:
-                bar.stop()
-            except Exception:
-                pass
             try:
                 dlg.destroy()
             except Exception:
@@ -110,11 +146,8 @@ class UpdateDialogMixin:
             if not alive():
                 return
             state["phase"] = "idle"
-            try:
-                bar.stop()
-                bar.pack_forget()
-            except Exception:
-                pass
+            conceal()
+            hide_track()
             clear_notes()
             progress.set("")
             try:
@@ -124,7 +157,7 @@ class UpdateDialogMixin:
             status.set(msg)
             detail.set(short(sub))
             set_btns([("好", on_close, False)])
-            _fit_card(dlg, min_w=300, min_h=160, near=near)
+            present(300, 160)
 
         def fail(msg: str) -> None:
             store.append_log(f"update: {(msg or '')[:180]}")
@@ -146,11 +179,8 @@ class UpdateDialogMixin:
             if not alive():
                 return
             state["phase"] = "idle"
-            try:
-                bar.stop()
-                bar.pack_forget()
-            except Exception:
-                pass
+            conceal()
+            hide_track()
             clear_notes()
             progress.set("")
             try:
@@ -171,7 +201,7 @@ class UpdateDialogMixin:
             slot.image = photo
             slot.pack(pady=(8, 0))
             set_btns([("好", on_close, False)])
-            _fit_card(dlg, min_w=300, min_h=320, near=near)
+            present(300, 320)
 
         def start_download(info: updater.ReleaseInfo) -> None:
             if not alive():
@@ -181,6 +211,7 @@ class UpdateDialogMixin:
                 return
             state["phase"] = "download"
             state["cancel"] = False
+            conceal()
             clear_notes()
             try:
                 notes_box.pack_forget()
@@ -190,21 +221,16 @@ class UpdateDialogMixin:
             detail.set("下完会自己装上。")
             progress.set("")
             set_btns([("取消", on_close, False)])
-            try:
-                bar.stop()
-            except Exception:
-                pass
-            bar.configure(mode="determinate", maximum=100, value=0)
+            pulse["mode"] = "pct"
+            pulse["n"] = 0
+            paint_track()
             # 进度条和说明都就位后再量高度，不然条会压到「日程不会丢」那一行上
             try:
                 progress_lbl.pack(fill="x", padx=18, pady=(6, 0), anchor="w")
             except Exception:
                 pass
-            try:
-                bar.pack(pady=(8, 4), padx=18)
-            except Exception:
-                pass
-            _fit_card(dlg, min_w=320, min_h=168, near=near)
+            show_track()
+            present(320, 168)
 
             done_box: list[object] = []
 
@@ -243,11 +269,16 @@ class UpdateDialogMixin:
                         _k, done, total = done_box.pop(0)
                         if total > 0:
                             pct = max(0, min(100, int(done * 100 / total)))
-                            bar.configure(value=pct)
+                            pulse["mode"] = "pct"
+                            pulse["n"] = pct
+                            paint_track()
                             progress.set(
                                 f"已下 {done / (1024 * 1024):.1f} MB，一共 {total / (1024 * 1024):.1f} MB"
                             )
                         else:
+                            pulse["mode"] = "busy"
+                            pulse["n"] = int(pulse["n"]) + 1
+                            paint_track()
                             progress.set(f"已下 {done / (1024 * 1024):.1f} MB")
                     elif kind == "ok":
                         path = done_box[0][1]
@@ -260,8 +291,10 @@ class UpdateDialogMixin:
                         status.set("正在安装，马上就好")
                         detail.set("窗口会关一下再打开。")
                         progress.set("下载完成")
-                        bar.configure(value=100)
-                        _fit_card(dlg, min_w=320, min_h=168, near=near)
+                        pulse["mode"] = "pct"
+                        pulse["n"] = 100
+                        paint_track()
+                        present(320, 168)
                         dlg.update()
                         try:
                             updater.apply_update_and_restart(path)  # type: ignore[arg-type]
@@ -298,11 +331,8 @@ class UpdateDialogMixin:
             self._update_info = info
             self._update_available = True
             state["phase"] = "ask"
-            try:
-                bar.stop()
-                bar.pack_forget()
-            except Exception:
-                pass
+            conceal()
+            hide_track()
             status.set("有新版本可以用")
             # 换行写死：Tk 不在中文里断词，一长串跟在空格后面会把前面那一小截甩成孤行
             detail.set(f"你现在是 {APP_VERSION}，可以升到 {info.version}。\n点更新后窗口会关一下再打开，日程和设置都还在。")
@@ -328,7 +358,7 @@ class UpdateDialogMixin:
                 state["pending_dl"] = inf
 
             set_btns([("立即更新", go, True), ("暂不", on_close, False)])
-            _fit_card(dlg, min_w=300, min_h=170, near=near)
+            present(300, 170)
 
         if known is not None:
             show_available(known)
@@ -343,20 +373,36 @@ class UpdateDialogMixin:
                     result_box.append((f"error:{e}", None))
 
             threading.Thread(target=worker_check, daemon=True, name="update-check").start()
+            started = time.monotonic()
+            checking_shown = False
+
+            def apply_result() -> None:
+                st, info = result_box[0]
+                if st == "no_repo":
+                    finish_idle("这个版本不能在线更新", "请到官网手动下载安装包", error=True)
+                elif st.startswith("error:"):
+                    fail(st[6:])
+                elif st == "latest":
+                    finish_idle("已经是最新的了", f"当前是 {APP_VERSION}，不用更新")
+                elif st == "available" and info is not None:
+                    show_available(info)
+                else:
+                    finish_idle("暂时没有新版本", f"当前是 {APP_VERSION}")
+
             while alive() and state["phase"] == "check":
                 if result_box:
-                    st, info = result_box[0]
-                    if st == "no_repo":
-                        finish_idle("这个版本不能在线更新", "请到官网手动下载安装包", error=True)
-                    elif st.startswith("error:"):
-                        fail(st[6:])
-                    elif st == "latest":
-                        finish_idle("已经是最新的了", f"当前是 {APP_VERSION}，不用更新")
-                    elif st == "available" and info is not None:
-                        show_available(info)
-                    else:
-                        finish_idle("暂时没有新版本", f"当前是 {APP_VERSION}")
+                    apply_result()
                     break
+                # 查得快就别先弹出「正在看看」再立刻换成结果，那一下也是闪
+                if not checking_shown and time.monotonic() - started >= 0.28:
+                    pulse["mode"] = "busy"
+                    paint_track()
+                    show_track()
+                    present(300, 170)
+                    checking_shown = True
+                elif checking_shown:
+                    pulse["n"] = int(pulse["n"]) + 1
+                    paint_track()
                 try:
                     _sync_open_card_hide(dlg, self.win)
                     dlg.update()
@@ -368,7 +414,6 @@ class UpdateDialogMixin:
                     break
                 time.sleep(0.03)
 
-        _fit_card(dlg, min_w=300, min_h=170, near=near)
         while alive() and state["phase"] in ("ask", "idle"):
             pending = state.get("pending_dl")
             if pending is not None:

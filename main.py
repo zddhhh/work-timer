@@ -52,6 +52,7 @@ from card_ui import (
     _card_btn,
     _card_dialog,
     _fit_card,
+    _geom_wh,  # noqa: F401  测试从 main 里取
     _offscreen_bounds,  # noqa: F401  测试从 main 里取
     _pack_err_line,
     _pack_full_text,
