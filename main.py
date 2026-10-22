@@ -1170,7 +1170,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         def copy_link() -> None:
             try:
                 share.copy_text(text)
-            except OSError:
+            except (OSError, ctypes.ArgumentError):
                 status.set("剪贴板没放进去，再试一次。")
                 return
             status.set("已复制下载地址。")
@@ -1184,7 +1184,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 pass
             try:
                 share.copy_file(path)
-            except OSError:
+            except (OSError, ctypes.ArgumentError):
                 if opened:
                     status.set("剪贴板没放进去，已打开文件夹，把安装包拖到企业微信。")
                 else:

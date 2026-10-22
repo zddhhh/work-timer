@@ -193,13 +193,31 @@ def hdrop_bytes(path: Path) -> bytes:
 def _clipboard_set(items: list[tuple[int, bytes]]) -> None:
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+    # 句柄是 64 位。不声明参数类型时，ctypes 按 32 位整数传，大地址会直接报错。
+    # 按钮回调把这个错误吃掉，界面上就像没复制。
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
     kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
     kernel32.GlobalLock.restype = ctypes.c_void_p
     kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
     kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.restype = ctypes.c_void_p
     user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
     user32.OpenClipboard.argtypes = [wintypes.HWND]
-    if not user32.OpenClipboard(None):
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    opened = False
+    for _ in range(10):
+        if user32.OpenClipboard(None):
+            opened = True
+            break
+        time.sleep(0.03)
+    if not opened:
         raise OSError("剪贴板打不开")
     try:
         user32.EmptyClipboard()

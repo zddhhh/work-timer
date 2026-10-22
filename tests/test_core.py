@@ -2376,6 +2376,43 @@ class ShareTests(unittest.TestCase):
         self.assertEqual(int.from_bytes(blob[:4], "little"), 20)
         self.assertIn("WorkTimer-Setup.exe", blob.decode("utf-16-le", errors="ignore"))
 
+    def test_text_clipboard_survives_a_tk_window(self):
+        import ctypes
+        import tkinter as tk
+        import share
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        root = tk.Tk()
+        root.withdraw()
+        marker = "弹性下班计时器-剪贴板"
+        try:
+            share.copy_text(marker)
+            user32.OpenClipboard.argtypes = [ctypes.wintypes.HWND]
+            user32.OpenClipboard.restype = ctypes.wintypes.BOOL
+            user32.GetClipboardData.argtypes = [ctypes.wintypes.UINT]
+            user32.GetClipboardData.restype = ctypes.c_void_p
+            user32.CloseClipboard.argtypes = []
+            kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalSize.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalSize.restype = ctypes.c_size_t
+            self.assertTrue(user32.OpenClipboard(None))
+            try:
+                handle = user32.GetClipboardData(13)
+                self.assertTrue(handle)
+                ptr = kernel32.GlobalLock(handle)
+                self.assertTrue(ptr)
+                size = kernel32.GlobalSize(handle)
+                raw = ctypes.string_at(ptr, size)
+                kernel32.GlobalUnlock(handle)
+            finally:
+                user32.CloseClipboard()
+            self.assertEqual(raw.decode("utf-16-le").split("\0", 1)[0], marker)
+        finally:
+            root.destroy()
+
     def test_progress_line_names_how_much_is_down(self):
         import share
 

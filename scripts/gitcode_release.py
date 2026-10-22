@@ -102,8 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 复制安装包时边下边显示进度，窗口不再卡死；下好后可以拖进企业微信\n"
-    "- 发激励啦切换不再顿一下，动作更顺"
+    "- 复制下载地址和复制安装包能放进剪贴板了"
 )
 
 
