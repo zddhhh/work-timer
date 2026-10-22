@@ -97,6 +97,7 @@ ID_UNINSTALL = 17
 ID_WORKLOG = 18
 ID_HYDRATE = 19
 ID_GAMES = 100
+ID_SHARE = 1000
 ID_HYDRATE_SETTINGS = 9
 ID_THEME_BASE = 20
 
@@ -1003,6 +1004,7 @@ class LayeredPetWindow:
         user32.AppendMenuW(hmenu, MF_POPUP, htheme, "外观")
         user32.AppendMenuW(hmenu, MF_POPUP, hset, "设置")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(hmenu, MF_STRING, ID_SHARE, "发给同事")
         user32.AppendMenuW(hmenu, MF_STRING, ID_CHECK_UPDATE, "检查更新")
         user32.AppendMenuW(hmenu, MF_STRING, ID_ABOUT, "关于…")
         user32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
@@ -1029,6 +1031,8 @@ class LayeredPetWindow:
         user32.DestroyMenu(hmenu)
         if cmd == ID_QUIT:
             return "quit"
+        if cmd == ID_SHARE:
+            return "share"
         if cmd == ID_CHECK_UPDATE:
             return "update"
         if cmd == ID_ABOUT:

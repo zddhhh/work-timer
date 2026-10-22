@@ -2316,5 +2316,50 @@ class GhostGripTests(unittest.TestCase):
         self.assertGreater(corner((4, 4)), corner((200, 70)))
 
 
+class ShareTests(unittest.TestCase):
+    def test_public_link_needs_no_token_and_names_the_setup(self):
+        import share
+
+        url = share.public_download_url(
+            "https://gitcode.com/mdslanruo/work-timer", "1.3.72", "WorkTimer-Setup.exe",
+        )
+        self.assertEqual(
+            url,
+            "https://gitcode.com/mdslanruo/work-timer/releases/download/v1.3.72/WorkTimer-Setup.exe",
+        )
+        self.assertNotIn("token", url.lower())
+        text = share.share_text("1.3.72", url)
+        self.assertIn("不用登录", text)
+        self.assertIn(url, text)
+
+    def test_remembered_setup_can_be_handed_on(self):
+        import share
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "in.exe"
+            src.write_bytes(b"MZ" + b"x" * (100 * 1024))
+            saved = share.remember_setup(src, "WorkTimer-Setup.exe", root)
+            self.assertEqual(share.cached_setup("WorkTimer-Setup.exe", root), saved)
+            self.assertTrue(saved.is_file())
+            small = root / "small.exe"
+            small.write_bytes(b"MZ" + b"x" * 20)
+            share.remember_setup(small, "WorkTimer-Win7-Setup.exe", root)
+            self.assertIsNone(share.cached_setup("WorkTimer-Win7-Setup.exe", root))
+            html = root / "page.exe"
+            html.write_bytes(b"<h" + b"x" * (100 * 1024))
+            share.remember_setup(html, "not-an-exe.exe", root)
+            self.assertIsNone(share.cached_setup("not-an-exe.exe", root))
+            with self.assertRaises(ValueError):
+                share.cache_path(r"..\WorkTimer-Setup.exe", root)
+
+    def test_file_clipboard_points_at_the_path(self):
+        import share
+
+        blob = share.hdrop_bytes(Path(r"C:\share\WorkTimer-Setup.exe"))
+        self.assertEqual(int.from_bytes(blob[:4], "little"), 20)
+        self.assertIn("WorkTimer-Setup.exe", blob.decode("utf-16-le", errors="ignore"))
+
+
 if __name__ == "__main__":
     unittest.main()

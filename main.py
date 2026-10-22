@@ -32,6 +32,7 @@ import meow
 import mines
 import ornaments
 import schedules
+import share
 import single_instance
 import skin_settings
 import store
@@ -1138,6 +1139,86 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         except Exception as e:  # noqa: BLE001
             store.log_exception("card-frame", e)
 
+    def _open_share(self) -> None:
+        url, text = share.current_share(self.cfg)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=420, height=280)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        status = tk.StringVar(value="")
+        tk.Label(
+            body, text="发给同事", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 6), anchor="w")
+        tk.Label(
+            body,
+            text="打不开网页的，把安装包贴到企业微信。打得开的，发下面的地址，不用登录。",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=380, justify="left",
+        ).pack(anchor="w")
+        tk.Label(
+            body, text=url, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=380, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+        tk.Label(
+            body, textvariable=status, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=380, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+        box: list = []
+        busy = {"v": False}
+
+        def copy_link() -> None:
+            try:
+                share.copy_text(text)
+            except OSError:
+                status.set("剪贴板没放进去，再试一次。")
+                return
+            status.set("已复制下载地址。")
+
+        def finish_file(path) -> None:
+            try:
+                share.copy_file(path)
+                status.set("已复制安装包，贴到企业微信发给同事。")
+            except OSError:
+                share.reveal_in_folder(path)
+                status.set("剪贴板没放进去，已打开文件夹，把安装包拖过去。")
+
+        def copy_setup() -> None:
+            if busy["v"]:
+                return
+            found = share.cached_setup(share.ASSET_NAME)
+            if found is not None:
+                finish_file(found)
+                return
+            busy["v"] = True
+            status.set("正在准备安装包…")
+
+            def work() -> None:
+                try:
+                    repo = str(self.cfg.get("gitcode_repo") or "").strip() or "mdslanruo/work-timer"
+                    path = share.prepare_setup(repo, APP_VERSION, share.ASSET_NAME)
+                    box.append(("ok", path))
+                except Exception:
+                    box.append(("err", None))
+
+            threading.Thread(target=work, daemon=True, name="share-setup").start()
+
+        def on_frame() -> None:
+            if not box:
+                return
+            kind, path = box.pop(0)
+            busy["v"] = False
+            if kind == "ok":
+                finish_file(path)
+            else:
+                status.set("这台电脑下不了。把下载地址发给能上网的同事。")
+
+        _card_btn(bar, "复制安装包", copy_setup, accent=True).pack(side="left", padx=(18, 8))
+        _card_btn(bar, "复制下载地址", copy_link).pack(side="left", padx=8)
+        _card_btn(bar, "好", dlg.destroy).pack(side="right", padx=(8, 18))
+        _reveal_card(dlg, min_w=360, min_h=220, near=self._dialog_near())
+        _run_card_modal(dlg, self.win, on_frame=on_frame)
+
     def _open_about(self) -> None:
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=620)
         bar = tk.Frame(dlg, bg=_CARD_BG)
@@ -1445,6 +1526,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         )
         if op == "quit":
             self.running = False
+        elif op == "share":
+            self._open_share()
         elif op == "update":
             self._check_update()
         elif op in ("set_time", "set_off"):

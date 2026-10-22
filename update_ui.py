@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
 from PIL import Image, ImageTk
@@ -157,7 +158,7 @@ class UpdateDialogMixin:
             except Exception:
                 pass
             status.set(head)
-            detail.set(detail_text or "扫下面的码，把安装包寄到邮箱。")
+            detail.set(detail_text or "扫下面的码，把下载地址寄到邮箱。")
             import qrcode
 
             code = qrcode.QRCode(border=1, box_size=4, error_correction=qrcode.constants.ERROR_CORRECT_M)
@@ -250,6 +251,12 @@ class UpdateDialogMixin:
                             progress.set(f"已下 {done / (1024 * 1024):.1f} MB")
                     elif kind == "ok":
                         path = done_box[0][1]
+                        try:
+                            import share
+
+                            share.remember_setup(Path(path), info.asset_name)
+                        except Exception:
+                            pass
                         status.set("正在安装，马上就好")
                         detail.set("窗口会关一下再打开。")
                         progress.set("下载完成")

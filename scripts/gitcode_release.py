@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时账本在矮屏幕上中间可以滚动，合计和按钮留在画面里"
+    "- 右键可以发给同事：复制安装包，或复制不用登录的下载地址"
 )
 
 
