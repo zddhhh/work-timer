@@ -219,7 +219,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         ft, fb, fs = ornaments.layout_for(w, h)
 
         self.win = layered_win.LayeredPetWindow(w, h, "下班倒计时")
-        self._trail = cursor_trail.Trail()
+        self._trail: cursor_trail.Trail | None = None
         self._trail_failed = False
         self.win.set_left_click_handler(self._on_click)
         self.win.set_mouse_move_handler(self._on_mouse_move)
@@ -807,6 +807,15 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
 
     def _hydrate_on(self) -> bool:
         return hydrate.enabled(self.cfg)
+
+    def _trail_on(self) -> bool:
+        return bool(self.cfg.get("cursor_trail"))
+
+    def _set_trail(self, on: bool) -> None:
+        self.cfg["cursor_trail"] = bool(on)
+        store.save_config(self.cfg)
+        if not on and self._trail is not None:
+            self._trail.hide()
 
     def _set_hydrate(self, on: bool) -> None:
         hydrate.set_enabled(self.cfg, on)
@@ -1557,6 +1566,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             key_hide_settings_label=key_hide.menu_caption(self.cfg),
             hydrate_enabled=self._hydrate_on(),
             hydrate_settings_label=hydrate.menu_caption(self.cfg),
+            trail_enabled=self._trail_on(),
             auto_start=self._auto_start_on(),
         )
         if op == "quit":
@@ -1595,6 +1605,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._open_key_hide_dialog()
         elif op == "toggle_hydrate":
             self._set_hydrate(not self._hydrate_on())
+        elif op == "toggle_trail":
+            self._set_trail(not self._trail_on())
         elif op == "hydrate_settings":
             self._open_hydrate_dialog()
         elif op == "toggle_auto_start":
@@ -1620,9 +1632,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
 
     def _tick_trail(self) -> None:
         """光标尾巴。没设下班、按键藏起、锁屏时不画。失败只记一次，避免每帧刷日志。"""
-        if self._trail_failed:
+        if self._trail_failed or not self._trail_on():
+            if self._trail is not None:
+                self._trail.hide()
             return
         try:
+            if self._trail is None:
+                self._trail = cursor_trail.Trail()
             _title, total, done, idle = self._active_view(datetime.now())
             remain = 0 if idle or done else total
             visible = not idle and not self._esc_hidden and not self.win.screen_asleep
@@ -2033,6 +2049,12 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                         self._prewarm_ui()
                     except Exception as e:  # noqa: BLE001
                         store.log_exception("ui-prewarm", e)
+                    try:
+                        if self._trail is None:
+                            self._trail = cursor_trail.Trail()
+                        self._trail.warm()
+                    except Exception as e:  # noqa: BLE001
+                        store.log_exception("trail-warm", e)
                 self._worklog_tick()
                 asleep = self.win.screen_asleep
                 if asleep:
@@ -2059,7 +2081,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     time.sleep(0.25)
                 elif now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
                     time.sleep(0.001)
-                elif self._trail.hot:
+                elif self._trail is not None and self._trail.hot:
                     time.sleep(1 / 60)
                 elif (
                     ornaments.is_animated(self._theme().kind)
@@ -2089,7 +2111,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._persist_size()
         store.flush_pending(force=True)
         try:
-            self._trail.destroy()
+            if self._trail is not None:
+                self._trail.destroy()
         except Exception:
             pass
         self.win.destroy()

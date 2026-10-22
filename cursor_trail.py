@@ -71,9 +71,11 @@ def draw_ribbon(
     gain: float,
     *,
     size: int = SIZE,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Image.Image:
     """points 是窗口内坐标，最后一点是头。gain 为 1 时最亮。"""
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    img = Image.new("RGBA", (width or size, height or size), (0, 0, 0, 0))
     if not points:
         return img
     gain = max(0.0, min(1.0, gain))
@@ -135,6 +137,33 @@ def _lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[i
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))  # type: ignore[return-value]
 
 
+def frame_for(
+    points: Sequence[tuple[float, float]],
+    rgb: tuple[int, int, int],
+    gain: float,
+    *,
+    pad: float = 16,
+) -> tuple[Image.Image, int, int]:
+    """按尾巴的外接框出图，不画一整块空画布。返回图像和屏幕左上角。"""
+    if not points:
+        img = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+        return img, 0, 0
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    left = int(math.floor(min(xs) - pad))
+    top = int(math.floor(min(ys) - pad))
+    right = int(math.ceil(max(xs) + pad))
+    bottom = int(math.ceil(max(ys) + pad))
+    w = max(8, right - left)
+    h = max(8, bottom - top)
+    local = [(x - left, y - top) for x, y in points]
+    return draw_ribbon(local, rgb, gain, width=w, height=h), left, top
+
+
+def _quantum(n: int) -> int:
+    return max(32, (int(n) + 31) // 32 * 32)
+
+
 def _to_bgra(img: Image.Image) -> bytes:
     r, g, b, a = img.split()
     pm = Image.merge(
@@ -159,18 +188,34 @@ class Trail:
         self._shown = False
         self._hwnd = 0
         self._bits = None
+        self._bw = 0
+        self._bh = 0
         self._hdc_screen = 0
         self._hdc_mem = 0
         self._hbmp = None
         self._old = None
         self._wndproc = None
-        self._open()
+        self._top = False
+        self._card_up = False
+
+    def warm(self) -> None:
+        """先在屏幕外交一张小图，把分层窗的第一下摊到启动之后，而不是摊在打开开关时。"""
+        if self._hwnd or self._shown:
+            return
+        if not self._open():
+            return
+        blank = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+        self._present(blank, -32000, -32000, 0)
+        self._hide()
 
     def tick(self, remain_s: float, *, visible: bool, below: int = 0) -> None:
         self._pump()
-        if not visible or not self._hwnd:
+        if not visible:
             self.hot = False
             self._hide()
+            return
+        if not self._hwnd and not self._open():
+            self.hot = False
             return
         x, y = _cursor()
         now = time.monotonic()
@@ -185,20 +230,17 @@ class Trail:
         self._has = True
         length = trail_length(remain_s)
         self._pts = trim_trail(self._pts, length + 24)
-        target = 0.82 if now - self._moved_at > 0.42 else 1.0
-        self._gain += (target - self._gain) * 0.22
-        gain = self._gain
-        key = (int(x), int(y), int(length), int(gain * 24))
-        self.hot = moved or abs(gain - target) > 0.04
+        gain = 0.82 if now - self._moved_at > 0.42 else 1.0
+        self._gain = gain
+        key = (int(x), int(y), int(length), int(gain * 20))
+        self.hot = moved
         if key == self._key and self._shown:
-            self._raise_card(below, x, y)
             return
         self._key = key
-        local = [(px - x + _HALF, py - y + _HALF) for px, py in self._pts]
         # 头从箭头尖后面一点开始，避免光点压住点击位置
-        local = _pull_head(local, 14)
-        img = draw_ribbon(local, color_for(remain_s), gain)
-        self._present(img, x, y, below)
+        pts = _pull_head(self._pts, 14)
+        img, left, top = frame_for(pts, color_for(remain_s), gain)
+        self._present(img, left, top, below)
 
     def destroy(self) -> None:
         user32 = layered_win.user32
@@ -221,7 +263,7 @@ class Trail:
             self._hwnd = 0
         self._shown = False
 
-    def _open(self) -> None:
+    def _open(self) -> bool:
         user32 = layered_win.user32
         gdi32 = layered_win.gdi32
         kernel32 = layered_win.kernel32
@@ -241,17 +283,28 @@ class Trail:
         )
         self._hwnd = user32.CreateWindowExW(
             ex, "WorkTimerCursorTrail", "下班尾巴", layered_win.WS_POPUP,
-            0, 0, SIZE, SIZE, None, None, hinst, None,
+            0, 0, 32, 32, None, None, hinst, None,
         )
         if not self._hwnd:
-            return
+            return False
         user32.ShowWindow(self._hwnd, SW_HIDE)
         self._hdc_screen = user32.GetDC(None)
         self._hdc_mem = gdi32.CreateCompatibleDC(self._hdc_screen)
+        return bool(self._hdc_mem)
+
+    def _alloc(self, w: int, h: int) -> None:
+        gdi32 = layered_win.gdi32
+        if self._old and self._hdc_mem:
+            gdi32.SelectObject(self._hdc_mem, self._old)
+            self._old = None
+        if self._hbmp:
+            gdi32.DeleteObject(self._hbmp)
+            self._hbmp = None
+        self._bits = None
         bmi = layered_win.BITMAPINFO()
         bmi.bmiHeader.biSize = layered_win.ctypes.sizeof(layered_win.BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = SIZE
-        bmi.bmiHeader.biHeight = -SIZE
+        bmi.bmiHeader.biWidth = w
+        bmi.bmiHeader.biHeight = -h
         bmi.bmiHeader.biPlanes = 1
         bmi.bmiHeader.biBitCount = 32
         bmi.bmiHeader.biCompression = layered_win.BI_RGB
@@ -264,16 +317,22 @@ class Trail:
             return
         self._bits = bits
         self._old = gdi32.SelectObject(self._hdc_mem, self._hbmp)
+        self._bw, self._bh = w, h
 
-    def _present(self, img: Image.Image, x: float, y: float, below: int) -> None:
-        if not self._hwnd or not self._bits:
+    def _present(self, img: Image.Image, left: int, top: int, below: int) -> None:
+        if not self._hwnd:
             return
-        raw = _to_bgra(img)
+        qw, qh = _quantum(img.width), _quantum(img.height)
+        if qw != self._bw or qh != self._bh or not self._bits:
+            self._alloc(qw, qh)
+        if not self._bits:
+            return
+        canvas = Image.new("RGBA", (qw, qh), (0, 0, 0, 0))
+        canvas.paste(img, (0, 0))
+        raw = _to_bgra(canvas)
         layered_win.ctypes.memmove(self._bits, raw, len(raw))
-        origin_x = int(x) - _HALF
-        origin_y = int(y) - _HALF
-        pt_dst = layered_win.POINT(origin_x, origin_y)
-        size = layered_win.SIZE(SIZE, SIZE)
+        pt_dst = layered_win.POINT(int(left), int(top))
+        size = layered_win.SIZE(qw, qh)
         pt_src = layered_win.POINT(0, 0)
         blend = layered_win.BLENDFUNCTION(layered_win.AC_SRC_OVER, 0, 255, layered_win.AC_SRC_ALPHA)
         layered_win.user32.UpdateLayeredWindow(
@@ -290,22 +349,30 @@ class Trail:
         if not self._shown:
             layered_win.user32.ShowWindow(self._hwnd, layered_win.SW_SHOWNOACTIVATE)
             self._shown = True
-        self._raise_card(below, x, y)
+            self._top = False
+        self._raise_card(below, left, top, qw, qh)
 
-    def _raise_card(self, below: int, x: float, y: float) -> None:
+    def _raise_card(self, below: int, left: int, top: int, w: int, h: int) -> None:
         if not self._hwnd:
             return
         flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
         user32 = layered_win.user32
-        user32.SetWindowPos(self._hwnd, layered_win.HWND_TOPMOST, 0, 0, 0, 0, flags)
-        if not below or not _overlaps_card(below, x, y):
-            return
-        user32.SetWindowPos(below, layered_win.HWND_TOPMOST, 0, 0, 0, 0, flags)
+        if not self._top:
+            user32.SetWindowPos(self._hwnd, layered_win.HWND_TOPMOST, 0, 0, 0, 0, flags)
+            self._top = True
+        overlap = bool(below) and _overlaps(below, left, top, w, h)
+        if overlap and not self._card_up:
+            user32.SetWindowPos(below, layered_win.HWND_TOPMOST, 0, 0, 0, 0, flags)
+            self._card_up = True
+        elif not overlap:
+            self._card_up = False
 
     def _hide(self) -> None:
         if self._shown and self._hwnd:
             layered_win.user32.ShowWindow(self._hwnd, SW_HIDE)
         self._shown = False
+        self._top = False
+        self._card_up = False
         self._pts.clear()
         self._has = False
         self._key = None
@@ -346,14 +413,12 @@ def _pull_head(points: list[tuple[float, float]], gap: float) -> list[tuple[floa
     return points[:-1] + [(hx, hy)]
 
 
-def _overlaps_card(hwnd: int, x: float, y: float) -> bool:
+def _overlaps(hwnd: int, left: int, top: int, w: int, h: int) -> bool:
     rect = layered_win.RECT()
     if not layered_win.user32.GetWindowRect(hwnd, layered_win.ctypes.byref(rect)):
         return False
-    left = x - _HALF
-    top = y - _HALF
-    right = left + SIZE
-    bottom = top + SIZE
+    right = left + w
+    bottom = top + h
     return not (right < rect.left or left > rect.right or bottom < rect.top or top > rect.bottom)
 
 

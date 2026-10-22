@@ -110,6 +110,7 @@ ID_KEY_HIDE_SETTINGS = 16
 ID_UNINSTALL = 17
 ID_WORKLOG = 18
 ID_HYDRATE = 19
+ID_TRAIL = 1100
 ID_GAMES = 100
 ID_SHARE = 1000
 ID_HYDRATE_SETTINGS = 9
@@ -1115,6 +1116,7 @@ class LayeredPetWindow:
         key_hide_settings_label: str = "设置隐藏按键…",
         hydrate_enabled: bool = False,
         hydrate_settings_label: str = "设置喝水间隔…",
+        trail_enabled: bool = False,
         auto_start: bool = False,
     ) -> str:
         hmenu = user32.CreatePopupMenu()
@@ -1167,6 +1169,12 @@ class LayeredPetWindow:
             "喝水提醒",
         )
         user32.AppendMenuW(hset, MF_STRING, ID_HYDRATE_SETTINGS, hydrate_settings_label)
+        user32.AppendMenuW(
+            hset,
+            MF_STRING | (MF_CHECKED if trail_enabled else 0),
+            ID_TRAIL,
+            "光标尾巴",
+        )
         user32.AppendMenuW(
             hset,
             MF_STRING | (MF_CHECKED if auto_start else 0),
@@ -1242,6 +1250,8 @@ class LayeredPetWindow:
             return "key_hide_settings"
         if cmd == ID_HYDRATE:
             return "toggle_hydrate"
+        if cmd == ID_TRAIL:
+            return "toggle_trail"
         if cmd == ID_HYDRATE_SETTINGS:
             return "hydrate_settings"
         if cmd == ID_AUTO_START:

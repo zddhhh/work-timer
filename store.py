@@ -46,6 +46,7 @@ def load_config() -> dict:
         "win_h": 92,
         "key_hide": {"enabled": False, "vk": 0xC0},
         "hydrate": {"enabled": False, "interval_min": 45, "anchor": "", "pending": False},
+        "cursor_trail": False,
         "session_stale": False,
         "last_wall": "",
         "auto_start": False,

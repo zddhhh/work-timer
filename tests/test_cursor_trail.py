@@ -31,6 +31,14 @@ class TrailMathTests(unittest.TestCase):
         self.assertAlmostEqual(span, 40.0, places=3)
         self.assertLess(kept[0][0], kept[-1][0])
 
+    def test_frame_matches_the_trail_instead_of_a_full_screen(self):
+        points = [(float(i * 4), 10.0) for i in range(20)]
+        img, left, top = trail.frame_for(points, (96, 186, 255), 1.0)
+        self.assertLess(img.width, 160)
+        self.assertLess(img.height, 80)
+        self.assertLess(left, 0)
+        self.assertGreater(img.getpixel((img.width - 8, img.height // 2))[3], 40)
+
     def test_ribbon_is_bright_at_the_head_and_clear_in_the_corner(self):
         pts = []
         for i in range(80):
