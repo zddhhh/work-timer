@@ -24,7 +24,7 @@ HIDDEN_IMPORTS = [
     "layered_win", "festival", "kinetic", "meow", "mines", "golf", "pool", "flex_time", "hydrate", "activity", "activity_chart", "feedback", "updater", "win_drop", "tkinterdnd2",
     "suofen", "tally_bubble", "card_ui", "worklog_ui", "schedule_ui", "update_ui", "PIL.ImageStat",
     "qrcode", "qrcode.image.pil",
-    "version",
+    "version", "share",
 ]
 
 
