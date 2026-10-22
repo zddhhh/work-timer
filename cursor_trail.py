@@ -242,6 +242,10 @@ class Trail:
         img, left, top = frame_for(pts, color_for(remain_s), gain)
         self._present(img, left, top, below)
 
+    def hide(self) -> None:
+        """关掉开关或还没开始计时时收起。窗口留着，下次打开不用重建。"""
+        self._hide()
+
     def destroy(self) -> None:
         user32 = layered_win.user32
         gdi32 = layered_win.gdi32

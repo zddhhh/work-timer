@@ -1634,7 +1634,11 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         """光标尾巴。没设下班、按键藏起、锁屏时不画。失败只记一次，避免每帧刷日志。"""
         if self._trail_failed or not self._trail_on():
             if self._trail is not None:
-                self._trail.hide()
+                try:
+                    self._trail.hide()
+                except Exception as e:  # noqa: BLE001
+                    self._trail_failed = True
+                    store.log_exception("trail", e)
             return
         try:
             if self._trail is None:

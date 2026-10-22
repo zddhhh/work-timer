@@ -102,8 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 光标尾巴改到设置里，默认关闭\n"
-    "- 第一次打开尾巴时不再卡一下"
+    "- 修复 1.3.81 启动约一秒后倒计时停住、右键菜单打不开"
 )
 
 

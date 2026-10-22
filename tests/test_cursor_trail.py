@@ -39,6 +39,10 @@ class TrailMathTests(unittest.TestCase):
         self.assertLess(left, 0)
         self.assertGreater(img.getpixel((img.width - 8, img.height // 2))[3], 40)
 
+    def test_hide_before_the_window_exists_does_not_raise(self):
+        # 开关默认关着。启动预热之后主循环每帧都会收起尾巴，这个方法必须在。
+        trail.Trail().hide()
+
     def test_ribbon_is_bright_at_the_head_and_clear_in_the_corner(self):
         pts = []
         for i in range(80):
