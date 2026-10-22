@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 拖动窗口时不再边拖边重画，跟手更顺"
+    "- 拖动时窗口直接跟当前鼠标，不再补刚才的位置"
 )
 
 

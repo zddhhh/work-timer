@@ -3,7 +3,7 @@
 import sys
 
 APP_NAME = "WorkTimer"
-APP_VERSION = "1.3.76"
+APP_VERSION = "1.3.77"
 # Python 3.9+ 不支持 Win7，Win7 包单独用 3.8 打；运行时按解释器版本认领自己那份安装包。
 # Win7 包名要排在主包后面：1.3.34 及更早的客户端找不到 WorkTimer.exe 时会取第一个 .exe 附件。
 WIN7_BUILD = sys.version_info < (3, 9)

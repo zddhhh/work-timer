@@ -77,6 +77,11 @@ MF_POPUP = 0x00000010
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
+SWP_NOCOPYBITS = 0x0100
+SWP_NOSENDCHANGING = 0x0400
+_MOVE_FLAGS = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSENDCHANGING
+VK_LBUTTON = 0x01
+QS_ALLINPUT = 0x04FF
 
 ID_QUIT = 1
 ID_CHECK_UPDATE = 2
@@ -349,6 +354,12 @@ user32.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
 user32.KillTimer.restype = wintypes.BOOL
 user32.PeekMessageW.argtypes = [ctypes.POINTER(MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
 user32.PeekMessageW.restype = wintypes.BOOL
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = ctypes.c_short
+user32.MsgWaitForMultipleObjects.argtypes = [
+    wintypes.DWORD, ctypes.c_void_p, wintypes.BOOL, wintypes.DWORD, wintypes.DWORD,
+]
+user32.MsgWaitForMultipleObjects.restype = wintypes.DWORD
 user32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
 user32.TranslateMessage.restype = wintypes.BOOL
 user32.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]
@@ -671,16 +682,28 @@ class LayeredPetWindow:
             return
         self.x, self.y = nx, ny
         if self.hwnd:
-            user32.SetWindowPos(
-                self.hwnd,
-                None,
-                self.x,
-                self.y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            )
+            user32.SetWindowPos(self.hwnd, None, self.x, self.y, 0, 0, _MOVE_FLAGS)
         self._notify_geometry()
+
+    def _track_drag(self) -> None:
+        """按住期间只跟当前光标。积压的鼠标消息丢掉，避免窗口还在补刚才的位置。"""
+        while user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000:
+            pt = POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            moved = False
+            if (
+                self._drag_moved
+                or abs(pt.x - self._press_x) > 4
+                or abs(pt.y - self._press_y) > 4
+            ):
+                self._drag_moved = True
+                before = (self.x, self.y)
+                self._apply_pos(pt.x - self._drag_dx, pt.y - self._drag_dy)
+                moved = (self.x, self.y) != before
+            if self._drain_drag_messages():
+                break
+            if not moved:
+                user32.MsgWaitForMultipleObjects(0, None, False, 8, QS_ALLINPUT)
 
     def move(self, x: int, y: int) -> None:
         self._apply_pos(x, y)
@@ -838,6 +861,17 @@ class LayeredPetWindow:
             self._press_y = pt.y
             self._drag_dx = pt.x - self.x
             self._drag_dy = pt.y - self.y
+            try:
+                self._track_drag()
+            finally:
+                self._dragging = False
+                user32.ReleaseCapture()
+            if self._drag_moved:
+                self._just_moved = True
+            elif self._on_left_click:
+                end = POINT()
+                user32.GetCursorPos(ctypes.byref(end))
+                self._on_left_click(int(end.x - self.x), int(end.y - self.y))
             return 0
         if msg == WM_MOUSEMOVE and self._resizing:
             pt = POINT()
@@ -1103,6 +1137,18 @@ class LayeredPetWindow:
         flag = self._desktop_changed
         self._desktop_changed = False
         return flag
+
+    def _drain_drag_messages(self) -> bool:
+        """丢掉拖动中积压的鼠标移动。松开左键就结束。返回是否已经松开。"""
+        msg = MSG()
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+            if msg.message == WM_LBUTTONUP:
+                return True
+            if msg.message == WM_MOUSEMOVE:
+                continue
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        return False
 
     def pump(self) -> None:
         if not self.hwnd:

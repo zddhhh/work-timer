@@ -1101,7 +1101,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
 
     def _on_live_timer(self) -> None:
         """菜单、文件选择、系统提示框自己转消息循环，主循环进不去。"""
-        if self._painting:
+        if self._painting or self.win.dragging or self.win.resizing:
             return
         if time.monotonic() - self._loop_beat < 0.07:
             return
