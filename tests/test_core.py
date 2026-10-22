@@ -294,6 +294,22 @@ class MeowTests(unittest.TestCase):
         again = suofen._backdrop(320, 120)
         self.assertIs(again, suofen._backdrop(320, 120))
 
+    def test_suofen_paint_waits_for_frames_without_knocking(self):
+        import suofen
+
+        saved = (suofen._FRAMES, suofen._DURS, suofen._loading, suofen.ensure_loading)
+        suofen._FRAMES = None
+        suofen._DURS = None
+        suofen._loading = False
+        suofen.ensure_loading = lambda: None
+        try:
+            card = Image.new("RGBA", (320, 120), (0, 0, 0, 0))
+            suofen.paint(card, 1.2, stage="run")
+            self.assertIsNone(suofen._FRAMES)
+            self.assertGreater(card.getpixel((8, 8))[3], 200)
+        finally:
+            suofen._FRAMES, suofen._DURS, suofen._loading, suofen.ensure_loading = saved
+
     def test_paint_all_stages_and_sizes(self):
         import meow
 
@@ -2359,6 +2375,60 @@ class ShareTests(unittest.TestCase):
         blob = share.hdrop_bytes(Path(r"C:\share\WorkTimer-Setup.exe"))
         self.assertEqual(int.from_bytes(blob[:4], "little"), 20)
         self.assertIn("WorkTimer-Setup.exe", blob.decode("utf-16-le", errors="ignore"))
+
+    def test_progress_line_names_how_much_is_down(self):
+        import share
+
+        self.assertEqual(share.progress_line(0, 0), "正在下载安装包…")
+        self.assertIn("已下", share.progress_line(2 * 1024 * 1024, 0))
+        line = share.progress_line(3 * 1024 * 1024, 19 * 1024 * 1024)
+        self.assertIn("3.0", line)
+        self.assertIn("19.0", line)
+
+    def test_pull_reads_in_steps_and_drops_a_short_file(self):
+        import threading
+        import share
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        body = {"b": b"MZ" + b"x" * (120 * 1024)}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                data = body["b"]
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, fmt, *args):
+                return
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                part = Path(tmp) / "WorkTimer-Setup.exe.download"
+                pull = share.Pull(f"http://127.0.0.1:{port}/a", part)
+                state = "go"
+                for _ in range(40):
+                    state = pull.step()
+                    if state == "ok":
+                        break
+                self.assertEqual(state, "ok")
+                self.assertTrue(part.read_bytes().startswith(b"MZ"))
+                self.assertGreaterEqual(part.stat().st_size, 100 * 1024)
+                body["b"] = b"MZ" + b"y" * 30
+                short = Path(tmp) / "short.download"
+                bad = share.Pull(f"http://127.0.0.1:{port}/b", short)
+                with self.assertRaises(RuntimeError):
+                    for _ in range(10):
+                        if bad.step() == "ok":
+                            break
+                self.assertFalse(short.exists())
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 if __name__ == "__main__":

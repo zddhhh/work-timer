@@ -5,7 +5,10 @@ import ctypes
 import os
 import shutil
 import struct
+import subprocess
+import time
 import urllib.parse
+import urllib.request
 from ctypes import wintypes
 from pathlib import Path
 
@@ -76,6 +79,82 @@ def remember_setup(src: Path, asset: str, root: Path | None = None) -> Path:
     return dest
 
 
+def progress_line(done: int, total: int) -> str:
+    got = done / (1024 * 1024)
+    if total > 0:
+        return f"正在下载安装包… {got:.1f} / {total / (1024 * 1024):.1f} MB"
+    if done > 0:
+        return f"正在下载安装包… 已下 {got:.1f} MB"
+    return "正在下载安装包…"
+
+
+class Pull:
+    """在界面线程上一段段地下。不要丢到后台线程，Windows 代理会和窗口互相等，软件就无响应。"""
+
+    def __init__(self, url: str, part: Path):
+        self.url = url
+        self.part = part
+        self.resp = None
+        self.fh = None
+        self.done = 0
+        self.total = 0
+
+    def step(self) -> str:
+        """返回 go 表示还在下，ok 表示文件已经写完并且像安装包。"""
+        if self.resp is None:
+            self.part.parent.mkdir(parents=True, exist_ok=True)
+            req = urllib.request.Request(
+                self.url,
+                headers={"User-Agent": f"WorkTimer/{APP_VERSION}", "Accept": "*/*"},
+            )
+            self.resp = urllib.request.urlopen(req, timeout=15)
+            try:
+                self.total = int(self.resp.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                self.total = 0
+            self.fh = self.part.open("wb")
+        deadline = time.perf_counter() + 0.08
+        while time.perf_counter() < deadline:
+            chunk = self.resp.read(32 * 1024)
+            if not chunk:
+                self._close_io()
+                self._check_file()
+                return "ok"
+            self.fh.write(chunk)
+            self.done += len(chunk)
+        return "go"
+
+    def _check_file(self) -> None:
+        try:
+            size = self.part.stat().st_size
+        except OSError:
+            size = 0
+        if size < _MIN_SETUP or not _looks_like_exe(self.part):
+            self.abort()
+            raise RuntimeError("安装包没下全")
+
+    def abort(self) -> None:
+        self._close_io()
+        try:
+            self.part.unlink()
+        except OSError:
+            pass
+
+    def _close_io(self) -> None:
+        if self.fh is not None:
+            try:
+                self.fh.close()
+            except OSError:
+                pass
+            self.fh = None
+        if self.resp is not None:
+            try:
+                self.resp.close()
+            except Exception:
+                pass
+            self.resp = None
+
+
 def prepare_setup(
     repo: str,
     version: str,
@@ -84,21 +163,20 @@ def prepare_setup(
     root: Path | None = None,
     cancel_check=None,
 ) -> Path:
+    """一直读到下完。会挡住调用它的线程，弹窗里要改用 Pull.step，中间让窗口处理消息。"""
     found = cached_setup(asset, root)
     if found is not None:
         return found
     dest = cache_path(asset, root)
-    dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".download")
-    updater._http_download(
-        public_download_url(repo, version, asset),
-        part,
-        cancel_check=cancel_check,
-    )
+    pull = Pull(public_download_url(repo, version, asset), part)
     try:
-        if part.stat().st_size < _MIN_SETUP or not _looks_like_exe(part):
-            raise RuntimeError("安装包没下全")
-        return remember_setup(part, asset, root)
+        while True:
+            if cancel_check is not None and cancel_check():
+                pull.abort()
+                raise updater.DownloadCancelled()
+            if pull.step() == "ok":
+                return remember_setup(part, asset, root)
     finally:
         try:
             part.unlink()
@@ -112,44 +190,59 @@ def hdrop_bytes(path: Path) -> bytes:
     return struct.pack("<IiiII", 20, 0, 0, 0, 1) + wide
 
 
-def _clipboard_set(fmt: int, blob: bytes) -> None:
+def _clipboard_set(items: list[tuple[int, bytes]]) -> None:
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
     kernel32.GlobalAlloc.restype = ctypes.c_void_p
     kernel32.GlobalLock.restype = ctypes.c_void_p
     kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
     user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
     user32.OpenClipboard.argtypes = [wintypes.HWND]
     if not user32.OpenClipboard(None):
         raise OSError("剪贴板打不开")
     try:
         user32.EmptyClipboard()
-        handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(blob))
-        if not handle:
-            raise OSError("剪贴板放不下")
-        ptr = kernel32.GlobalLock(handle)
-        if not ptr:
-            kernel32.GlobalFree(handle)
-            raise OSError("剪贴板放不下")
-        ctypes.memmove(ptr, blob, len(blob))
-        kernel32.GlobalUnlock(handle)
-        if not user32.SetClipboardData(fmt, handle):
-            kernel32.GlobalFree(handle)
-            raise OSError("没放进剪贴板")
+        for fmt, blob in items:
+            handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(blob))
+            if not handle:
+                raise OSError("剪贴板放不下")
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                kernel32.GlobalFree(handle)
+                raise OSError("剪贴板放不下")
+            ctypes.memmove(ptr, blob, len(blob))
+            kernel32.GlobalUnlock(handle)
+            if not user32.SetClipboardData(fmt, handle):
+                kernel32.GlobalFree(handle)
+                raise OSError("没放进剪贴板")
     finally:
         user32.CloseClipboard()
 
 
 def copy_text(text: str) -> None:
-    _clipboard_set(CF_UNICODETEXT, (text + "\0").encode("utf-16-le"))
+    _clipboard_set([(CF_UNICODETEXT, (text + "\0").encode("utf-16-le"))])
 
 
 def copy_file(path: Path) -> None:
-    _clipboard_set(CF_HDROP, hdrop_bytes(path))
+    """复制文件路径。带上复制效果，企业微信才认这是要粘贴的文件，不是剪切。"""
+    items = [(CF_HDROP, hdrop_bytes(path))]
+    user32 = ctypes.windll.user32
+    user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterClipboardFormatW.restype = wintypes.UINT
+    effect = int(user32.RegisterClipboardFormatW("Preferred DropEffect"))
+    if effect:
+        items.append((effect, struct.pack("<I", 1)))
+    _clipboard_set(items)
+
+
+def reveal_file(path: Path) -> None:
+    """在资源管理器里选中安装包，拖进企业微信。不启动安装包。"""
+    subprocess.Popen(["explorer.exe", f"/select,{path.resolve()}"])
 
 
 def reveal_in_folder(path: Path) -> None:
-    os.startfile(path.parent)  # noqa: S606  打开留下安装包的文件夹，不启动安装包
+    reveal_file(path)
 
 
 def current_share(cfg: dict) -> tuple[str, str]:

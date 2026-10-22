@@ -132,6 +132,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 pass
         if not single_instance.claim():
             os._exit(0)  # 已有实例在跑：唤起窗口并提示后退出
+        suofen.ensure_loading()
         updater.cleanup_update_artifacts()
         threading.Thread(
             target=updater.cleanup_legacy_install,
@@ -1164,8 +1165,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             body, textvariable=status, fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
             wraplength=380, justify="left",
         ).pack(anchor="w", pady=(8, 0))
-        box: list = []
-        busy = {"v": False}
+        pull: dict = {"job": None}
 
         def copy_link() -> None:
             try:
@@ -1176,48 +1176,88 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             status.set("已复制下载地址。")
 
         def finish_file(path) -> None:
+            opened = False
+            try:
+                share.reveal_file(path)
+                opened = True
+            except OSError:
+                pass
             try:
                 share.copy_file(path)
-                status.set("已复制安装包，贴到企业微信发给同事。")
             except OSError:
-                share.reveal_in_folder(path)
-                status.set("剪贴板没放进去，已打开文件夹，把安装包拖过去。")
+                if opened:
+                    status.set("剪贴板没放进去，已打开文件夹，把安装包拖到企业微信。")
+                else:
+                    status.set("安装包在本机，但没能复制，也没能打开文件夹。")
+                return
+            if opened:
+                status.set("安装包已复制。贴到企业微信，或从打开的文件夹拖过去。")
+            else:
+                status.set("已复制安装包，贴到企业微信发给同事。")
 
         def copy_setup() -> None:
-            if busy["v"]:
+            if pull["job"] is not None:
                 return
             found = share.cached_setup(share.ASSET_NAME)
             if found is not None:
                 finish_file(found)
                 return
-            busy["v"] = True
-            status.set("正在准备安装包…")
+            repo = str(self.cfg.get("gitcode_repo") or "").strip() or "mdslanruo/work-timer"
+            try:
+                dest = share.cache_path(share.ASSET_NAME)
+            except ValueError:
+                status.set("这台电脑下不了。把下载地址发给能上网的同事。")
+                return
+            status.set(share.progress_line(0, 0))
+            pull["job"] = share.Pull(
+                share.public_download_url(repo, APP_VERSION, share.ASSET_NAME),
+                dest.with_name(dest.name + ".download"),
+            )
 
-            def work() -> None:
-                try:
-                    repo = str(self.cfg.get("gitcode_repo") or "").strip() or "mdslanruo/work-timer"
-                    path = share.prepare_setup(repo, APP_VERSION, share.ASSET_NAME)
-                    box.append(("ok", path))
-                except Exception:
-                    box.append(("err", None))
-
-            threading.Thread(target=work, daemon=True, name="share-setup").start()
+        def fail_pull(job) -> None:
+            job.abort()
+            pull["job"] = None
+            status.set("这台电脑下不了。把下载地址发给能上网的同事。")
 
         def on_frame() -> None:
-            if not box:
+            job = pull["job"]
+            if job is None:
                 return
-            kind, path = box.pop(0)
-            busy["v"] = False
-            if kind == "ok":
-                finish_file(path)
-            else:
+            try:
+                state = job.step()
+            except Exception:
+                fail_pull(job)
+                return
+            if state != "ok":
+                status.set(share.progress_line(job.done, job.total))
+                return
+            part = job.part
+            pull["job"] = None
+            try:
+                path = share.remember_setup(part, share.ASSET_NAME)
+            except OSError:
+                try:
+                    part.unlink()
+                except OSError:
+                    pass
                 status.set("这台电脑下不了。把下载地址发给能上网的同事。")
+                return
+            try:
+                part.unlink()
+            except OSError:
+                pass
+            finish_file(path)
 
         _card_btn(bar, "复制安装包", copy_setup, accent=True).pack(side="left", padx=(18, 8))
         _card_btn(bar, "复制下载地址", copy_link).pack(side="left", padx=8)
         _card_btn(bar, "好", dlg.destroy).pack(side="right", padx=(8, 18))
         _reveal_card(dlg, min_w=360, min_h=220, near=self._dialog_near())
-        _run_card_modal(dlg, self.win, on_frame=on_frame)
+        try:
+            _run_card_modal(dlg, self.win, on_frame=on_frame)
+        finally:
+            job = pull["job"]
+            if job is not None:
+                job.abort()
 
     def _open_about(self) -> None:
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=480, height=620)

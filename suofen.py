@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import random
+import threading
 from collections import deque
 from pathlib import Path
 
@@ -56,8 +57,11 @@ TEXT_SHARE = 0.58
 # 原图第 3 帧是残缺的中间张，不用。4、5、6 几乎是同一张，来回切会看成重影。
 _FRAMES: list[Image.Image] | None = None
 _DURS: list[int] | None = None
+_load_lock = threading.Lock()
+_loading = False
 _BACKDROP: dict[tuple[int, int], Image.Image] = {}
 _FITTED: dict[tuple[int, int, int], Image.Image] = {}
+_FONTS: dict[int, ImageFont.ImageFont] = {}
 _pop_at: float | None = None
 _pop_line = ""
 _rng = random.Random()
@@ -89,11 +93,10 @@ def pop_age(now: float) -> float | None:
 
 
 def fps(stage: str, now: float) -> int:
-    if callout(now):
+    """贴一张缓存好的图。30 帧跳起来才连续，16 帧时轻轻颠那一下会一顿一顿。"""
+    if callout(now) or stage == "done":
         return 30
-    if stage == "done":
-        return 20
-    return 16
+    return 30
 
 
 def _line(stage: str, phase: float) -> str:
@@ -111,121 +114,144 @@ def _talk(stage: str, phase: float) -> str:
 
 
 def _font(size: int) -> ImageFont.ImageFont:
+    size = max(8, size)
+    got = _FONTS.get(size)
+    if got is not None:
+        return got
     try:
-        return ImageFont.truetype("msyh.ttc", max(8, size))
+        got = ImageFont.truetype("msyh.ttc", size)
     except OSError:
-        return ImageFont.load_default()
+        got = ImageFont.load_default()
+    _FONTS[size] = got
+    return got
 
 
-def _components(mask: Image.Image) -> list[tuple]:
-    w, h = mask.size
-    mp = mask.load()
-    seen = [[False] * w for _ in range(h)]
+def _components(mask: bytearray, w: int, h: int) -> list[tuple]:
+    seen = bytearray(w * h)
     out = []
     for y in range(h):
+        row = y * w
         for x in range(w):
-            if seen[y][x] or not mp[x, y]:
+            i = row + x
+            if seen[i] or not mask[i]:
                 continue
-            q = deque([(x, y)])
-            seen[y][x] = True
+            q = deque([i])
+            seen[i] = 1
             cells = []
             minx = maxx = x
             miny = maxy = y
             while q:
-                cx, cy = q.popleft()
-                cells.append((cx, cy))
-                minx, maxx = min(minx, cx), max(maxx, cx)
-                miny, maxy = min(miny, cy), max(maxy, cy)
-                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
-                    if 0 <= nx < w and 0 <= ny < h and not seen[ny][nx] and mp[nx, ny]:
-                        seen[ny][nx] = True
-                        q.append((nx, ny))
+                c = q.popleft()
+                cells.append(c)
+                cx, cy = c % w, c // w
+                if cx < minx:
+                    minx = cx
+                elif cx > maxx:
+                    maxx = cx
+                if cy < miny:
+                    miny = cy
+                elif cy > maxy:
+                    maxy = cy
+                if cx + 1 < w and not seen[c + 1] and mask[c + 1]:
+                    seen[c + 1] = 1
+                    q.append(c + 1)
+                if cx > 0 and not seen[c - 1] and mask[c - 1]:
+                    seen[c - 1] = 1
+                    q.append(c - 1)
+                if cy + 1 < h and not seen[c + w] and mask[c + w]:
+                    seen[c + w] = 1
+                    q.append(c + w)
+                if cy > 0 and not seen[c - w] and mask[c - w]:
+                    seen[c - w] = 1
+                    q.append(c - w)
             out.append((len(cells), minx, miny, maxx, maxy, cells))
-    out.sort(reverse=True)
+    out.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]), reverse=True)
     return out
 
 
 def _knock(im: Image.Image, thresh: int = 40) -> Image.Image:
     """黑底抠人。头发、裤子这些包在轮廓里的黑色留着，外面的字幕丢掉。"""
-    w, h = im.size
-    px = im.load()
-    color = Image.new("L", (w, h), 0)
-    cp = color.load()
-    for y in range(h):
-        for x in range(w):
-            if max(px[x, y][:3]) > thresh:
-                cp[x, y] = 255
-    comps = _components(color)
+    rgba = im if im.mode == "RGBA" else im.convert("RGBA")
+    w, h = rgba.size
+    src = rgba.tobytes()
+    n = w * h
+    mask = bytearray(n)
+    for i in range(n):
+        o = i * 4
+        if src[o] > thresh or src[o + 1] > thresh or src[o + 2] > thresh:
+            mask[i] = 1
+    comps = _components(mask, w, h)
     if not comps:
         return Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    _n, ax0, ay0, ax1, ay1, cells = comps[0]
-    keep = Image.new("L", (w, h), 0)
-    kp = keep.load()
-    for x, y in cells:
-        kp[x, y] = 255
-    for cn, x0, y0, x1, y1, cc in comps[1:]:
+    count, ax0, ay0, ax1, ay1, cells = comps[0]
+    keep = bytearray(n)
+    for c in cells:
+        keep[c] = 255
+    for cn, _x0, y0, _x1, y1, cc in comps[1:]:
         if cn < 80:
             continue
         cy = (y0 + y1) / 2
-        if ay0 - 8 <= cy <= ay1 + 8 and cn < _n * 0.85:
-            for x, y in cc:
-                kp[x, y] = 255
+        if ay0 - 8 <= cy <= ay1 + 8 and cn < count * 0.85:
+            for c in cc:
+                keep[c] = 255
     # 只把轮廓上的小缝补上，用来判断哪些黑色在身体里面。补上的那圈本身不画，
     # 否则人物左右晃时黑边会拖成重影。
-    sealed = keep.filter(ImageFilter.MaxFilter(5))
-    sp = sealed.load()
-    outside: set[tuple[int, int]] = set()
-    q: deque[tuple[int, int]] = deque()
+    sealed = Image.frombytes("L", (w, h), bytes(keep)).filter(ImageFilter.MaxFilter(5))
+    sealed_b = sealed.tobytes()
+    outside = bytearray(n)
+    q: deque[int] = deque()
     for x in range(w):
-        q.append((x, 0))
-        q.append((x, h - 1))
+        q.append(x)
+        q.append((h - 1) * w + x)
     for y in range(h):
-        q.append((0, y))
-        q.append((w - 1, y))
+        q.append(y * w)
+        q.append(y * w + (w - 1))
     while q:
-        x, y = q.popleft()
-        if (x, y) in outside or not (0 <= x < w and 0 <= y < h) or sp[x, y]:
+        c = q.popleft()
+        if outside[c] or sealed_b[c]:
             continue
-        outside.add((x, y))
-        q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
-    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    opx = out.load()
-    for y in range(h):
-        for x in range(w):
-            if (x, y) in outside:
-                continue
-            r, g, b, _a = px[x, y]
-            if max(r, g, b) > thresh:
-                opx[x, y] = (r, g, b, 255)
-                continue
-            if _on_fringe(x, y, outside, w, h):
-                continue
-            opx[x, y] = (22, 16, 16, 255)
+        outside[c] = 1
+        x, y = c % w, c // w
+        if x + 1 < w:
+            q.append(c + 1)
+        if x > 0:
+            q.append(c - 1)
+        if y + 1 < h:
+            q.append(c + w)
+        if y > 0:
+            q.append(c - w)
+    # 贴着外轮廓两像素以内，或贴着画面边，都算补缝扩出来的黑，不画成头发裤子。
+    pad = Image.new("L", (w + 4, h + 4), 255)
+    pad.paste(Image.frombytes("L", (w, h), bytes(255 if outside[i] else 0 for i in range(n))), (2, 2))
+    near = pad.filter(ImageFilter.MaxFilter(5)).crop((2, 2, w + 2, h + 2)).tobytes()
+    outb = bytearray(n * 4)
+    for i in range(n):
+        if outside[i]:
+            continue
+        o = i * 4
+        r, g, b = src[o], src[o + 1], src[o + 2]
+        if r > thresh or g > thresh or b > thresh:
+            outb[o] = r
+            outb[o + 1] = g
+            outb[o + 2] = b
+            outb[o + 3] = 255
+        elif not near[i]:
+            outb[o] = 22
+            outb[o + 1] = 16
+            outb[o + 2] = 16
+            outb[o + 3] = 255
+    out = Image.frombytes("RGBA", (w, h), bytes(outb))
     box = out.getbbox()
     return out.crop(box) if box else out
 
 
-def _on_fringe(x: int, y: int, outside: set[tuple[int, int]], w: int, h: int) -> bool:
-    """贴着外轮廓两像素以内的黑，是补缝时扩出来的，不是头发裤子。"""
-    for dy in range(-2, 3):
-        for dx in range(-2, 3):
-            nx, ny = x + dx, y + dy
-            if not (0 <= nx < w and 0 <= ny < h) or (nx, ny) in outside:
-                return True
-    return False
-
-
-def _load() -> tuple[list[Image.Image], list[int]]:
-    global _FRAMES, _DURS
-    if _FRAMES is not None and _DURS is not None:
-        return _FRAMES, _DURS
+def _decode_frames() -> tuple[list[Image.Image], list[int]]:
     path = Path(__file__).resolve().parent / "assets" / "suofen_idle.gif"
     frames: list[Image.Image] = []
     durs: list[int] = []
     try:
         im = Image.open(path)
     except OSError:
-        _FRAMES, _DURS = frames, durs
         return frames, durs
     try:
         canvas = Image.new("RGBA", im.size, (0, 0, 0, 255))
@@ -240,8 +266,33 @@ def _load() -> tuple[list[Image.Image], list[int]]:
                 canvas = base
     finally:
         im.close()
-    _FRAMES, _DURS = frames, durs
     return frames, durs
+
+
+def _load() -> tuple[list[Image.Image], list[int]]:
+    global _FRAMES, _DURS, _loading
+    with _load_lock:
+        if _FRAMES is not None and _DURS is not None:
+            _loading = False
+            return _FRAMES, _DURS
+        try:
+            frames, durs = _decode_frames()
+        finally:
+            _loading = False
+        _FRAMES, _DURS = frames, durs
+        return frames, durs
+
+
+def ensure_loading() -> None:
+    """启动时在后台抠好。切到这张皮时界面不再等这一下。"""
+    global _loading
+    if _FRAMES is not None:
+        return
+    with _load_lock:
+        if _FRAMES is not None or _loading:
+            return
+        _loading = True
+    threading.Thread(target=_load, daemon=True, name="suofen-load").start()
 
 
 def _at(frames: list[Image.Image], idx: int) -> Image.Image:
@@ -347,6 +398,9 @@ def paint(layer: Image.Image, phase: float, *, stage: str) -> None:
     if w < 8 or h < 8:
         return
     layer.alpha_composite(_backdrop(w, h))
+    if not _FRAMES:
+        ensure_loading()
+        return
     d = ImageDraw.Draw(layer)
     sprite = _pose(stage, phase)
     if sprite is None:
