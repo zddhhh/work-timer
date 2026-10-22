@@ -1128,6 +1128,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
     def _tick_alive(self) -> None:
         """倒计时、动画、喝水提醒、日程轮播、工时。不采样桌面，避免在系统对话框里卡住。"""
         self._poll_key_hide()
+        self._tick_trail()
         now_m = time.monotonic()
         self._tick_kinetic(now_m)
         self._tick_hydrate(now_m)
@@ -1631,7 +1632,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._set_theme(op.split(":", 1)[1])
 
     def _tick_trail(self) -> None:
-        """光标尾巴。没设下班、按键藏起、锁屏时不画。失败只记一次，避免每帧刷日志。"""
+        """光标尾巴。没设下班、锁屏时不画。隐藏键只收卡片，尾巴继续跟。失败只记一次。"""
         if self._trail_failed or not self._trail_on():
             if self._trail is not None:
                 try:
@@ -1645,8 +1646,11 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._trail = cursor_trail.Trail()
             _title, total, done, idle = self._active_view(datetime.now())
             remain = 0 if idle or done else total
-            visible = not idle and not self._esc_hidden and not self.win.screen_asleep
-            self._trail.tick(remain, visible=visible, below=int(self.win.hwnd or 0))
+            visible = not idle and not self.win.screen_asleep
+            # 菜单自己转消息循环。这时再抬卡片或尾巴，菜单会被压住或直接关掉。
+            popup = bool(self.win._popup_open)
+            below = 0 if self._esc_hidden or popup else int(self.win.hwnd or 0)
+            self._trail.tick(remain, visible=visible, below=below, raise_windows=not popup)
         except Exception as e:  # noqa: BLE001
             self._trail_failed = True
             store.log_exception("trail", e)

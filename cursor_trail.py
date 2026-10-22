@@ -208,7 +208,7 @@ class Trail:
         self._present(blank, -32000, -32000, 0)
         self._hide()
 
-    def tick(self, remain_s: float, *, visible: bool, below: int = 0) -> None:
+    def tick(self, remain_s: float, *, visible: bool, below: int = 0, raise_windows: bool = True) -> None:
         self._pump()
         if not visible:
             self.hot = False
@@ -240,7 +240,7 @@ class Trail:
         # 头从箭头尖后面一点开始，避免光点压住点击位置
         pts = _pull_head(self._pts, 14)
         img, left, top = frame_for(pts, color_for(remain_s), gain)
-        self._present(img, left, top, below)
+        self._present(img, left, top, below, raise_windows=raise_windows)
 
     def hide(self) -> None:
         """关掉开关或还没开始计时时收起。窗口留着，下次打开不用重建。"""
@@ -323,7 +323,7 @@ class Trail:
         self._old = gdi32.SelectObject(self._hdc_mem, self._hbmp)
         self._bw, self._bh = w, h
 
-    def _present(self, img: Image.Image, left: int, top: int, below: int) -> None:
+    def _present(self, img: Image.Image, left: int, top: int, below: int, *, raise_windows: bool = True) -> None:
         if not self._hwnd:
             return
         qw, qh = _quantum(img.width), _quantum(img.height)
@@ -354,6 +354,11 @@ class Trail:
             layered_win.user32.ShowWindow(self._hwnd, layered_win.SW_SHOWNOACTIVATE)
             self._shown = True
             self._top = False
+        if not raise_windows:
+            # 菜单自己也是置顶的。这时再抬尾巴或卡片，菜单会被压住。菜单关掉后下一帧再抬回来。
+            self._top = False
+            self._card_up = False
+            return
         self._raise_card(below, left, top, qw, qh)
 
     def _raise_card(self, below: int, left: int, top: int, w: int, h: int) -> None:

@@ -102,7 +102,8 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修复 1.3.81 启动约一秒后倒计时停住、右键菜单打不开"
+    "- 右键菜单开着时，光标尾巴继续跟着走\n"
+    "- 隐藏键不再把光标尾巴一起收起"
 )
 
 
