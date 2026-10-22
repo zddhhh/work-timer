@@ -19,6 +19,7 @@ import attachments
 import autostart
 import backdrop
 import changelog
+import cursor_trail
 import desktop_shortcut
 import festival
 import feedback
@@ -218,6 +219,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         ft, fb, fs = ornaments.layout_for(w, h)
 
         self.win = layered_win.LayeredPetWindow(w, h, "下班倒计时")
+        self._trail = cursor_trail.Trail()
+        self._trail_failed = False
         self.win.set_left_click_handler(self._on_click)
         self.win.set_mouse_move_handler(self._on_mouse_move)
         self.win.set_mouse_leave_handler(self._on_mouse_leave)
@@ -1615,6 +1618,23 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         elif op.startswith("theme:"):
             self._set_theme(op.split(":", 1)[1])
 
+    def _tick_trail(self) -> None:
+        """光标尾巴。没设下班、按键藏起、锁屏时不画。失败只记一次，避免每帧刷日志。"""
+        if self._trail_failed:
+            return
+        try:
+            _title, total, done, idle = self._active_view(datetime.now())
+            remain = 0 if idle or done else total
+            visible = not idle and not self._esc_hidden and not self.win.screen_asleep
+            self._trail.tick(remain, visible=visible, below=int(self.win.hwnd or 0))
+        except Exception as e:  # noqa: BLE001
+            self._trail_failed = True
+            store.log_exception("trail", e)
+            try:
+                self._trail.destroy()
+            except Exception:
+                pass
+
     def _paint(self) -> None:
         if self._painting:
             return
@@ -1922,6 +1942,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._note_beat()
                 self.win.pump()
                 self._poll_key_hide()
+                self._tick_trail()
                 if self._esc_hidden:
                     # 单实例 ShowWindow 可能已把 hwnd 显示，但 _esc_hidden 未清 → 主循环空转像卡死
                     if self.win.hwnd and layered_win.user32.IsWindowVisible(self.win.hwnd):
@@ -2038,6 +2059,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     time.sleep(0.25)
                 elif now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
                     time.sleep(0.001)
+                elif self._trail.hot:
+                    time.sleep(1 / 60)
                 elif (
                     ornaments.is_animated(self._theme().kind)
                     or now < self._celebrate_until
@@ -2065,6 +2088,10 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._persist_pos()
         self._persist_size()
         store.flush_pending(force=True)
+        try:
+            self._trail.destroy()
+        except Exception:
+            pass
         self.win.destroy()
         if self._tk is not None:
             self._tk.destroy()
