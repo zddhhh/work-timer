@@ -1176,24 +1176,12 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             status.set("已复制下载地址。")
 
         def finish_file(path) -> None:
-            opened = False
-            try:
-                share.reveal_file(path)
-                opened = True
-            except OSError:
-                pass
             try:
                 share.copy_file(path)
             except (OSError, ctypes.ArgumentError):
-                if opened:
-                    status.set("剪贴板没放进去，已打开文件夹，把安装包拖到企业微信。")
-                else:
-                    status.set("安装包在本机，但没能复制，也没能打开文件夹。")
+                status.set("安装包没复制上。改点「复制下载地址」。")
                 return
-            if opened:
-                status.set("安装包已复制。贴到企业微信，或从打开的文件夹拖过去。")
-            else:
-                status.set("已复制安装包，贴到企业微信发给同事。")
+            status.set("已复制安装包，贴到企业微信发给同事。")
 
         def copy_setup() -> None:
             if pull["job"] is not None:

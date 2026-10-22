@@ -5,7 +5,6 @@ import ctypes
 import os
 import shutil
 import struct
-import subprocess
 import time
 import urllib.parse
 import urllib.request
@@ -252,15 +251,6 @@ def copy_file(path: Path) -> None:
     if effect:
         items.append((effect, struct.pack("<I", 1)))
     _clipboard_set(items)
-
-
-def reveal_file(path: Path) -> None:
-    """在资源管理器里选中安装包，拖进企业微信。不启动安装包。"""
-    subprocess.Popen(["explorer.exe", f"/select,{path.resolve()}"])
-
-
-def reveal_in_folder(path: Path) -> None:
-    reveal_file(path)
 
 
 def current_share(cfg: dict) -> tuple[str, str]:

@@ -102,7 +102,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 复制下载地址和复制安装包能放进剪贴板了"
+    "- 复制安装包只放进剪贴板，不再打开文件夹；没复制上就改发下载地址"
 )
 
 
