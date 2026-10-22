@@ -662,11 +662,14 @@ class LayeredPetWindow:
             self.x, self.y = int(r.left), int(r.top)
 
     def _apply_pos(self, x: int, y: int) -> None:
-        self.x, self.y = clamp_pos(int(x), int(y), self.width, self.height)
-        if self._has_pixels:
-            self._blit(move=True)
-            self._notify_geometry()
+        """挪窗口。分层窗用 SetWindowPos 搬已经画好的画面。
+
+        每次改位置都走 UpdateLayeredWindow 会等一次桌面合成，拖起来一顿一顿。
+        """
+        nx, ny = clamp_pos(int(x), int(y), self.width, self.height)
+        if nx == self.x and ny == self.y:
             return
+        self.x, self.y = nx, ny
         if self.hwnd:
             user32.SetWindowPos(
                 self.hwnd,

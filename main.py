@@ -1951,9 +1951,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     time.sleep(0.001)
                     continue
                 if dragging:
+                    # 拖动只搬现成的画面。重画和截屏都要等桌面合成，松手后再补一帧。
                     was_dragging = True
-                    self._refresh_surface(force=True)
-                    self._paint()
                     time.sleep(0.001)
                     continue
                 if was_resizing or resized:
