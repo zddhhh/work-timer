@@ -912,6 +912,7 @@ class Troupe:
         self._cache: OrderedDict[tuple, Image.Image] = OrderedDict()
         self._pose = Pose(False)
         self._resize_at: float | None = None
+        self._frame: tuple[tuple, Image.Image] | None = None
 
     # ---- 交互 ----
     def _expire(self, now: float) -> None:
@@ -1051,6 +1052,15 @@ class Troupe:
         else:
             self.done_at = None
         self.stage = stage
+        # 翻牌那几帧主循环跑 60Hz，小猫只按自己的帧率动，中间直接贴上一张
+        hz = self.fps(stage, now, drinking=drinking)
+        frame_key = (
+            box, int(radius), stage, int(mins_left), bool(drinking),
+            self._resize_at, self.show_at, self.cheer_at, int(now * hz),
+        )
+        if self._frame is not None and self._frame[0] == frame_key:
+            img.alpha_composite(self._frame[1], (x0, y0))
+            return
         lay = Layout(box)
         s, k = lay.s, lay.k
         gy_local = bh - 6.5 * s
@@ -1125,6 +1135,7 @@ class Troupe:
 
         a = layer.getchannel("A")
         layer.putalpha(ImageChops.multiply(a, _mask(bw, bh, int(radius))))
+        self._frame = (frame_key, layer)
         img.alpha_composite(layer, (x0, y0))
 
 

@@ -29,6 +29,9 @@ def use_flip_display(kind: str, big: str, cfg: dict | None = None, *, h: int = 9
 
 
 INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow", "suofen"})
+# 底图里画着点击反馈或落雷，必须每帧现画
+_LIVE_BG_KINDS = frozenset({"thunder", "neonflow"})
+_BG_CACHE: dict = {}
 _KINDS = frozenset(
     {
         "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
@@ -607,22 +610,23 @@ def _halo_text(
     if not text:
         return
     x, y = xy
+    stamp = fx.stamp_text
     # 窗口矮时双层阴影会糊成重影，只画正文
     if compact:
-        d.text((x, y), text, font=font, fill=fill)
+        stamp(d, (x, y), text, font, fill)
         return
     if glow:
         aura = (fill[0], fill[1], fill[2], max(40, min(120, fill[3] // 2)))
         for dx, dy in ((0, -1), (0, 2), (-1, 0), (1, 0)):
-            d.text((x + dx, y + dy), text, font=font, fill=aura)
+            stamp(d, (x + dx, y + dy), text, font, aura)
     if ghost:
-        d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 70))
-        d.text((x, y + 1), text, font=font, fill=(0, 0, 0, 40))
+        stamp(d, (x + 1, y + 1), text, font, (0, 0, 0, 70))
+        stamp(d, (x, y + 1), text, font, (0, 0, 0, 40))
     elif _luma(fill) < 140:
-        d.text((x + 1, y + 1), text, font=font, fill=(255, 255, 255, 70))
+        stamp(d, (x + 1, y + 1), text, font, (255, 255, 255, 70))
     else:
-        d.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 65))
-    d.text((x, y), text, font=font, fill=fill)
+        stamp(d, (x + 1, y + 1), text, font, (0, 0, 0, 65))
+    stamp(d, (x, y), text, font, fill)
 
 
 def card_box(w: int, h: int) -> tuple[int, int, int, int]:
@@ -663,7 +667,9 @@ def paint_card(
     meow_drinking: bool = False,
     ghost_ptr: tuple[int, int] | None = None,
     tally: tuple[int, int, int] | None = None,
+    bg_hz: float = 0.0,
 ) -> None:
+    """bg_hz：皮肤底图自己的帧率。翻牌那几帧是 60Hz，底图按这个频率复用，只重画字。"""
     d = ImageDraw.Draw(img)
     kind = theme.kind
     compact_chrome = h < 72 or w < 200
@@ -687,7 +693,15 @@ def paint_card(
     sub_fill = adapt_text_color(theme.sub, ctx, kind=kind, stage=stage)
     accent_fill = adapt_text_color(accent, ctx, kind=kind, stage=stage)
 
-    if kind != "ghost":
+    bg_key = None
+    if bg_hz > 0 and kind != "ghost" and kind not in _LIVE_BG_KINDS:
+        bg_key = (
+            kind, w, h, stage, surface, env_rgb, theme.fill, theme.outline, theme.radius,
+            int(now * bg_hz),
+        )
+    if bg_key is not None and _BG_CACHE.get("key") == bg_key:
+        img.paste(_BG_CACHE["img"], (0, 0))
+    elif kind != "ghost":
         base = _skin_base_rgba(
             kind,
             wallpaper_light=ctx.wallpaper_light,
@@ -753,6 +767,9 @@ def paint_card(
             if theme.outline[3] > 8:
                 oa = max(8, min(255, int(theme.outline[3] * pulse)))
                 d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
+        if bg_key is not None:
+            _BG_CACHE["key"] = bg_key
+            _BG_CACHE["img"] = img.copy()
 
     ghost = kind == "ghost"
     compact_text = h < 72

@@ -199,6 +199,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._mouse_ly = -1
         self._loop_beat = time.monotonic()
         self._painting = False
+        self._was_asleep = False
+        self._wake_checked = 0.0
         self._ghost_ptr: tuple[int, int] | None = None
         self._ghost_q: tuple[int, int] | None = None
         self._meow = meow.Troupe()
@@ -1129,7 +1131,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_pin_rotate = now_m
             self._last_key = ""
         self._worklog_tick()
-        self._paint()
+        if not self.win.screen_asleep:
+            self._paint()
         self._prune_thunder_hits(now_m)
         self._prune_ink_hits(now_m)
 
@@ -1665,22 +1668,28 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     shown_title = call
                     key = f"{key}-m{call}"
             fps = 0
+            bg_hz = 0
             if ornaments.has_skin(theme.kind):
                 if theme.kind == "thunder":
                     # 落雷那半秒要满帧，平时只有雨在下
-                    fps = ornaments.thunder_fps(stage, phase)
+                    bg_hz = ornaments.thunder_fps(stage, phase)
                 elif meow_on:
-                    fps = max(self._meow.fps(stage, phase, drinking=drinking), 60 if self._flip_anims else 0)
+                    bg_hz = self._meow.fps(stage, phase, drinking=drinking)
                 elif theme.kind == suofen.KIND:
-                    fps = max(suofen.fps(stage, phase), 60 if self._flip_anims else 0)
+                    bg_hz = suofen.fps(stage, phase)
                 elif themes.use_flip_display(theme.kind, big, self.cfg, h=h):
-                    fps = 60 if self._flip_anims else (14 if stage in ("idle", "done") else 20)
+                    if ornaments.drift_only(theme.kind) and not ornaments.sweeping(stage, phase):
+                        bg_hz = 10
+                    else:
+                        bg_hz = 14 if stage in ("idle", "done") else 20
                 elif theme.kind in ("neonflow", "inkpulse"):
-                    fps = 30 if stage == "warn" else (16 if stage in ("idle", "done") else 28)
+                    bg_hz = 30 if stage == "warn" else (16 if stage in ("idle", "done") else 28)
                 else:
-                    period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
-                    sweeping = (phase % period) < 1.95
-                    fps = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
+                    sweeping = ornaments.sweeping(stage, phase)
+                    bg_hz = 30 if sweeping else (12 if stage in ("idle", "done") else 24)
+                fps = bg_hz
+                if self._flip_anims and theme.kind != "thunder":
+                    fps = 60
                 key = f"{key}-a{int(phase * fps)}"
             elif theme.kind != "ghost":
                 key = f"{key}-p{int(phase * 6)}"
@@ -1790,6 +1799,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     meow_drinking=drinking,
                     ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
                     tally=tally,
+                    bg_hz=bg_hz,
                 )
                 kinetic.paint(
                     img,
@@ -1831,6 +1841,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     meow_drinking=drinking,
                     ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
                     tally=tally,
+                    bg_hz=bg_hz,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)
                 if (0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2]) < 140:
@@ -2002,8 +2013,20 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     except Exception as e:  # noqa: BLE001
                         store.log_exception("ui-prewarm", e)
                 self._worklog_tick()
-                self._refresh_surface()
-                self._paint()
+                asleep = self.win.screen_asleep
+                if asleep:
+                    # 锁屏或关屏：倒计时和工时照走，画面不画、桌面不截。醒来补一帧
+                    if now_m - self._wake_checked >= 1.0:
+                        self._wake_checked = now_m
+                        self.win.check_awake()
+                    self._was_asleep = True
+                else:
+                    if self._was_asleep:
+                        self._was_asleep = False
+                        self._last_key = ""
+                        self._force_surface_sample = True
+                    self._refresh_surface()
+                    self._paint()
                 now = time.monotonic()
                 self._prune_thunder_hits(now)
                 self._prune_ink_hits(now)
@@ -2011,7 +2034,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     self._persist_pos()
                     last_save = now
                 store.flush_pending()
-                if now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
+                if asleep:
+                    time.sleep(0.25)
+                elif now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
                     time.sleep(0.001)
                 elif (
                     ornaments.is_animated(self._theme().kind)

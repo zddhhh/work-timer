@@ -59,6 +59,15 @@ WM_SETTINGCHANGE = 0x001A
 WM_DISPLAYCHANGE = 0x007E
 WM_MOUSEACTIVATE = 0x0021
 WM_REQUEST_SHOW = 0x8001  # WM_APP+1：单实例唤起已隐藏窗口
+WM_WTSSESSION_CHANGE = 0x02B1
+WTS_CONSOLE_CONNECT = 0x1
+WTS_REMOTE_CONNECT = 0x3
+WTS_SESSION_LOGON = 0x5
+WTS_SESSION_LOCK = 0x7
+WTS_SESSION_UNLOCK = 0x8
+WM_POWERBROADCAST = 0x0218
+PBT_POWERSETTINGCHANGE = 0x8013
+DESKTOP_SWITCHDESKTOP = 0x0100
 MA_ACTIVATE = 1
 SW_RESTORE = 9
 MONITOR_DEFAULTTONEAREST = 2
@@ -268,6 +277,40 @@ class MSG(ctypes.Structure):
     ]
 
 
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", wintypes.DWORD),
+        ("Data2", wintypes.WORD),
+        ("Data3", wintypes.WORD),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+def _guid(text: str) -> GUID:
+    import uuid
+
+    return GUID.from_buffer_copy(uuid.UUID(text).bytes_le)
+
+
+class POWERBROADCAST_SETTING(ctypes.Structure):
+    _fields_ = [
+        ("PowerSetting", GUID),
+        ("DataLength", wintypes.DWORD),
+        ("Data", wintypes.DWORD),
+    ]
+
+
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+
+# Win8 起是 CONSOLE_DISPLAY_STATE；Win7 只有 MONITOR_POWER_ON。值 0 都是屏幕关了
+_DISPLAY_GUIDS = (
+    _guid("6FE69556-704A-47A0-8F24-C28D936FDA47"),
+    _guid("02731015-4510-4526-99E6-E5A17EBD1AEA"),
+)
+
+
 user32.UpdateLayeredWindow.argtypes = [
     wintypes.HWND,
     wintypes.HDC,
@@ -381,6 +424,32 @@ gdi32.BitBlt.argtypes = [
     wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
 ]
 gdi32.BitBlt.restype = wintypes.BOOL
+user32.RegisterPowerSettingNotification.argtypes = [wintypes.HANDLE, ctypes.POINTER(GUID), wintypes.DWORD]
+user32.RegisterPowerSettingNotification.restype = ctypes.c_void_p
+user32.UnregisterPowerSettingNotification.argtypes = [ctypes.c_void_p]
+user32.UnregisterPowerSettingNotification.restype = wintypes.BOOL
+user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+user32.OpenInputDesktop.restype = ctypes.c_void_p
+user32.CloseDesktop.argtypes = [ctypes.c_void_p]
+user32.CloseDesktop.restype = wintypes.BOOL
+user32.GetLastInputInfo.argtypes = [ctypes.POINTER(LASTINPUTINFO)]
+user32.GetLastInputInfo.restype = wintypes.BOOL
+try:
+    wtsapi32 = ctypes.windll.wtsapi32
+    wtsapi32.WTSRegisterSessionNotification.argtypes = [wintypes.HWND, wintypes.DWORD]
+    wtsapi32.WTSRegisterSessionNotification.restype = wintypes.BOOL
+    wtsapi32.WTSUnRegisterSessionNotification.argtypes = [wintypes.HWND]
+    wtsapi32.WTSUnRegisterSessionNotification.restype = wintypes.BOOL
+except (OSError, AttributeError):
+    wtsapi32 = None
+
+
+def _last_input_tick() -> int:
+    info = LASTINPUTINFO()
+    info.cbSize = ctypes.sizeof(LASTINPUTINFO)
+    if not user32.GetLastInputInfo(ctypes.byref(info)):
+        return -1
+    return int(info.dwTime)
 
 
 class LayeredPetWindow:
@@ -437,6 +506,11 @@ class LayeredPetWindow:
         self._need_topmost = True
         self._winevent_hooks: list = []
         self._winevent_proc = WINEVENTPROC(self._on_win_event)
+        self._locked = False
+        self._display_off = False
+        self._off_input = -1
+        self._power_notes: list = []
+        self._wts = False
 
         self._hinst = kernel32.GetModuleHandleW(None)
         self._class_name = class_name
@@ -481,6 +555,7 @@ class LayeredPetWindow:
             hook = user32.SetWinEventHook(a, b, None, self._winevent_proc, 0, 0, WINEVENT_OUTOFCONTEXT)
             if hook:
                 self._winevent_hooks.append(hook)
+        self._watch_screen()
         self._hdc_screen = user32.GetDC(None)
         self._hdc_mem = gdi32.CreateCompatibleDC(self._hdc_screen)
         self._bits = None
@@ -618,10 +693,64 @@ class LayeredPetWindow:
             if hwnd != self.hwnd:
                 self._need_topmost = True
 
+    def _watch_screen(self) -> None:
+        """锁屏、关屏时系统会发消息过来。看不见的时候主循环就不用一帧帧地画。"""
+        try:
+            if wtsapi32 is not None:
+                self._wts = bool(wtsapi32.WTSRegisterSessionNotification(self.hwnd, 0))
+        except OSError:
+            self._wts = False
+        for guid in _DISPLAY_GUIDS:
+            try:
+                note = user32.RegisterPowerSettingNotification(self.hwnd, ctypes.byref(guid), 0)
+            except OSError:
+                note = None
+            if note:
+                self._power_notes.append(note)
+                break
+
+    @property
+    def screen_asleep(self) -> bool:
+        return self._locked or self._display_off
+
+    def check_awake(self) -> None:
+        """锁屏/关屏的消息可能漏收。能打开输入桌面就是解锁了，有新输入就是屏幕亮了。"""
+        if self._locked:
+            desk = user32.OpenInputDesktop(0, False, DESKTOP_SWITCHDESKTOP)
+            if desk:
+                user32.CloseDesktop(desk)
+                self._locked = False
+        if self._display_off and _last_input_tick() != self._off_input:
+            self._display_off = False
+
+    def _on_power_setting(self, lparam) -> None:
+        if not lparam:
+            return
+        got = POWERBROADCAST_SETTING.from_address(int(lparam))
+        raw = bytes(got.PowerSetting)
+        if not any(raw == bytes(g) for g in _DISPLAY_GUIDS):
+            return
+        off = int(got.Data) == 0
+        if off and not self._display_off:
+            self._off_input = _last_input_tick()
+        self._display_off = off
+
     def destroy(self) -> None:
         for hook in self._winevent_hooks:
             user32.UnhookWinEvent(hook)
         self._winevent_hooks.clear()
+        for note in self._power_notes:
+            try:
+                user32.UnregisterPowerSettingNotification(note)
+            except OSError:
+                pass
+        self._power_notes.clear()
+        if self._wts and self.hwnd and wtsapi32 is not None:
+            try:
+                wtsapi32.WTSUnRegisterSessionNotification(self.hwnd)
+            except OSError:
+                pass
+            self._wts = False
         self._free_bitmap()
         if self._hdc_mem:
             gdi32.DeleteDC(self._hdc_mem)
@@ -791,10 +920,27 @@ class LayeredPetWindow:
             if self._on_request_show:
                 self._on_request_show()
             return 0
+        if msg == WM_WTSSESSION_CHANGE:
+            code = int(wparam)
+            if code == WTS_SESSION_LOCK:
+                self._locked = True
+            elif code in (WTS_SESSION_UNLOCK, WTS_CONSOLE_CONNECT, WTS_REMOTE_CONNECT, WTS_SESSION_LOGON):
+                self._locked = False
+            return 0
+        if msg == WM_POWERBROADCAST and int(wparam) == PBT_POWERSETTINGCHANGE:
+            try:
+                self._on_power_setting(lparam)
+            except Exception:
+                self._display_off = False
+            return 1
         if msg == WM_SYSCOMMAND:
             cmd = int(wparam) & SC_MASK
             if cmd in (SC_MINIMIZE, SC_MAXIMIZE, SC_SIZE):
                 return 0
+        if msg in (WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_RBUTTONUP):
+            # 鼠标能点到这个窗口，屏幕肯定亮着、也没锁
+            self._locked = False
+            self._display_off = False
         if msg == WM_MOUSEMOVE and not self._dragging and not self._resizing:
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))

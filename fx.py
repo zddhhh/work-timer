@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
@@ -10,6 +11,44 @@ FLAG_GOLD = (255, 222, 0)
 
 _CANTON_CACHE: dict[int, tuple[Image.Image, Image.Image, Image.Image]] = {}
 _SCAN_CACHE: dict[tuple, Image.Image] = {}
+_STAMPS: OrderedDict = OrderedDict()
+
+
+def stamp_text(d: ImageDraw.ImageDraw, xy, text: str, font, fill, *, stroke_width: int = 0) -> None:
+    """等同 d.text(xy, text, font=font, fill=fill)，字形蒙版画一次就留着。
+
+    ImageDraw 每次都要让 FreeType 重新栅格化；倒计时一帧要描几十遍同样的字。
+    贴的是同一张覆盖蒙版、同一种填色方式，结果逐像素一样。坐标带小数时走原路。
+    stroke_width 只用于描边和字同色的情况（stroke_fill=fill）。
+    """
+    image = getattr(d, "_image", None)
+    x, y = xy
+    if image is None or not text or x != int(x) or y != int(y):
+        if stroke_width:
+            d.text(xy, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=fill)
+        else:
+            d.text(xy, text, font=font, fill=fill)
+        return
+    sw = int(stroke_width)
+    key = (text, font, sw)
+    got = _STAMPS.get(key)
+    if got is None:
+        left, top, right, bottom = font.getbbox(text, stroke_width=sw)
+        mask = Image.new("L", (max(1, right - left + 2), max(1, bottom - top + 2)), 0)
+        md = ImageDraw.Draw(mask)
+        if sw:
+            md.text((1 - left, 1 - top), text, font=font, fill=255, stroke_width=sw, stroke_fill=255)
+        else:
+            md.text((1 - left, 1 - top), text, font=font, fill=255)
+        got = (mask, left - 1, top - 1)
+        while len(_STAMPS) >= 600:
+            _STAMPS.popitem(last=False)
+        _STAMPS[key] = got
+    else:
+        _STAMPS.move_to_end(key)
+    mask, ox, oy = got
+    px, py = int(x) + ox, int(y) + oy
+    image.paste(fill, (px, py, px + mask.width, py + mask.height), mask)
 
 
 # ---------------------------------------------------------------- 国旗星组
@@ -1960,19 +1999,19 @@ def _draw_flip_digit(
         heavy = 1 if (bold and size >= 13) else 0
         rim = 2 if size >= 12 else 1
         drop = max(1, size // 14)
-        d.text((x, y + drop), ch, font=font, fill=STICKER_SHADOW, stroke_width=rim + heavy, stroke_fill=STICKER_SHADOW)
-        d.text((x, y), ch, font=font, fill=(255, 255, 255, 255), stroke_width=rim + heavy, stroke_fill=(255, 255, 255, 255))
-        d.text((x, y), ch, font=font, fill=color, stroke_width=heavy, stroke_fill=color)
+        stamp_text(d, (x, y + drop), ch, font, STICKER_SHADOW, stroke_width=rim + heavy)
+        stamp_text(d, (x, y), ch, font, (255, 255, 255, 255), stroke_width=rim + heavy)
+        stamp_text(d, (x, y), ch, font, color, stroke_width=heavy)
         return
     if not stroke:
-        d.text((x, y), ch, font=font, fill=color)
+        stamp_text(d, (x, y), ch, font, color)
         return
     cr, cg, cb = color[0], color[1], color[2]
     lum = 0.2126 * cr + 0.7152 * cg + 0.0722 * cb
     outline = (0, 0, 0, 115) if lum > 150 else (255, 255, 255, 125)
     for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        d.text((x + ox, y + oy), ch, font=font, fill=outline)
-    d.text((x, y), ch, font=font, fill=color)
+        stamp_text(d, (x + ox, y + oy), ch, font, outline)
+    stamp_text(d, (x, y), ch, font, color)
 
 
 def _paint_flap_cell(

@@ -102,7 +102,8 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 检查更新发现新版本时不再闪一下空卡片"
+    "- 动画皮肤更省电：翻牌时只重画数字，背景不再每帧从头画\n"
+    "- 锁屏或关屏时不再画动画，倒计时和工时照常记"
 )
 
 

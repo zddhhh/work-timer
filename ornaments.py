@@ -17,6 +17,10 @@ _ASSET_CACHE: dict[str, Image.Image] = {}
 _RESIZE_CACHE: OrderedDict[tuple[str, int, int], Image.Image] = OrderedDict()
 _MASK_CACHE: dict[tuple[int, int, int], Image.Image] = {}
 _ALPHA_LUT: dict[int, list[int]] = {}
+_HUAJING_CACHE: dict[tuple[int, int, str], dict] = {}
+# 贴图慢漂一秒只挪两三个像素，按这个频率重画就够了；扫光叠在上面照常每帧走
+_DRIFT_HZ = 10
+_DRIFT_CACHE: dict = {}
 # 贴图只在画面中心附近漂移，避免整张 640×360 慢扫导致「停一下跳一格」
 _DRIFT_PX = 16
 
@@ -149,8 +153,22 @@ def _mix_env(
     return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)), mood[3])
 
 
+def _sweep_period(stage: str) -> float:
+    return 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
+
+
+def sweeping(stage: str, phase: float) -> bool:
+    """扫光正在走（多留一点余量，免得最后一帧按慢帧率画）。"""
+    return (float(phase) % _sweep_period(stage)) < 1.95
+
+
+def drift_only(kind: str) -> bool:
+    """只有贴图慢漂和周期扫光的皮。不扫光时一秒画 10 次就够。"""
+    return kind in _SKIN_LAYERS and kind not in ("nationalday", "huajing")
+
+
 def _paint_sweep(layer: Image.Image, phase: float, *, light: bool, stage: str) -> None:
-    period = 11.0 if stage == "warn" else (20.0 if stage == "done" else 15.5)
+    period = _sweep_period(stage)
     dur = 1.9
     t = float(phase) % period
     if t > dur:
@@ -369,70 +387,98 @@ def _fade_alpha(im: Image.Image, strength: float) -> Image.Image:
     return Image.merge("RGBA", (r, g, b, ImageChops.multiply(a, mask)))
 
 
+def _trimmed(im: Image.Image) -> tuple[Image.Image, tuple[int, int]] | None:
+    box = im.getchannel("A").getbbox()
+    if box is None:
+        return None
+    return im.crop(box), (box[0], box[1])
+
+
+def _huajing_parts(bw: int, bh: int, stage: str) -> dict:
+    """华境里不随时间变的部分：渐变底、缩好的车、满亮度的车底光、倒影和星环。
+
+    这些每帧现画要十几毫秒（三次全图模糊、一次 LANCZOS 缩放），每帧只按亮度缩放 alpha。
+    """
+    key = (bw, bh, stage)
+    got = _HUAJING_CACHE.get(key)
+    if got is not None:
+        return got
+    under, ring, _gain = _huajing_lights(stage, 0.0)
+    base = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    d = ImageDraw.Draw(base)
+    for y in range(bh):
+        t = y / max(1, bh - 1)
+        d.line([(0, y), (bw, y)], fill=(int(5 + 10 * t), int(8 + 16 * t), int(14 + 22 * t), 255))
+    parts: dict = {"base": base, "ring_rgb": ring, "car": None}
+    car = load_asset("skin_huajing_car.png")
+    if car is not None:
+        cw = max(48, int(bw * 0.40))
+        ch = max(1, int(car.height * cw / car.width))
+        if ch > int(bh * 0.72):
+            ch = max(1, int(bh * 0.72))
+            cw = max(1, int(car.width * ch / car.height))
+        car_s = car.resize((cw, ch), Image.Resampling.LANCZOS)
+        cx = bw - cw - max(2, bw // 80)
+        cy = max(2, (bh - ch) // 2 + bh // 28)
+        glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        gx0, gy0 = cx - cw // 8, cy + int(ch * 0.55)
+        gx1, gy1 = cx + cw + cw // 10, min(bh - 1, cy + ch + max(6, bh // 10))
+        ImageDraw.Draw(glow).ellipse((gx0, gy0, gx1, gy1), fill=(*under, 150))
+        parts["glow"] = _trimmed(glow.filter(ImageFilter.GaussianBlur(max(4, bh // 12))))
+        parts["refl"] = None
+        if bh >= 88:
+            refl = _fade_alpha(car_s.transpose(Image.Transpose.FLIP_TOP_BOTTOM), 0.34)
+            parts["refl"] = (refl, (cx, cy + ch - max(2, ch // 10)))
+        parts["car"] = (car_s, (cx, cy))
+        ring_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        rd = ImageDraw.Draw(ring_layer)
+        y = 3
+        drop = max(3, bh // 22)
+        x0, x1 = max(10, bw // 22), bw - max(10, bw // 22)
+        core = (*ring, 235)
+        width = 2 if bh >= 100 else 1
+        z = max(10, bw // 18)
+        # 贯穿星环，两端各折一下，接近华境车头的 Z 字灯
+        rd.line([(x0 + z, y), (x1 - z, y)], fill=core, width=width)
+        rd.line([(x0, y + drop), (x0 + z // 2, y + drop), (x0 + z, y)], fill=core, width=width)
+        rd.line([(x1, y + drop), (x1 - z // 2, y + drop), (x1 - z, y)], fill=core, width=width)
+        parts["ring_soft"] = _trimmed(ring_layer.filter(ImageFilter.GaussianBlur(1.1)))
+        parts["ring"] = _trimmed(ring_layer)
+    if len(_HUAJING_CACHE) > 8:
+        _HUAJING_CACHE.clear()
+    _HUAJING_CACHE[key] = parts
+    return parts
+
+
 def _paint_huajing(layer: Image.Image, phase: float, *, stage: str) -> None:
     """墨玉黑底、星环灯、车底光和倒影，车贴在右侧。"""
     bw, bh = layer.size
-    d = ImageDraw.Draw(layer)
-    for y in range(bh):
-        t = y / max(1, bh - 1)
-        col = (
-            int(5 + 10 * t),
-            int(8 + 16 * t),
-            int(14 + 22 * t),
-            255,
-        )
-        d.line([(0, y), (bw, y)], fill=col)
-    under, ring, gain = _huajing_lights(stage, phase)
-    # 左侧几道灯丝，时间后面不空
-    streak = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(streak)
+    parts = _huajing_parts(bw, bh, stage)
+    layer.paste(parts["base"], (0, 0))
+    _under, ring, gain = _huajing_lights(stage, phase)
+    # 左侧几道灯丝，时间后面不空。只模糊灯丝附近那几行，不糊整张图
     span = int(bw * 0.56)
+    a = int((28 if stage == "idle" else 48) * gain)
     for i, yy in enumerate((0.22, 0.40, 0.78)):
         y = int(bh * yy)
         shift = int((math.sin(phase * 0.8 + i) * 0.5 + 0.5) * span * 0.35)
-        a = int((28 if stage == "idle" else 48) * gain)
-        sd.line([(8 + shift, y), (span, y)], fill=(*ring, a), width=1)
-    layer.alpha_composite(streak.filter(ImageFilter.GaussianBlur(0.6)))
+        top = max(0, y - 4)
+        strip = Image.new("RGBA", (bw, min(bh, y + 5) - top), (0, 0, 0, 0))
+        ImageDraw.Draw(strip).line([(8 + shift, y - top), (span, y - top)], fill=(*ring, a), width=1)
+        layer.alpha_composite(strip.filter(ImageFilter.GaussianBlur(0.6)), (0, top))
 
-    car = load_asset("skin_huajing_car.png")
-    if car is None:
+    if parts["car"] is None:
         return
-    cw = max(48, int(bw * 0.40))
-    ch = max(1, int(car.height * cw / car.width))
-    if ch > int(bh * 0.72):
-        ch = max(1, int(bh * 0.72))
-        cw = max(1, int(car.width * ch / car.height))
-    car_s = car.resize((cw, ch), Image.Resampling.LANCZOS)
-    cx = bw - cw - max(2, bw // 80)
-    cy = max(2, (bh - ch) // 2 + bh // 28)
-
-    glow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    gx0, gy0 = cx - cw // 8, cy + int(ch * 0.55)
-    gx1, gy1 = cx + cw + cw // 10, min(bh - 1, cy + ch + max(6, bh // 10))
-    gd.ellipse((gx0, gy0, gx1, gy1), fill=(*under, int(150 * gain)))
-    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(max(4, bh // 12))))
-
-    if bh >= 88:
-        refl = _fade_alpha(car_s.transpose(Image.Transpose.FLIP_TOP_BOTTOM), 0.34 * gain)
-        layer.alpha_composite(refl, (cx, cy + ch - max(2, ch // 10)))
-
-    layer.alpha_composite(car_s, (cx, cy))
-
-    ring_layer = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
-    rd = ImageDraw.Draw(ring_layer)
-    y = 3
-    drop = max(3, bh // 22)
-    x0, x1 = max(10, bw // 22), bw - max(10, bw // 22)
-    core = (*ring, int(235 * gain))
-    width = 2 if bh >= 100 else 1
-    z = max(10, bw // 18)
-    # 贯穿星环，两端各折一下，接近华境车头的 Z 字灯
-    rd.line([(x0 + z, y), (x1 - z, y)], fill=core, width=width)
-    rd.line([(x0, y + drop), (x0 + z // 2, y + drop), (x0 + z, y)], fill=core, width=width)
-    rd.line([(x1, y + drop), (x1 - z // 2, y + drop), (x1 - z, y)], fill=core, width=width)
-    layer.alpha_composite(ring_layer.filter(ImageFilter.GaussianBlur(1.1)))
-    layer.alpha_composite(ring_layer)
+    for name in ("glow", "refl"):
+        got = parts.get(name)
+        if got is not None:
+            layer.alpha_composite(_scale_alpha(got[0], gain), got[1])
+    car_s, at = parts["car"]
+    layer.alpha_composite(car_s, at)
+    for name in ("ring_soft", "ring"):
+        got = parts.get(name)
+        if got is not None:
+            layer.alpha_composite(_scale_alpha(got[0], gain), got[1])
 
 
 def paste_skin(
@@ -490,6 +536,15 @@ def paste_skin(
     layers = _SKIN_LAYERS.get(kind)
     if layers is None:
         return False
+    # 国庆上面有烟花和火星，得按帧画；其它贴图皮只是慢慢漂
+    drift_key = None
+    if kind != "nationalday":
+        drift_key = (kind, bw, bh, light, stage, env_rgb, int(phase * _DRIFT_HZ))
+        if _DRIFT_CACHE.get("key") == drift_key:
+            layer = _DRIFT_CACHE["img"].copy()
+            _paint_sweep(layer, phase, light=light, stage=stage)
+            img.alpha_composite(_round_mask(layer, radius), (x0, y0))
+            return True
     name_a, name_b = layers
     drape = load_asset(name_a)
     glow = load_asset(name_b) if name_b else None
@@ -573,6 +628,9 @@ def paste_skin(
         mood = _mix_env(_mood_rgba(stage, light), env_rgb)
     tint = Image.new("RGBA", (bw, bh), mood)
     layer = Image.alpha_composite(layer, tint)
+    if drift_key is not None:
+        _DRIFT_CACHE["key"] = drift_key
+        _DRIFT_CACHE["img"] = layer.copy()
     _paint_sweep(layer, phase, light=light, stage=stage)
     img.alpha_composite(_round_mask(layer, radius), (x0, y0))
     return True

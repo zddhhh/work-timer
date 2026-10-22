@@ -2493,5 +2493,92 @@ class ShareTests(unittest.TestCase):
             httpd.server_close()
 
 
+class PaintCostTests(unittest.TestCase):
+    def test_stamped_text_matches_draw_text(self):
+        import fx
+        from PIL import ImageDraw
+
+        font = fx._flip_font(26)
+        base = Image.new("RGBA", (90, 50), (30, 40, 60, 210))
+        ImageDraw.Draw(base).rectangle((8, 8, 50, 30), fill=(240, 230, 200, 255))
+        for text, fill, xy in (("8", (0, 0, 0, 115), (12, 4)), ("时", (255, 255, 255, 125), (-4, 30)), ("5", (248, 250, 255), (70, -6))):
+            want = base.copy()
+            ImageDraw.Draw(want).text(xy, text, font=font, fill=fill)
+            for _ in range(2):
+                got = base.copy()
+                fx.stamp_text(ImageDraw.Draw(got), xy, text, font, fill)
+                self.assertEqual(got.tobytes(), want.tobytes(), text)
+
+    def test_stroked_stamp_is_within_one_level(self):
+        import fx
+        from PIL import ImageDraw
+
+        font = fx._flip_font(24)
+        base = Image.new("RGBA", (60, 50), (250, 220, 230, 255))
+        want = base.copy()
+        ImageDraw.Draw(want).text((10, 6), "7", font=font, fill=(255, 255, 255, 255), stroke_width=3, stroke_fill=(255, 255, 255, 255))
+        got = base.copy()
+        fx.stamp_text(ImageDraw.Draw(got), (10, 6), "7", font, (255, 255, 255, 255), stroke_width=3)
+        self.assertLessEqual(max(abs(a - b) for a, b in zip(got.tobytes(), want.tobytes())), 1)
+
+    def test_card_background_is_reused_within_its_frame(self):
+        theme = themes.resolve_for_surface(themes.get_theme("frost"), "dark")
+        font = ornaments.fx._flip_font(20)
+        calls = {"n": 0}
+        real = ornaments.paste_skin
+
+        def counting(*a, **k):
+            calls["n"] += 1
+            return real(*a, **k)
+
+        ornaments.paste_skin = counting
+        themes._BG_CACHE.clear()
+        try:
+            frames = []
+            for _ in range(3):
+                img = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+                themes.paint_card(
+                    img, 248, 92, theme, "距离下班", "1:23:45", "", theme.big, font, font, font,
+                    bg_hz=0.001,
+                )
+                frames.append(img.tobytes())
+        finally:
+            ornaments.paste_skin = real
+            themes._BG_CACHE.clear()
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(frames[0], frames[1])
+
+    def test_screen_asleep_follows_lock_and_display_messages(self):
+        import ctypes
+
+        import layered_win as lw
+
+        # 同名窗口类只登记第一次的窗口过程，换个类名才收得到自己的消息
+        win = lw.LayeredPetWindow(80, 40, class_name="WorkTimerSleepTestWnd", visible=False)
+        try:
+            self.assertFalse(win.screen_asleep)
+            lw.user32.SendMessageW(win.hwnd, lw.WM_WTSSESSION_CHANGE, lw.WTS_SESSION_LOCK, 0)
+            self.assertTrue(win.screen_asleep)
+            lw.user32.SendMessageW(win.hwnd, lw.WM_WTSSESSION_CHANGE, lw.WTS_SESSION_UNLOCK, 0)
+            self.assertFalse(win.screen_asleep)
+
+            note = lw.POWERBROADCAST_SETTING()
+            note.PowerSetting = lw._DISPLAY_GUIDS[0]
+            note.DataLength = 4
+            note.Data = 0
+            lw.user32.SendMessageW(win.hwnd, lw.WM_POWERBROADCAST, lw.PBT_POWERSETTINGCHANGE, ctypes.addressof(note))
+            self.assertTrue(win.screen_asleep)
+            note.Data = 1
+            lw.user32.SendMessageW(win.hwnd, lw.WM_POWERBROADCAST, lw.PBT_POWERSETTINGCHANGE, ctypes.addressof(note))
+            self.assertFalse(win.screen_asleep)
+
+            # 漏收解锁消息：这台机子没锁，能打开输入桌面，就该自己醒过来
+            lw.user32.SendMessageW(win.hwnd, lw.WM_WTSSESSION_CHANGE, lw.WTS_SESSION_LOCK, 0)
+            win.check_awake()
+            self.assertFalse(win.screen_asleep)
+        finally:
+            win.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()
