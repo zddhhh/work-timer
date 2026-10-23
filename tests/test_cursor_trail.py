@@ -52,3 +52,26 @@ class TrailMathTests(unittest.TestCase):
         self.assertGreater(img.getpixel((hx, hy))[3], 80)
         self.assertEqual(img.getpixel((2, 2))[3], 0)
         self.assertEqual(img.getpixel((img.width - 2, 2))[3], 0)
+
+    def test_trail_stays_off_the_click_point(self):
+        points = [(float(i), 40.0) for i in range(0, 90)]
+        drawn = trail._pull_head(points, trail.HEAD_GAP)
+        img, left, top = trail.frame_for(drawn, (96, 186, 255), 1.0)
+        cx, cy = points[-1]
+        self.assertGreaterEqual(cx, left + img.width)
+        self.assertFalse(top <= cy < top + img.height and left <= cx < left + img.width)
+        short = [(0.0, 0.0), (6.0, 0.0)]
+        backed = trail._pull_head(short, trail.HEAD_GAP)
+        self.assertEqual(len(backed), 1)
+        self.assertAlmostEqual(backed[0][0], 6.0 - trail.HEAD_GAP, places=3)
+
+    def test_a_loop_is_cropped_off_the_hotspot(self):
+        left, top, w, h, _sx, _sy = trail._clip_off_cursor(0, 0, 120, 80, 60, 40)
+        self.assertFalse(left <= 60 < left + w and top <= 40 < top + h)
+        self.assertGreaterEqual(w, 8)
+        self.assertGreaterEqual(h, 8)
+
+    def test_clicks_pass_through_the_trail(self):
+        window = trail.Trail()
+        self.assertEqual(window._wnd_proc(0, trail.layered_win.WM_NCHITTEST, 0, 0), trail.layered_win.HTTRANSPARENT)
+        self.assertEqual(window._wnd_proc(0, trail.layered_win.WM_MOUSEACTIVATE, 0, 0), trail.MA_NOACTIVATE)

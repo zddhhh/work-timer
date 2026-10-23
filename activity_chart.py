@@ -1,7 +1,7 @@
-"""工时账本里的键鼠次数图。
+"""工时账本里的键鼠图。
 
-口径只有一套：键盘、鼠标、滚轮。今天按小时看这三项，这周按天把同一项加总。
-不和账本左边的「待了多久」混在一起。
+键盘、鼠标、滚轮按次数画在一起。鼠标滑行距离单位不同，单独按自己的高低来画，不跟次数挤在一根轴上。
+今天按小时，这周按天。不和账本左边的「待了多久」混在一起。
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ _CLICK = (240, 176, 88, 255)
 _CLICK_PEAK = (255, 214, 140, 255)
 _KEY = (110, 186, 232, 255)
 _WHEEL = (125, 206, 160, 255)
+_TRAVEL = (198, 160, 255, 255)
 _COMBINED = (154, 176, 214, 255)
 _MUTED = (132, 140, 156, 255)
 _DIM = (90, 98, 114, 255)
@@ -218,16 +219,28 @@ def _hour_text(hour: int, today: dict) -> str:
     return _with_travel(text, (today.get("travel_h") or [0] * 24)[hour])
 
 
+def _totals(keys: int, clicks: int, wheels: int, travel: int) -> tuple:
+    items = [
+        ("键盘", activity.fmt_count(keys), _KEY),
+        ("鼠标", activity.fmt_count(clicks), _CLICK),
+        ("滚轮", activity.fmt_count(wheels), _WHEEL),
+    ]
+    if activity.travel_meters(int(travel or 0)) >= 0.001:
+        items.append(("距离", activity.fmt_travel(int(travel)), _TRAVEL))
+    return tuple(items)
+
+
 def _paint_totals(dr: ImageDraw.ImageDraw, w: int, items: tuple) -> None:
     inset = 14
-    col_w = (w - inset * 2) / 3
-    for i, (name, val, color) in enumerate(items):
+    col_w = (w - inset * 2) / max(1, len(items))
+    size = 20 if len(items) <= 3 else 16
+    for i, (name, text, color) in enumerate(items):
         cx = inset + (i + 0.5) * col_w
         if i:
             x = int(inset + i * col_w)
             dr.line((x, 12, x, 46), fill=_GRID, width=1)
         _text(dr, (cx, 8), name, size=11, fill=color, anchor="mt")
-        _text(dr, (cx, 44), activity.fmt_count(val), size=20, fill=_WHITE, anchor="ms", bold=True)
+        _text(dr, (cx, 44), text, size=size, fill=_WHITE, anchor="ms", bold=True)
 
 
 def _paint_readout(im: Image.Image, text: str, *, active: bool = False) -> None:
@@ -302,11 +315,21 @@ def _plot_lines(dr: ImageDraw.ImageDraw, xs: list[float], series: list[tuple[lis
         return 0
     span = max(1, base - top)
     for vals, color in live:
-        pts = []
-        for x, v in zip(xs, vals):
-            y = base - (v / vmax) * span
-            pts.append((x, y))
+        pts = [(x, base - (v / vmax) * span) for x, v in zip(xs, vals)]
         _stroke(dr, pts, color)
+    return vmax
+
+
+def _plot_own(dr: ImageDraw.ImageDraw, xs: list[float], vals: list[int], color, top: int, base: int) -> int:
+    """单独一根纵轴。距离和次数不是同一个单位，跟次数挤在一起会把次数压成一条底线。"""
+    if not xs or not any(vals):
+        return 0
+    vmax = max(vals)
+    if vmax <= 0:
+        return 0
+    span = max(1, base - top)
+    pts = [(x, base - (v / vmax) * span) for x, v in zip(xs, vals)]
+    _stroke(dr, pts, color)
     return vmax
 
 
@@ -336,9 +359,9 @@ def _render_week(
 
     inset = 14
     keys, clicks, wheels = week_totals(days)
-    _paint_totals(dr, w, (("键盘", keys, _KEY), ("鼠标", clicks, _CLICK), ("滚轮", wheels, _WHEEL)))
     travel = sum(int(r.get("travel") or 0) for r in days if not r.get("future"))
-    _text(dr, (inset, 54), _with_travel(_busiest_caption(days), travel), size=11, fill=_MUTED, anchor="lm")
+    _paint_totals(dr, w, _totals(keys, clicks, wheels, travel))
+    _text(dr, (inset, 54), _busiest_caption(days), size=11, fill=_MUTED, anchor="lm")
 
     plot_l, plot_r = 16, w - inset
     plot_top, base = 68, h - 52
@@ -354,26 +377,29 @@ def _render_week(
         else:
             values.extend((int(row["keys"]), int(row["clicks"]), int(row["wheels"])))
     vmax = max(values or [0])
+    travel_max = max((int(r.get("travel") or 0) for r in days if not r.get("future")), default=0)
     for i, row in enumerate(days):
         gx0 = plot_l + i * group_w
         gx1 = gx0 + group_w
-        if style != "line" and not row.get("future") and row.get("mode") != "empty" and vmax > 0:
+        if style != "line" and not row.get("future") and row.get("mode") != "empty" and (vmax > 0 or travel_max > 0):
             if row.get("mode") == "combined":
-                series = ((int(row.get("combined") or 0), _COMBINED),)
+                series = [(int(row.get("combined") or 0), _COMBINED, vmax)]
             else:
-                series = (
-                    (int(row["keys"]), _KEY),
-                    (int(row["clicks"]), _CLICK),
-                    (int(row["wheels"]), _WHEEL),
-                )
-            bar_w = max(6, int((group_w - 18) / max(1, len(series))) - 2)
+                series = [
+                    (int(row["keys"]), _KEY, vmax),
+                    (int(row["clicks"]), _CLICK, vmax),
+                    (int(row["wheels"]), _WHEEL, vmax),
+                ]
+            if travel_max > 0:
+                series.append((int(row.get("travel") or 0), _TRAVEL, travel_max))
+            bar_w = max(4, int((group_w - 18) / max(1, len(series))) - 2)
             span = len(series) * bar_w + (len(series) - 1) * 3
             left = gx0 + (group_w - span) / 2
-            for j, (v, color) in enumerate(series):
-                if not v:
+            for j, (v, color, scale) in enumerate(series):
+                if not v or scale <= 0:
                     continue
                 x0 = int(left + j * (bar_w + 3))
-                y0 = int(base - (v / vmax) * (bar_room - 8))
+                y0 = int(base - (v / scale) * (bar_room - 8))
                 _bar(dr, (x0, y0, x0 + bar_w, base), color, radius=2)
         label_fill = _TODAY if row.get("today") else (_DIM if row.get("weekend") else _MUTED)
         d = row["date"]
@@ -417,6 +443,11 @@ def _render_week(
                 cs.append(int(row["clicks"]))
                 ws.append(int(row["wheels"]))
                 combos.append(0)
+        ts: list[int] = []
+        for row in days:
+            if row.get("future"):
+                continue
+            ts.append(int(row.get("travel") or 0))
         top = plot_top + 4
         ymax = _plot_lines(
             dr, xs,
@@ -425,6 +456,9 @@ def _render_week(
         )
         if ymax:
             _text(dr, (plot_l + 8, top), activity.fmt_count(ymax), size=10, fill=_DIM, anchor="lt")
+        tscale = _plot_own(dr, xs, ts, _TRAVEL, top, base - 2)
+        if tscale:
+            _text(dr, (plot_r - 8, top), activity.fmt_travel(tscale), size=10, fill=_TRAVEL, anchor="rt")
     _paint_readout(im, WEEK_IDLE)
     return im, hits
 
@@ -452,13 +486,13 @@ def render(
 
     inset = 14
     plot_l, plot_r = 36, w - inset
-    _paint_totals(dr, w, (("键盘", today["keys"], _KEY), ("鼠标", today["clicks"], _CLICK), ("滚轮", today["wheels"], _WHEEL)))
+    _paint_totals(dr, w, _totals(today["keys"], today["clicks"], today["wheels"], int(today.get("travel") or 0)))
 
     cap = "这天还没记到次数" if today["mode"] == "empty" else _peak_caption(today)
-    cap = _with_travel(cap, int(today.get("travel") or 0))
     _text(dr, (inset, 54), cap, size=11, fill=_MUTED, anchor="lm")
 
-    lo, hi = visible_span(today["hours"], today["keys_h"], today["clicks_h"], today["wheels_h"])
+    travel_h = list(today.get("travel_h") or [0] * 24)
+    lo, hi = visible_span(today["hours"], today["keys_h"], today["clicks_h"], today["wheels_h"], travel_h)
     n = hi - lo + 1
     slot = (plot_r - plot_l) / n
 
@@ -466,22 +500,27 @@ def render(
         return plot_l + (hour - lo + 0.5) * slot
 
     if today["mode"] == "combined":
-        rows = (("操作", today["hours"], _COMBINED),)
+        count_rows = (("操作", today["hours"], _COMBINED),)
     else:
-        rows = (
+        count_rows = (
             ("键盘", today["keys_h"], _KEY),
             ("鼠标", today["clicks_h"], _CLICK),
             ("滚轮", today["wheels_h"], _WHEEL),
         )
+    rows = count_rows + ((("距离", travel_h, _TRAVEL),) if any(travel_h) else ())
     if style == "line":
         rows_top = 86
-        _legend(dr, inset, 72, tuple((name, color) for name, _series, color in rows))
+        _legend(dr, inset, 72, tuple((name, color) for name, _series, color in count_rows) + (("距离", _TRAVEL),))
         base = h - 46
         dr.line((plot_l, base, plot_r, base), fill=_LINE, width=1)
-        series = [([row[hour] for hour in range(lo, hi + 1)], color) for _name, row, color in rows]
-        ymax = _plot_lines(dr, [x_center(hour) for hour in range(lo, hi + 1)], series, rows_top, base)
+        xs = [x_center(hour) for hour in range(lo, hi + 1)]
+        series = [([row[hour] for hour in range(lo, hi + 1)], color) for _name, row, color in count_rows]
+        ymax = _plot_lines(dr, xs, series, rows_top, base)
         if ymax:
             _text(dr, (4, rows_top), activity.fmt_count(ymax), size=10, fill=_DIM, anchor="lt")
+        tscale = _plot_own(dr, xs, [travel_h[hour] for hour in range(lo, hi + 1)], _TRAVEL, rows_top, base)
+        if tscale:
+            _text(dr, (plot_r, rows_top), activity.fmt_travel(tscale), size=10, fill=_TRAVEL, anchor="rt")
         axis_y = base + 4
     else:
         plot_l = 46

@@ -1,6 +1,7 @@
 """光标后面的一条尾巴。系统箭头不变，尾巴画在点穿的透明层上。
 
 长短按还剩的时间：早上长，快下班收成一个小光点。手停住之后变淡，长度还在。
+窗口不盖住点击热点，也不用「一移动就让底下重画」的那种穿透样式。
 """
 from __future__ import annotations
 
@@ -15,10 +16,12 @@ import layered_win
 FULL_DAY = 9.5 * 3600
 MAX_PX = 280.0
 MIN_PX = 11.0
+# 整段尾巴离热点留出的距离。比画面留白大一截，窗口矩形才不会压住点击位置。
+HEAD_GAP = 28.0
 SIZE = 640
 _HALF = SIZE // 2
 
-WS_EX_TRANSPARENT = 0x00000020
+MA_NOACTIVATE = 3
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
@@ -237,10 +240,10 @@ class Trail:
         if key == self._key and self._shown:
             return
         self._key = key
-        # 头从箭头尖后面一点开始，避免光点压住点击位置
-        pts = _pull_head(self._pts, 14)
+        # 整段都从热点后面开始。只挪最后一个点的话，前一个点仍在箭头上，窗口还是盖住点击。
+        pts = _pull_head(self._pts, HEAD_GAP)
         img, left, top = frame_for(pts, color_for(remain_s), gain)
-        self._present(img, left, top, below, raise_windows=raise_windows)
+        self._present(img, left, top, below, raise_windows=raise_windows, cursor=(x, y))
 
     def hide(self) -> None:
         """关掉开关或还没开始计时时收起。窗口留着，下次打开不用重建。"""
@@ -276,14 +279,16 @@ class Trail:
         wc = layered_win.WNDCLASSW()
         wc.lpfnWndProc = self._wndproc
         wc.hInstance = hinst
+        wc.hCursor = user32.LoadCursorW(None, layered_win.IDC_ARROW)
         wc.lpszClassName = "WorkTimerCursorTrail"
         user32.RegisterClassW(layered_win.ctypes.byref(wc))
+        # 不带 WS_EX_TRANSPARENT。那种窗口跟着鼠标挪时，系统会把底下整块重画，点击就容易丢。
+        # 穿透只走 WM_NCHITTEST → HTTRANSPARENT。
         ex = (
             layered_win.WS_EX_LAYERED
             | layered_win.WS_EX_TOPMOST
             | layered_win.WS_EX_TOOLWINDOW
             | layered_win.WS_EX_NOACTIVATE
-            | WS_EX_TRANSPARENT
         )
         self._hwnd = user32.CreateWindowExW(
             ex, "WorkTimerCursorTrail", "下班尾巴", layered_win.WS_POPUP,
@@ -323,10 +328,21 @@ class Trail:
         self._old = gdi32.SelectObject(self._hdc_mem, self._hbmp)
         self._bw, self._bh = w, h
 
-    def _present(self, img: Image.Image, left: int, top: int, below: int, *, raise_windows: bool = True) -> None:
+    def _present(
+        self,
+        img: Image.Image,
+        left: int,
+        top: int,
+        below: int,
+        *,
+        raise_windows: bool = True,
+        cursor: tuple[float, float] | None = None,
+    ) -> None:
         if not self._hwnd:
             return
-        qw, qh = _quantum(img.width), _quantum(img.height)
+        iw, ih = img.width, img.height
+        # 位图按 32 对齐，避免每帧重建。窗口只用画面本身那么大，多出来的一圈会盖住热点。
+        qw, qh = _quantum(iw), _quantum(ih)
         if qw != self._bw or qh != self._bh or not self._bits:
             self._alloc(qw, qh)
         if not self._bits:
@@ -335,9 +351,12 @@ class Trail:
         canvas.paste(img, (0, 0))
         raw = _to_bgra(canvas)
         layered_win.ctypes.memmove(self._bits, raw, len(raw))
+        vw, vh, sx, sy = iw, ih, 0, 0
+        if cursor is not None:
+            left, top, vw, vh, sx, sy = _clip_off_cursor(left, top, vw, vh, cursor[0], cursor[1])
         pt_dst = layered_win.POINT(int(left), int(top))
-        size = layered_win.SIZE(qw, qh)
-        pt_src = layered_win.POINT(0, 0)
+        size = layered_win.SIZE(int(vw), int(vh))
+        pt_src = layered_win.POINT(int(sx), int(sy))
         blend = layered_win.BLENDFUNCTION(layered_win.AC_SRC_OVER, 0, 255, layered_win.AC_SRC_ALPHA)
         layered_win.user32.UpdateLayeredWindow(
             self._hwnd,
@@ -359,7 +378,7 @@ class Trail:
             self._top = False
             self._card_up = False
             return
-        self._raise_card(below, left, top, qw, qh)
+        self._raise_card(below, int(left), int(top), int(vw), int(vh))
 
     def _raise_card(self, below: int, left: int, top: int, w: int, h: int) -> None:
         if not self._hwnd:
@@ -396,6 +415,10 @@ class Trail:
             user32.DispatchMessageW(layered_win.ctypes.byref(msg))
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == layered_win.WM_NCHITTEST:
+            return layered_win.HTTRANSPARENT
+        if msg == layered_win.WM_MOUSEACTIVATE:
+            return MA_NOACTIVATE
         if msg in (layered_win.WM_CLOSE, layered_win.WM_DESTROY):
             return 0
         return layered_win.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -408,18 +431,61 @@ def _cursor() -> tuple[float, float]:
 
 
 def _pull_head(points: list[tuple[float, float]], gap: float) -> list[tuple[float, float]]:
-    """把头从窗口中心沿来路收回 gap 像素，箭头尖留给系统光标。"""
-    if len(points) < 2 or gap <= 0:
+    """沿来路剪掉靠近光标的 gap 像素。剩下的整段都离热点远，窗口矩形才盖不住点击。"""
+    if gap <= 0 or len(points) < 2:
         return points
+    acc = 0.0
+    i = len(points) - 1
+    while i > 0:
+        x1, y1 = points[i]
+        x0, y0 = points[i - 1]
+        seg = math.hypot(x1 - x0, y1 - y0)
+        if seg <= 0:
+            i -= 1
+            continue
+        if acc + seg >= gap:
+            need = gap - acc
+            f = need / seg
+            head = (x1 - (x1 - x0) * f, y1 - (y1 - y0) * f)
+            return list(points[:i]) + [head]
+        acc += seg
+        i -= 1
     hx, hy = points[-1]
     px, py = points[-2]
     vx, vy = hx - px, hy - py
     norm = math.hypot(vx, vy)
     if norm < 0.5:
-        return points
-    hx -= vx / norm * gap
-    hy -= vy / norm * gap
-    return points[:-1] + [(hx, hy)]
+        return [points[0]]
+    return [(hx - vx / norm * gap, hy - vy / norm * gap)]
+
+
+def _clip_off_cursor(
+    left: int, top: int, w: int, h: int, cx: float, cy: float, margin: int = 8,
+) -> tuple[int, int, int, int, int, int]:
+    """光标还在矩形里时，裁掉最近的一条边。返回新位置、大小，以及画面上的起点。"""
+    if w < 8 or h < 8:
+        return left, top, w, h, 0, 0
+    if cx < left - margin or cy < top - margin or cx >= left + w + margin or cy >= top + h + margin:
+        return left, top, w, h, 0, 0
+    options: list[tuple[int, int, int, int, int, int, int]] = []
+    keep = int(math.floor(cx - margin)) - left
+    if keep >= 8:
+        options.append((w - keep, left, top, keep, h, 0, 0))
+    new_left = int(math.ceil(cx + margin))
+    src_x = new_left - left
+    if src_x > 0 and w - src_x >= 8:
+        options.append((src_x, new_left, top, w - src_x, h, src_x, 0))
+    keep_h = int(math.floor(cy - margin)) - top
+    if keep_h >= 8:
+        options.append((h - keep_h, left, top, w, keep_h, 0, 0))
+    new_top = int(math.ceil(cy + margin))
+    src_y = new_top - top
+    if src_y > 0 and h - src_y >= 8:
+        options.append((src_y, left, new_top, w, h - src_y, 0, src_y))
+    if not options:
+        return left, top, w, h, 0, 0
+    _cut, nl, nt, nw, nh, sx, sy = min(options, key=lambda item: item[0])
+    return nl, nt, nw, nh, sx, sy
 
 
 def _overlaps(hwnd: int, left: int, top: int, w: int, h: int) -> bool:

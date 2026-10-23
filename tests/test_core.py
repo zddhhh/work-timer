@@ -1940,6 +1940,8 @@ class ActivityTests(unittest.TestCase):
         keys = [0] * 24
         clicks = [0] * 24
         wheels = [0] * 24
+        travel_h = [0] * 24
+        travel_h[12] = 64000
         keys[10] = 40
         clicks[15] = 12
         today = {
@@ -1952,20 +1954,27 @@ class ActivityTests(unittest.TestCase):
             "wheels_h": wheels,
             "hours": hours,
             "travel": 64000,
-            "travel_h": hours,
+            "travel_h": travel_h,
             "peak": (10, 11),
         }
         im, hits = activity_chart.render(today, [], enabled=True, this_week=True, view="today", style="line")
         self.assertEqual(im.size, (activity_chart.W, activity_chart.H))
         self.assertGreaterEqual(len(hits), 8)
-        self.assertTrue(any("鼠标约 1.0 米" in h["text"] or "键盘" in h["text"] for h in hits))
-        blues = 0
-        for y in range(70, im.height - 20):
+        self.assertTrue(any("约 1.0 米" in h["text"] for h in hits))
+        # 距离用自己的纵轴。若跟 6 万计数挤在一根轴上，40 次的键盘线会贴在底上。
+        top_blues = lilacs = 0
+        for y in range(80, 130):
             for x in range(30, im.width - 10, 2):
                 p = im.getpixel((x, y))
-                if p[2] > 180 and p[0] < 160:
-                    blues += 1
-        self.assertGreater(blues, 8)
+                if p[2] > 180 and p[0] < 160 and p[1] > 140:
+                    top_blues += 1
+                if p[2] > p[0] > p[1] and p[2] > 150 and p[0] > 120:
+                    lilacs += 1
+        self.assertGreater(top_blues, 4)
+        self.assertGreater(lilacs, 4)
+        bars, _bar_hits = activity_chart.render(today, [], enabled=True, this_week=True, view="today", style="bar")
+        self.assertEqual(bars.size, im.size)
+        self.assertTrue(any(bars.getpixel((x, y))[:3] == (198, 160, 255) for y in range(60, bars.height - 20) for x in range(40, bars.width - 10, 3)))
 
     def test_surface_ring_is_full_minus_window(self):
         import backdrop
