@@ -272,7 +272,27 @@ class WorklogDialogMixin:
             enabled=activity.enabled(self.cfg),
             this_week=days[0] <= today <= days[-1],
             focus=focus,
+            style=activity.chart_style(self.cfg),
         )
+        self._style_chart_buttons(ui)
+
+    def _style_chart_buttons(self, ui: dict) -> None:
+        cur = activity.chart_style(self.cfg)
+        for key, btn in (ui.get("chart_btns") or {}).items():
+            on = key == cur
+            btn.configure(
+                fg=_CARD_FG if on else _CARD_MUTED,
+                font=("Microsoft YaHei UI", 9, "bold" if on else "normal"),
+            )
+
+    def _set_chart_style(self, ui: dict, style: str) -> None:
+        if activity.chart_style(self.cfg) == style:
+            return
+        activity.set_chart_style(self.cfg, style)
+        store.save_config(self.cfg)
+        self._style_chart_buttons(ui)
+        ui["chart_sig"] = None
+        self._paint_activity_chart(ui)
 
     def _week_day_bounds(self, ui: dict, today: date) -> tuple[date, date]:
         """左边按天翻，只在当前选中的这一周里，而且不超过今天。"""
@@ -424,9 +444,19 @@ class WorklogDialogMixin:
 
         week_card = tk.Frame(charts, bg=_CARD_BG)
         week_card.grid(row=0, column=1, sticky="nsew", padx=(activity_chart.GAP // 2, 0))
+        week_head = tk.Frame(week_card, bg=_CARD_BG)
+        week_head.pack(fill="x", pady=(0, 4))
         tk.Label(
-            week_card, text="这周每天", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
-        ).pack(fill="x", pady=(0, 4))
+            week_head, text="这周每天", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11, "bold"), anchor="w",
+        ).pack(side="left")
+        chart_btns: dict[str, tk.Label] = {}
+        for key, label in (("bar", "柱状"), ("line", "折线")):
+            btn = tk.Label(
+                week_head, text=label, fg=_CARD_MUTED, bg=_CARD_BG,
+                font=("Microsoft YaHei UI", 9), cursor="hand2",
+            )
+            btn.pack(side="right", padx=(8, 0))
+            chart_btns[key] = btn
         week_lbl = tk.Label(week_card, bg=_CARD_BG, bd=0, highlightthickness=0)
         week_lbl.pack(anchor="w")
 
@@ -462,7 +492,7 @@ class WorklogDialogMixin:
         tool = tk.Frame(sheet, bg=_CARD_BG)
         tool.pack(fill="x", pady=(8, 0))
         tk.Checkbutton(
-            tool, text="记录键盘、鼠标次数", variable=act_on, command=toggle_act,
+            tool, text="记录键盘、鼠标次数和位移", variable=act_on, command=toggle_act,
             fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left")
@@ -549,7 +579,11 @@ class WorklogDialogMixin:
             "day_next": day_nav.get("next"),
             "keep_var": keep_var,
             "chart_sig": None,
+            "chart_btns": chart_btns,
         }
+        for key, btn in chart_btns.items():
+            btn.bind("<Button-1>", lambda _e, s=key: self._set_chart_style(ui, s))
+        self._style_chart_buttons(ui)
 
         def bind_chart(lbl: tk.Label, panel: str) -> None:
             def move(e) -> None:

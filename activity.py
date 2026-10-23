@@ -1,11 +1,23 @@
 """键鼠次数：只记敲了多少下、点了多少次，不记按了哪个键。"""
 from __future__ import annotations
 
+import math
+import sys
 from datetime import date, datetime, timedelta
 
 KEEP_PRESETS = (7, 30, 60, 90)
 DEFAULT_KEEP = 60
+# 停这么久才在卡片上说一声。中间停一下去看屏幕，不该闪出来。
+STILL_AFTER_S = 180
+# 鼠标传感器每英寸大概多少计数。系统不报这只鼠标的真实档位，米数按这一档估算。
+TRAVEL_CPI = 1600
 _KEY = "activity"
+# 64 位头 24 字节，32 位头 16 字节。RAWMOUSE 里 usFlags 后面对齐到 4，位移在其后 12、16 字节。
+_HDR = 16 if sys.maxsize <= 2**32 else 24
+_FLAG_AT = _HDR
+_DX_AT = _HDR + 12
+_DY_AT = _HDR + 16
+_MOUSE_ABS = 0x01
 
 
 def enabled(cfg: dict) -> bool:
@@ -111,6 +123,8 @@ def _clean_day(v: dict) -> dict:
         "keys_h": _hours24(v.get("keys_h")),
         "clicks_h": _hours24(v.get("clicks_h")),
         "wheels_h": _hours24(v.get("wheels_h")),
+        "travel": _n(v.get("travel")),
+        "travel_h": _hours24(v.get("travel_h")),
     }
 
 
@@ -132,9 +146,11 @@ def _day(cfg: dict, d: date) -> dict:
             "keys_h": [0] * 24,
             "clicks_h": [0] * 24,
             "wheels_h": [0] * 24,
+            "travel": 0,
+            "travel_h": [0] * 24,
         }
         days[k] = item
-    for key in ("hours", "keys_h", "clicks_h", "wheels_h"):
+    for key in ("hours", "keys_h", "clicks_h", "wheels_h", "travel_h"):
         if not isinstance(item.get(key), list) or len(item[key]) != 24:
             item[key] = [0] * 24
     return item
@@ -173,6 +189,8 @@ def counts(cfg: dict, d: date) -> dict:
             "keys_h": [0] * 24,
             "clicks_h": [0] * 24,
             "wheels_h": [0] * 24,
+            "travel": 0,
+            "travel_h": [0] * 24,
         }
     return _clean_day(item)
 
@@ -195,6 +213,82 @@ def parse_raw(buf: bytes) -> str | None:
             return "click"
         return None
     return None
+
+
+def mouse_delta(buf: bytes) -> tuple[int, int] | None:
+    """相对位移。绝对坐标（触摸板）和原地的包不算。"""
+    if len(buf) < _DY_AT + 4 or int.from_bytes(buf[0:4], "little") != 0:
+        return None
+    flags = int.from_bytes(buf[_FLAG_AT:_FLAG_AT + 2], "little")
+    if flags & _MOUSE_ABS:
+        return None
+    dx = int.from_bytes(buf[_DX_AT:_DX_AT + 4], "little", signed=True)
+    dy = int.from_bytes(buf[_DY_AT:_DY_AT + 4], "little", signed=True)
+    if dx == 0 and dy == 0:
+        return None
+    return dx, dy
+
+
+def add_travel(cfg: dict, dx: int, dy: int, now: datetime | None = None) -> bool:
+    """把这一小段滑行加进当天。单位是传感器计数，不是厘米。"""
+    if not enabled(cfg):
+        return False
+    steps = int(round(math.hypot(dx, dy)))
+    if steps <= 0:
+        return False
+    now = now or datetime.now()
+    item = _day(cfg, now.date())
+    item["travel"] = _n(item.get("travel")) + steps
+    h = now.hour
+    if 0 <= h < 24:
+        item["travel_h"][h] = _n(item["travel_h"][h]) + steps
+    return True
+
+
+def travel_meters(counts: int) -> float:
+    return _n(counts) * 0.0254 / TRAVEL_CPI
+
+
+def fmt_travel(counts: int) -> str:
+    """按 1600 计数/英寸估成一句长度。"""
+    meters = travel_meters(counts)
+    if counts <= 0 or meters < 0.001:
+        return "约 0"
+    if meters < 1:
+        cm = meters * 100
+        if cm < 10:
+            return f"约 {cm:.1f} 厘米"
+        return f"约 {round(cm)} 厘米"
+    if meters < 10:
+        return f"约 {meters:.1f} 米"
+    if meters < 1000:
+        return f"约 {round(meters)} 米"
+    return f"约 {meters / 1000:.1f} 公里"
+
+
+def chart_style(cfg: dict) -> str:
+    raw = cfg.get(_KEY)
+    style = raw.get("chart") if isinstance(raw, dict) else None
+    return style if style in ("line", "bar") else "line"
+
+
+def set_chart_style(cfg: dict, style: str) -> str:
+    book = _book(cfg)
+    book["chart"] = style if style in ("line", "bar") else "line"
+    return str(book["chart"])
+
+
+def still_phrase(idle_s: float) -> str | None:
+    """手停够久才有一句。不到门槛、或还在动，就什么都不说。"""
+    if idle_s < STILL_AFTER_S:
+        return None
+    minutes = int(idle_s // 60)
+    if minutes < 60:
+        return f"手停了 {minutes} 分钟"
+    hours, rest = divmod(minutes, 60)
+    if rest == 0:
+        return f"手停了 {hours} 小时"
+    return f"手停了 {hours} 小时 {rest} 分"
 
 
 def fmt_count(n: int) -> str:

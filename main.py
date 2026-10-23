@@ -734,8 +734,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         return bool(self._esc_hidden)
 
     def _on_raw_input(self, buf: bytes) -> None:
+        delta = activity.mouse_delta(buf)
         kind = activity.parse_raw(buf)
-        if kind is None:
+        if delta is None and kind is None:
             return
         now = datetime.now()
         set_today = str(self.cfg.get("start_date") or "") == self._today()
@@ -744,7 +745,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         day = worklog.get_day(self.cfg, now.date())
         if day and (day.get("closed") or day.get("manual")):
             return
-        if activity.note(self.cfg, kind, now):
+        if delta is not None and activity.add_travel(self.cfg, delta[0], delta[1], now):
+            self._activity_dirty = True
+        if kind and activity.note(self.cfg, kind, now):
             self._activity_dirty = True
 
     def _maybe_skin_interact(self, lx: int, ly: int) -> None:
@@ -1673,6 +1676,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             now = datetime.now()
             mode = self._display_mode()
             tally = self._tally_for_paint()
+            still = activity.still_phrase(worklog.idle_seconds()) if tally is not None else None
             base = self._theme()
             w, h = self._win_w, self._win_h
             phase = time.monotonic()
@@ -1799,6 +1803,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._present_hz = hz
             if tally is not None:
                 key = f"{key}-y{tally[0]}-{tally[1]}-{tally[2]}"
+            if still:
+                key = f"{key}-s{still}"
 
             if key == self._last_key:
                 return
@@ -1843,6 +1849,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     meow_drinking=drinking,
                     ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
                     tally=tally,
+                    still=None,
                     bg_hz=bg_hz,
                 )
                 kinetic.paint(
@@ -1885,6 +1892,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     meow_drinking=drinking,
                     ghost_ptr=self._ghost_ptr if theme.kind == "ghost" else None,
                     tally=tally,
+                    still=still,
                     bg_hz=bg_hz,
                 )
                 chev = theme.outline if theme.outline[3] > 20 else (255, 255, 255, 70)

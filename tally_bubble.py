@@ -167,14 +167,42 @@ def fit_row(counts: tuple[int, int, int], room: int, *, light: bool) -> Image.Im
     return None
 
 
+def paint_caption(img: Image.Image, left: int, right: int, y: int, text: str, *, light: bool) -> int:
+    """次数下面的一行浅字。返回占掉的高度，放不下就是 0。"""
+    text = (text or "").strip()
+    room = int(right) - int(left)
+    if not text or room < 36:
+        return 0
+    k = _SS
+    font = _font(max(8, int(round(10 * k))))
+    ink = (78, 86, 102, 220) if light else (198, 208, 220, 210)
+    shade = (255, 255, 255, 150) if light else (0, 0, 0, 130)
+    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    tw = int(probe.textlength(text, font=font))
+    box = probe.textbbox((0, 0), text, font=font)
+    th = max(1, box[3] - box[1])
+    im = Image.new("RGBA", (tw + 2 * k, th + 2 * k), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    ty = -box[1]
+    d.text((k, ty + k), text, font=font, fill=shade)
+    d.text((0, ty), text, font=font, fill=ink)
+    out = im.resize((max(1, im.width // _SS), max(1, im.height // _SS)), Image.Resampling.LANCZOS)
+    if out.width > room:
+        out = out.resize((room, max(1, int(out.height * room / out.width))), Image.Resampling.LANCZOS)
+    x = int(left) + max(0, (room - out.width) // 2)
+    img.alpha_composite(out, (x, int(y)))
+    return out.height + 1
+
+
 def paint_top(
     img: Image.Image,
     box: tuple[int, int, int, int],
     counts: tuple[int, int, int],
     *,
     light: bool,
+    still: str | None = None,
 ) -> int:
-    """画在卡片内部顶边，居中。返回标题要下移的像素。"""
+    """画在卡片内部顶边，居中。手停着时在次数下面再加一行。返回标题要下移的像素。"""
     x0, y0, x1, _y1 = (int(v) for v in box)
     row = fit_row(counts, x1 - x0 - 6, light=light)
     if row is None:
@@ -182,7 +210,10 @@ def paint_top(
     x = x0 + max(0, (x1 - x0 - row.width) // 2)
     y = y0 + 2
     img.alpha_composite(row, (x, y))
-    return row.height + 2
+    used = row.height + 2
+    if still:
+        used += paint_caption(img, x0, x1, y + row.height, still, light=light)
+    return used
 
 
 def place(card_x: int, card_y: int, card_w: int, card_h: int, bw: int, bh: int,

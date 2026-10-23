@@ -104,6 +104,8 @@ def today_pack(cfg: dict, d: date) -> dict:
         "clicks_h": clicks_h,
         "wheels_h": wheels_h,
         "hours": c["hours"],
+        "travel": c["travel"],
+        "travel_h": c["travel_h"],
         "peak": activity.peak_hours(c["hours"]),
     }
 
@@ -120,6 +122,7 @@ def week_pack(cfg: dict, days: list[date], today: date) -> list[dict]:
                 "keys": c["keys"],
                 "clicks": c["clicks"],
                 "wheels": c["wheels"],
+                "travel": c["travel"],
                 "combined": sum(c["hours"]) if mode == "combined" else 0,
                 "today": d == today,
                 "weekend": d.weekday() >= 5,
@@ -141,21 +144,24 @@ def week_totals(days: list[dict]) -> tuple[int, int, int]:
     return keys, clicks, wheels
 
 
-def signature(today: dict, days: list[dict], *, enabled: bool, this_week: bool, view: str = "today") -> tuple:
+def signature(today: dict, days: list[dict], *, enabled: bool, this_week: bool, view: str = "today", style: str = "line") -> tuple:
     return (
         enabled,
         this_week,
         view,
+        style,
         today["mode"],
         today["keys"],
         today["clicks"],
         today["wheels"],
+        today.get("travel", 0),
         tuple(today["keys_h"]),
         tuple(today["clicks_h"]),
         tuple(today["wheels_h"]),
+        tuple(today.get("travel_h") or ()),
         tuple(today["hours"]),
         tuple(
-            (row["keys"], row["clicks"], row["wheels"], row.get("combined", 0), row["today"], row.get("mode"))
+            (row["keys"], row["clicks"], row["wheels"], row.get("travel", 0), row.get("combined", 0), row["today"], row.get("mode"))
             for row in days
         ),
     )
@@ -193,14 +199,23 @@ def _peak_caption(today: dict) -> str:
     return f"最勤 {a}–{b} 点"
 
 
+def _with_travel(text: str, counts: int) -> str:
+    if activity.travel_meters(counts) < 0.001:
+        return text
+    bit = "鼠标" + activity.fmt_travel(counts)
+    return f"{text}    {bit}" if text else bit
+
+
 def _hour_text(hour: int, today: dict) -> str:
     if today["mode"] == "combined":
-        return f"{hour}点    操作 {activity.fmt_count(today['hours'][hour])}"
-    return (
-        f"{hour}点    键盘 {activity.fmt_count(today['keys_h'][hour])}"
-        f"    鼠标 {activity.fmt_count(today['clicks_h'][hour])}"
-        f"    滚轮 {activity.fmt_count(today['wheels_h'][hour])}"
-    )
+        text = f"{hour}点    操作 {activity.fmt_count(today['hours'][hour])}"
+    else:
+        text = (
+            f"{hour}点    键盘 {activity.fmt_count(today['keys_h'][hour])}"
+            f"    鼠标 {activity.fmt_count(today['clicks_h'][hour])}"
+            f"    滚轮 {activity.fmt_count(today['wheels_h'][hour])}"
+        )
+    return _with_travel(text, (today.get("travel_h") or [0] * 24)[hour])
 
 
 def _paint_totals(dr: ImageDraw.ImageDraw, w: int, items: tuple) -> None:
@@ -232,14 +247,16 @@ def _day_text(row: dict) -> str:
     if row.get("future"):
         return f"{head}    还没到"
     if row.get("mode") == "combined":
-        return f"{head}    {activity.fmt_count(row.get('combined') or 0)}"
-    if row.get("mode") == "empty":
-        return f"{head}    还没记下"
-    return (
-        f"{head}    键盘 {activity.fmt_count(row['keys'])}"
-        f"    鼠标 {activity.fmt_count(row['clicks'])}"
-        f"    滚轮 {activity.fmt_count(row['wheels'])}"
-    )
+        text = f"{head}    {activity.fmt_count(row.get('combined') or 0)}"
+    elif row.get("mode") == "empty":
+        text = f"{head}    还没记下"
+    else:
+        text = (
+            f"{head}    键盘 {activity.fmt_count(row['keys'])}"
+            f"    鼠标 {activity.fmt_count(row['clicks'])}"
+            f"    滚轮 {activity.fmt_count(row['wheels'])}"
+        )
+    return _with_travel(text, int(row.get("travel") or 0))
 
 
 def _busiest_caption(days: list[dict]) -> str:
@@ -263,12 +280,51 @@ def _busiest_caption(days: list[dict]) -> str:
     return f"最勤 周{_WD[d.weekday()]}"
 
 
+def _stroke(dr: ImageDraw.ImageDraw, pts: list[tuple[float, float]], color) -> None:
+    if not pts:
+        return
+    if len(pts) == 1:
+        x, y = pts[0]
+        dr.ellipse((x - 2, y - 2, x + 2, y + 2), fill=color)
+        return
+    dr.line([(int(x), int(y)) for x, y in pts], fill=color, width=2)
+    for x, y in pts:
+        dr.ellipse((x - 2, y - 2, x + 2, y + 2), fill=color)
+
+
+def _plot_lines(dr: ImageDraw.ImageDraw, xs: list[float], series: list[tuple[list[int], tuple]], top: int, base: int) -> int:
+    """几条线共用一根纵轴。全是 0 的不画。返回纵轴上限，方便标数字。"""
+    live = [(vals, color) for vals, color in series if any(vals)]
+    if not xs or not live:
+        return 0
+    vmax = max(max(vals) for vals, _ in live)
+    if vmax <= 0:
+        return 0
+    span = max(1, base - top)
+    for vals, color in live:
+        pts = []
+        for x, v in zip(xs, vals):
+            y = base - (v / vmax) * span
+            pts.append((x, y))
+        _stroke(dr, pts, color)
+    return vmax
+
+
+def _legend(dr: ImageDraw.ImageDraw, x: int, y: int, items: tuple) -> None:
+    cx = x
+    for name, color in items:
+        dr.line((cx, y, cx + 14, y), fill=color, width=2)
+        _text(dr, (cx + 18, y), name, size=11, fill=color, anchor="lm")
+        cx += 18 + int(dr.textlength(name, font=_font(11))) + 14
+
+
 def _render_week(
     days: list[dict],
     *,
     enabled: bool,
     w: int,
     h: int,
+    style: str = "line",
 ) -> tuple[Image.Image, list[dict]]:
     im = Image.new("RGBA", (w, h), _PAGE)
     dr = ImageDraw.Draw(im)
@@ -281,7 +337,8 @@ def _render_week(
     inset = 14
     keys, clicks, wheels = week_totals(days)
     _paint_totals(dr, w, (("键盘", keys, _KEY), ("鼠标", clicks, _CLICK), ("滚轮", wheels, _WHEEL)))
-    _text(dr, (inset, 54), _busiest_caption(days), size=11, fill=_MUTED, anchor="lm")
+    travel = sum(int(r.get("travel") or 0) for r in days if not r.get("future"))
+    _text(dr, (inset, 54), _with_travel(_busiest_caption(days), travel), size=11, fill=_MUTED, anchor="lm")
 
     plot_l, plot_r = 16, w - inset
     plot_top, base = 68, h - 52
@@ -300,7 +357,7 @@ def _render_week(
     for i, row in enumerate(days):
         gx0 = plot_l + i * group_w
         gx1 = gx0 + group_w
-        if not row.get("future") and row.get("mode") != "empty" and vmax > 0:
+        if style != "line" and not row.get("future") and row.get("mode") != "empty" and vmax > 0:
             if row.get("mode") == "combined":
                 series = ((int(row.get("combined") or 0), _COMBINED),)
             else:
@@ -334,6 +391,40 @@ def _render_week(
                 "date": row["date"].isoformat(),
             }
         )
+    if style == "line":
+        xs: list[float] = []
+        ks: list[int] = []
+        cs: list[int] = []
+        ws: list[int] = []
+        combos: list[int] = []
+        for i, row in enumerate(days):
+            if row.get("future"):
+                continue
+            gx0 = plot_l + i * group_w
+            xs.append(gx0 + group_w / 2)
+            if row.get("mode") == "combined":
+                ks.append(0)
+                cs.append(0)
+                ws.append(0)
+                combos.append(int(row.get("combined") or 0))
+            elif row.get("mode") == "empty":
+                ks.append(0)
+                cs.append(0)
+                ws.append(0)
+                combos.append(0)
+            else:
+                ks.append(int(row["keys"]))
+                cs.append(int(row["clicks"]))
+                ws.append(int(row["wheels"]))
+                combos.append(0)
+        top = plot_top + 4
+        ymax = _plot_lines(
+            dr, xs,
+            [(ks, _KEY), (cs, _CLICK), (ws, _WHEEL), (combos, _COMBINED)],
+            top, base - 2,
+        )
+        if ymax:
+            _text(dr, (plot_l + 8, top), activity.fmt_count(ymax), size=10, fill=_DIM, anchor="lt")
     _paint_readout(im, WEEK_IDLE)
     return im, hits
 
@@ -345,11 +436,12 @@ def render(
     enabled: bool,
     this_week: bool,
     view: str = "today",
+    style: str = "line",
     w: int = W,
     h: int = H,
 ) -> tuple[Image.Image, list[dict]]:
     if view == "week":
-        return _render_week(days, enabled=enabled, w=w, h=h)
+        return _render_week(days, enabled=enabled, w=w, h=h, style=style)
     im = Image.new("RGBA", (w, h), _PAGE)
     dr = ImageDraw.Draw(im)
     _round(dr, (0, 0, w - 1, h - 1), _PANEL, radius=12)
@@ -359,16 +451,20 @@ def render(
         return im, hits
 
     inset = 14
-    plot_l, plot_r = 46, w - inset
+    plot_l, plot_r = 36, w - inset
     _paint_totals(dr, w, (("键盘", today["keys"], _KEY), ("鼠标", today["clicks"], _CLICK), ("滚轮", today["wheels"], _WHEEL)))
 
     cap = "这天还没记到次数" if today["mode"] == "empty" else _peak_caption(today)
+    cap = _with_travel(cap, int(today.get("travel") or 0))
     _text(dr, (inset, 54), cap, size=11, fill=_MUTED, anchor="lm")
 
     lo, hi = visible_span(today["hours"], today["keys_h"], today["clicks_h"], today["wheels_h"])
     n = hi - lo + 1
     slot = (plot_r - plot_l) / n
-    bar_w = max(6, int(slot * 0.46))
+
+    def x_center(hour: int) -> float:
+        return plot_l + (hour - lo + 0.5) * slot
+
     if today["mode"] == "combined":
         rows = (("操作", today["hours"], _COMBINED),)
     else:
@@ -377,32 +473,45 @@ def render(
             ("鼠标", today["clicks_h"], _CLICK),
             ("滚轮", today["wheels_h"], _WHEEL),
         )
-    rows_top = 68
-    room = max(24, (h - 30 - 14 - rows_top) // max(1, len(rows)))
-    row_h = room
-    bar_room = max(16, room - 8)
-
-    def x_center(hour: int) -> float:
-        return plot_l + (hour - lo + 0.5) * slot
-
-    for i, (name, series, color) in enumerate(rows):
-        top = rows_top + i * row_h
-        base = top + bar_room
-        vmax = max(series[lo : hi + 1] or [0])
-        _text(dr, (inset, (top + base) / 2), name, size=11, fill=color, anchor="lm")
+    if style == "line":
+        rows_top = 86
+        _legend(dr, inset, 72, tuple((name, color) for name, _series, color in rows))
+        base = h - 46
         dr.line((plot_l, base, plot_r, base), fill=_LINE, width=1)
-        if vmax <= 0:
-            continue
-        for hour in range(lo, hi + 1):
-            v = series[hour]
-            if not v:
-                continue
-            cx = x_center(hour)
-            x0 = int(cx - bar_w / 2)
-            y0 = int(base - (v / vmax) * bar_room)
-            _bar(dr, (x0, y0, x0 + bar_w, base), color, radius=2)
+        series = [([row[hour] for hour in range(lo, hi + 1)], color) for _name, row, color in rows]
+        ymax = _plot_lines(dr, [x_center(hour) for hour in range(lo, hi + 1)], series, rows_top, base)
+        if ymax:
+            _text(dr, (4, rows_top), activity.fmt_count(ymax), size=10, fill=_DIM, anchor="lt")
+        axis_y = base + 4
+    else:
+        plot_l = 46
+        slot = (plot_r - plot_l) / n
 
-    axis_y = rows_top + len(rows) * row_h + 2
+        def x_center_bar(hour: int) -> float:
+            return plot_l + (hour - lo + 0.5) * slot
+
+        bar_w = max(6, int(slot * 0.46))
+        rows_top = 68
+        room = max(24, (h - 30 - 14 - rows_top) // max(1, len(rows)))
+        bar_room = max(16, room - 8)
+        for i, (name, series_row, color) in enumerate(rows):
+            top = rows_top + i * room
+            base = top + bar_room
+            vmax = max(series_row[lo : hi + 1] or [0])
+            _text(dr, (inset, (top + base) / 2), name, size=11, fill=color, anchor="lm")
+            dr.line((plot_l, base, plot_r, base), fill=_LINE, width=1)
+            if vmax <= 0:
+                continue
+            for hour in range(lo, hi + 1):
+                v = series_row[hour]
+                if not v:
+                    continue
+                cx = x_center_bar(hour)
+                x0 = int(cx - bar_w / 2)
+                y0 = int(base - (v / vmax) * bar_room)
+                _bar(dr, (x0, y0, x0 + bar_w, base), color, radius=2)
+        x_center = x_center_bar
+        axis_y = rows_top + len(rows) * room + 2
     for hour in range(lo, hi + 1):
         if hour in (8, 10, 12, 14, 16, 18):
             _text(dr, (x_center(hour), axis_y), str(hour), size=10, fill=_DIM, anchor="mt")
@@ -431,15 +540,16 @@ def paint_into(
     enabled: bool,
     this_week: bool,
     focus: date | None = None,
+    style: str = "line",
 ) -> None:
     """左边看 focus 这一天，右边看这一周。尺寸相同。数据没变就跳过。"""
     pack = today_pack(cfg, focus or today)
     week = week_pack(cfg, days, today)
-    sig = signature(pack, week, enabled=enabled, this_week=this_week, view="both")
+    sig = signature(pack, week, enabled=enabled, this_week=this_week, view="both", style=style)
     if ui.get("chart_sig") == sig and ui.get("today_base") is not None and ui.get("week_base") is not None:
         return
-    today_im, today_hits = render(pack, week, enabled=enabled, this_week=this_week, view="today")
-    week_im, week_hits = render(pack, week, enabled=enabled, this_week=this_week, view="week")
+    today_im, today_hits = render(pack, week, enabled=enabled, this_week=this_week, view="today", style=style)
+    week_im, week_hits = render(pack, week, enabled=enabled, this_week=this_week, view="week", style=style)
     ui["today_base"] = today_im
     ui["today_hits"] = today_hits
     ui["week_base"] = week_im

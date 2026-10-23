@@ -1880,6 +1880,93 @@ class ActivityTests(unittest.TestCase):
         self.assertLessEqual(box[2], 142)
         self.assertGreaterEqual(box[0], 2)
 
+    def test_still_phrase_waits_three_minutes(self):
+        import activity
+
+        self.assertIsNone(activity.still_phrase(179))
+        self.assertEqual(activity.still_phrase(180), "手停了 3 分钟")
+        self.assertEqual(activity.still_phrase(18 * 60 + 40), "手停了 18 分钟")
+        self.assertEqual(activity.still_phrase(60 * 60), "手停了 1 小时")
+        self.assertEqual(activity.still_phrase(72 * 60 + 10), "手停了 1 小时 12 分")
+
+    def test_still_line_sits_under_the_counts(self):
+        import tally_bubble
+
+        plain = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        with_line = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        box = (2, 4, 220, 88)
+        bare = tally_bubble.paint_top(plain, box, (1284, 86, 12), light=False)
+        full = tally_bubble.paint_top(with_line, box, (1284, 86, 12), light=False, still="手停了 18 分钟")
+        self.assertGreater(full, bare)
+        self.assertLessEqual(full, 40)
+        bb = with_line.getbbox()
+        self.assertIsNotNone(bb)
+        self.assertLessEqual(bb[3], 4 + full)
+        hit = False
+        for yy in range(min(with_line.height - 1, bare + 2), min(with_line.height, 4 + full)):
+            for xx in range(16, 200):
+                if with_line.getpixel((xx, yy))[3] > 40:
+                    hit = True
+                    break
+            if hit:
+                break
+        self.assertTrue(hit)
+
+    def test_mouse_travel_is_relative_and_skips_absolute(self):
+        import activity
+
+        buf = bytearray(64)
+        buf[activity._DX_AT:activity._DX_AT + 4] = (3).to_bytes(4, "little", signed=True)
+        buf[activity._DY_AT:activity._DY_AT + 4] = (-4).to_bytes(4, "little", signed=True)
+        self.assertEqual(activity.mouse_delta(bytes(buf)), (3, -4))
+        buf[activity._FLAG_AT] = 1
+        self.assertIsNone(activity.mouse_delta(bytes(buf)))
+        cfg = {}
+        self.assertFalse(activity.add_travel(cfg, 3, -4, datetime(2026, 10, 19, 10, 0)))
+        activity.set_enabled(cfg, True)
+        self.assertTrue(activity.add_travel(cfg, 3, -4, datetime(2026, 10, 19, 10, 0)))
+        self.assertEqual(activity.counts(cfg, date(2026, 10, 19))["travel"], 5)
+        self.assertEqual(activity.counts(cfg, date(2026, 10, 19))["travel_h"][10], 5)
+        self.assertEqual(activity.fmt_travel(1600), "约 2.5 厘米")
+        self.assertEqual(activity.fmt_travel(64000), "约 1.0 米")
+        self.assertEqual(activity.chart_style({}), "line")
+        self.assertEqual(activity.set_chart_style(cfg, "bar"), "bar")
+        self.assertEqual(activity.chart_style(cfg), "bar")
+
+    def test_line_chart_draws_the_hour_shape(self):
+        import activity_chart
+
+        hours = [0] * 24
+        keys = [0] * 24
+        clicks = [0] * 24
+        wheels = [0] * 24
+        keys[10] = 40
+        clicks[15] = 12
+        today = {
+            "mode": "split",
+            "keys": 40,
+            "clicks": 12,
+            "wheels": 0,
+            "keys_h": keys,
+            "clicks_h": clicks,
+            "wheels_h": wheels,
+            "hours": hours,
+            "travel": 64000,
+            "travel_h": hours,
+            "peak": (10, 11),
+        }
+        im, hits = activity_chart.render(today, [], enabled=True, this_week=True, view="today", style="line")
+        self.assertEqual(im.size, (activity_chart.W, activity_chart.H))
+        self.assertGreaterEqual(len(hits), 8)
+        self.assertTrue(any("鼠标约 1.0 米" in h["text"] or "键盘" in h["text"] for h in hits))
+        blues = 0
+        for y in range(70, im.height - 20):
+            for x in range(30, im.width - 10, 2):
+                p = im.getpixel((x, y))
+                if p[2] > 180 and p[0] < 160:
+                    blues += 1
+        self.assertGreater(blues, 8)
+
     def test_surface_ring_is_full_minus_window(self):
         import backdrop
 

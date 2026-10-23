@@ -667,6 +667,7 @@ def paint_card(
     meow_drinking: bool = False,
     ghost_ptr: tuple[int, int] | None = None,
     tally: tuple[int, int, int] | None = None,
+    still: str | None = None,
     bg_hz: float = 0.0,
 ) -> None:
     """bg_hz：皮肤底图自己的帧率。翻牌那几帧是 60Hz，底图按这个频率复用，只重画字。"""
@@ -809,7 +810,7 @@ def paint_card(
     elif tally is not None:
         # 次数贴在卡片内部顶边。标题和倒计时下移，避免叠在一起。
         shift = tally_bubble.paint_top(
-            img, (2, box[1], max(50, text_w - 2), box[3]), tally, light=ctx.card_light,
+            img, (2, box[1], max(50, text_w - 2), box[3]), tally, light=ctx.card_light, still=still,
         )
         if shift:
             title_y += shift
@@ -833,6 +834,14 @@ def paint_card(
             d, (title_x, title_y), title, font_title, title_fill,
             ghost=ghost, compact=compact_text,
         )
+    if meow_lay is not None and still:
+        cap_y = int(title_y + title_h + 1)
+        cap = tally_bubble.paint_caption(img, 4, max(40, text_w - 4), cap_y, still, light=ctx.card_light)
+        if cap and show_flip:
+            row_y += cap
+            row_h = max(16, row_h - cap)
+        elif cap and big and big_y < cap_y + cap:
+            big_y = cap_y + cap
     if show_flip:
         fx.paint_flip_row(
             img,
