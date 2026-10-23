@@ -2,7 +2,7 @@
 
 cfg["worklog"] = {"YYYY-MM-DD": {"in": 分钟, "out": 分钟, "target": 分钟, "src": "flex|seen",
                                  "closed": bool, "manual": bool}}
-分钟 = 当天 0 点起的分钟数。
+分钟 = 当天 0 点起的分钟数。来和走按实际上机：30 秒里凑满 3 个不同的秒才算。每天都记，含周末。
 """
 from __future__ import annotations
 
@@ -15,17 +15,9 @@ import activity
 import flex_time
 
 IDLE_LIMIT_SEC = 300
-# 已过应下班点、且距上次活动超过这么久，视为已下班；之后的键鼠活动（如晚上在家用电脑）不再算进当天。
-# 只有最后活动落在应下班前 CLOSE_LEAD_MIN 内（或之后）才封账，下午开长会回来继续干不会被截断。
-CLOSE_GAP_MIN = 90
-CLOSE_LEAD_MIN = 60
-# 离开上次「还在干活」超过这么久，再碰一下鼠标不算回来，离开时间先停住。
-AWAY_GAP_MIN = 15
-# 安静之后要连续这么久都有输入，才把离开时间往后挪。中间停超过 RESUME_IDLE_SEC 就重新算。
-RESUME_MIN = 2
-RESUME_IDLE_SEC = 20
-# 采样把「离开」写成轮询时刻时，最多偏这么多分钟，下一笔用真实最后输入收回来。
-SNAP_MIN = IDLE_LIMIT_SEC // 60
+# 连续这么多秒里，有这么多个不同的秒出现过键鼠，才算一段真实上机。碰一下通常只有 1 秒。
+BURST_WINDOW_SEC = 30
+BURST_NEED = 3
 WEEKDAY_CN = "一二三四五六日"
 
 
@@ -155,23 +147,88 @@ def get_day(cfg: dict, d: date) -> dict | None:
     return item if isinstance(item, dict) else None
 
 
-def should_track(now: datetime, *, has_target: bool, set_today: bool) -> bool:
-    """周末默认不记（固定下班「记住」会让周末也有倒计时）；当天手动设过下班则照记。"""
-    if not has_target:
+def should_track(now: datetime, *, has_target: bool = True, set_today: bool = False) -> bool:
+    """每天都记，含周末。倒计时有没有设下班，不影响账本。"""
+    return True
+
+
+def _sod(when: datetime) -> int:
+    return when.hour * 3600 + when.minute * 60 + when.second
+
+
+def note_second(state: dict | None, when: datetime) -> tuple[dict, datetime | None]:
+    """记下这一秒有过键鼠。换天就另起。
+
+    最近 BURST_WINDOW_SEC 秒里凑满 BURST_NEED 个不同的秒，返回这段最早的那一秒。
+    凑不满返回 None。同一秒重复出现只算一次。
+    """
+    key = when.date().isoformat()
+    sec = _sod(when)
+    if state is None or state.get("day") != key or not isinstance(state.get("secs"), list):
+        state = {"day": key, "secs": []}
+    secs = [s for s in state["secs"] if isinstance(s, int) and 0 <= sec - s <= BURST_WINDOW_SEC]
+    if sec not in secs:
+        secs.append(sec)
+    secs.sort()
+    state["secs"] = secs
+    if len(secs) < BURST_NEED:
+        return state, None
+    start = datetime.combine(when.date(), datetime.min.time()) + timedelta(seconds=secs[0])
+    return state, start
+
+
+def touch_target(cfg: dict, day: date, target_hm: tuple[int, int] | None) -> bool:
+    """已有的一天跟上应下班。还没记下上机、或手改、已封上的日子不动。"""
+    if target_hm is None:
         return False
-    return now.weekday() < 5 or set_today
+    item = get_day(cfg, day)
+    if not isinstance(item, dict) or item.get("manual") or item.get("closed"):
+        return False
+    target = int(target_hm[0]) * 60 + int(target_hm[1])
+    if item.get("target") == target:
+        return False
+    item["target"] = target
+    return True
 
 
-def record_arrival(cfg: dict, now: datetime, hm: tuple[int, int]) -> None:
-    """弹性打卡：到岗以用户填的时刻为准，覆盖首次使用时刻。"""
-    item = _days(cfg).setdefault(_key(now.date()), {})
-    item["in"] = int(hm[0]) * 60 + int(hm[1])
-    item["src"] = "flex"
-    item.pop("manual", None)
-    item.pop("closed", None)
-    out = item.get("out")
-    if isinstance(out, int) and out < item["in"]:
-        item.pop("out", None)
+def mark_span(
+    cfg: dict,
+    start: datetime,
+    end: datetime,
+    *,
+    target_hm: tuple[int, int] | None = None,
+) -> bool:
+    """一段已凑满的上机。来只写第一次的起点，走改到这次的最后一秒。"""
+    if start.date() != end.date():
+        return False
+    book = _days(cfg)
+    key = _key(end.date())
+    item = book.get(key)
+    if isinstance(item, dict) and (item.get("manual") or item.get("closed")):
+        return False
+    in_min = start.hour * 60 + start.minute
+    out_min = end.hour * 60 + end.minute
+    if not (0 <= in_min < 24 * 60 and 0 <= out_min < 24 * 60) or out_min < in_min:
+        return False
+    changed = False
+    if not isinstance(item, dict):
+        item = {"in": in_min, "out": out_min, "src": "seen"}
+        book[key] = item
+        changed = True
+    else:
+        if _as_min(item.get("in")) is None:
+            item["in"] = in_min
+            item["src"] = "seen"
+            changed = True
+        if _as_min(item.get("out")) is None or out_min > item["out"]:
+            item["out"] = out_min
+            changed = True
+    if target_hm is not None:
+        target = int(target_hm[0]) * 60 + int(target_hm[1])
+        if item.get("target") != target:
+            item["target"] = target
+            changed = True
+    return changed
 
 
 def last_active_minute(now: datetime, idle_sec: float) -> int | None:
@@ -182,91 +239,6 @@ def last_active_minute(now: datetime, idle_sec: float) -> int | None:
     if last.date() != now.date():
         return None
     return last.hour * 60 + last.minute
-
-
-def touch_presence(state: dict | None, day: date, minute: int) -> dict:
-    """记下这一轮连续活动的起止分钟。换天或时间倒退就另起一轮。"""
-    key = day.isoformat()
-    if state is None or state.get("day") != key or not isinstance(state.get("start"), int) or minute < state["start"]:
-        return {"day": key, "start": minute, "last": minute}
-    state["last"] = minute
-    return state
-
-
-def presence_confirms(state: dict | None) -> bool:
-    """连续活动盖住了 RESUME_MIN 分钟，才算真的回来了。"""
-    if not state:
-        return False
-    start, last = state.get("start"), state.get("last")
-    if not isinstance(start, int) or not isinstance(last, int):
-        return False
-    return last - start >= RESUME_MIN
-
-
-def heartbeat(
-    cfg: dict,
-    now: datetime,
-    *,
-    active: bool,
-    target_hm: tuple[int, int] | None,
-    activity_min: int | None = None,
-    confirm: bool = False,
-) -> bool:
-    """离开时刻记最后一次键鼠所在的分钟，不记轮询时刻。
-
-    空闲时只更新应下班、必要时封账，不把「现在」写成离开。
-    离上次离开已超过 AWAY_GAP_MIN 时，confirm 不为真就不改离开时间。
-    activity_min 缺省时用 now 的分钟（测试）。返回是否改了账本。
-    """
-    book = _days(cfg)
-    item = book.get(_key(now.date()))
-    if isinstance(item, dict) and (item.get("manual") or item.get("closed")):
-        return False
-    now_min = now.hour * 60 + now.minute
-    mark = now_min if activity_min is None else activity_min
-    if isinstance(mark, bool) or not isinstance(mark, int) or not (0 <= mark < 24 * 60):
-        mark = now_min
-    target = None if target_hm is None else int(target_hm[0]) * 60 + int(target_hm[1])
-    changed = False
-    if not isinstance(item, dict):
-        if not active:
-            return False
-        item = {"in": mark, "src": "seen"}
-        book[_key(now.date())] = item
-        changed = True
-    if target is not None and item.get("target") != target:
-        item["target"] = target
-        changed = True
-    last = _as_min(item.get("out"))
-    tgt = _as_min(item.get("target"))
-    if (
-        last is not None
-        and tgt is not None
-        and now_min >= tgt
-        and last >= tgt - CLOSE_LEAD_MIN
-        and now_min - last > CLOSE_GAP_MIN
-    ):
-        item["closed"] = True
-        return True
-    if not active:
-        return changed
-    if last is not None and mark - last > AWAY_GAP_MIN and not confirm:
-        return changed
-    if "in" not in item:
-        item["in"] = mark
-        item["src"] = "seen"
-        changed = True
-    arrived = _as_min(item.get("in"))
-    if arrived is None or mark < arrived:
-        return changed
-    if last is None or mark > last:
-        item["out"] = mark
-        changed = True
-    elif 0 < last - mark <= SNAP_MIN:
-        # 上一笔把离开写成了采样时刻，收回真实最后输入
-        item["out"] = mark
-        changed = True
-    return changed
 
 
 def set_manual(cfg: dict, d: date, in_text: str, out_text: str) -> str | None:
@@ -583,7 +555,7 @@ def to_csv(cfg: dict, dates: list[date]) -> str:
         r = row(cfg, d)
         if r["in"] is None and r["out"] is None:
             continue
-        src = "手改" if r["manual"] else ("弹性打卡" if r["src"] == "flex" else "首次使用")
+        src = "手改" if r["manual"] else ("弹性打卡" if r["src"] == "flex" else "自动")
         w.writerow(
             [
                 _key(d),

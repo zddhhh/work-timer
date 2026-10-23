@@ -208,7 +208,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._worklog_at = 0.0
         self._worklog_dirty = False
         self._worklog_save_at = 0.0
-        self._presence: dict | None = None
+        self._burst: dict | None = None
         self._activity_dirty = False
         self._ui_prewarmed = False
         self._worklog_ui: dict | None = None
@@ -740,9 +740,6 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         if delta is None and kind is None:
             return
         now = datetime.now()
-        set_today = str(self.cfg.get("start_date") or "") == self._today()
-        if not worklog.should_track(now, has_target=self._has_target(), set_today=set_today):
-            return
         day = worklog.get_day(self.cfg, now.date())
         if day and (day.get("closed") or day.get("manual")):
             return
@@ -1079,8 +1076,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._clear_session_stale()
         if mode == "flex":
             self.cfg["start_h"], self.cfg["start_m"] = hm
-            # 弹性每天重填到岗，不沿用固定下班点
-            worklog.record_arrival(self.cfg, datetime.now(), hm)
+            # 弹性只推算倒计时。账本的来和走看实际上机，不采用这里填的钟点。
         else:
             self.cfg["off_h"], self.cfg["off_m"] = hm
             self.cfg["remember_offwork"] = bool(remember)
@@ -1097,28 +1093,17 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             return
         self._worklog_at = mono
         now = datetime.now()
-        set_today = str(self.cfg.get("start_date") or "") == self._today()
-        if not worklog.should_track(now, has_target=self._has_target(), set_today=set_today):
-            return
+        changed = worklog.touch_target(self.cfg, now.date(), self._off_hm())
         idle = worklog.idle_seconds()
-        mark = worklog.last_active_minute(now, idle)
-        # 打开面板、退出都不能假装「此刻正在干活」，否则离开时间会被改成现在
-        active = mark is not None and idle < worklog.IDLE_LIMIT_SEC
-        day = worklog.get_day(self.cfg, now.date()) or {}
-        last_out = day.get("out") if isinstance(day.get("out"), int) else None
-        away = last_out is not None and mark is not None and mark - last_out > worklog.AWAY_GAP_MIN
-        if (not away) or mark is None or idle > worklog.RESUME_IDLE_SEC:
-            self._presence = None
-        else:
-            self._presence = worklog.touch_presence(self._presence, now.date(), mark)
-        if worklog.heartbeat(
-            self.cfg,
-            now,
-            active=active,
-            activity_min=mark,
-            target_hm=self._off_hm(),
-            confirm=worklog.presence_confirms(self._presence),
-        ):
+        last = now - timedelta(seconds=max(0.0, idle))
+        # 只认最后一次键鼠落在哪一秒。打开面板、退出都不算一次操作。
+        if last.date() == now.date():
+            self._burst, start = worklog.note_second(self._burst, last)
+            if start is not None and worklog.mark_span(
+                self.cfg, start, last, target_hm=self._off_hm()
+            ):
+                changed = True
+        if changed:
             self._worklog_dirty = True
         if (self._worklog_dirty or self._activity_dirty) and (flush or mono - self._worklog_save_at >= 180):
             store.save_config(self.cfg)
