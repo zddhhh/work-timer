@@ -1,4 +1,7 @@
-"""定时喝水提醒：后台间隔，不占日程、不抢下班倒计时。"""
+"""喝水久坐提醒：后台间隔，不占日程、不抢下班倒计时。
+
+加强模式默认关。打开后，到点同时提醒喝水和离开座位站一会。
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -15,6 +18,7 @@ def defaults() -> dict:
         "interval_min": DEFAULT_INTERVAL,
         "anchor": "",
         "pending": False,
+        "strengthen": False,
     }
 
 
@@ -46,6 +50,7 @@ def merge(raw) -> dict:
     if _parse_anchor(base["anchor"]) is None:
         base["anchor"] = ""
     base["pending"] = bool(raw.get("pending"))
+    base["strengthen"] = bool(raw.get("strengthen"))
     return base
 
 
@@ -153,8 +158,26 @@ def decide(cfg: dict, now: datetime, *, hidden: bool = False, after_offwork: boo
     return "none"
 
 
+def strengthen(cfg: dict) -> bool:
+    return bool(read(cfg)["strengthen"])
+
+
+def set_strengthen(cfg: dict, on: bool) -> bool:
+    ensure_fields(cfg)
+    cfg["hydrate"]["strengthen"] = bool(on)
+    return cfg["hydrate"]["strengthen"]
+
+
+def card_copy(cfg: dict) -> tuple[str, str, str]:
+    """卡片上的三行字：标题、大字、底部说明。加强模式把喝水和久坐写在明处。"""
+    if strengthen(cfg):
+        return ("该喝水了", "起来站一会", "喝一杯，离开座位站一会")
+    return ("该喝水了", "点一下", "喝过了再点")
+
+
 def menu_caption(cfg: dict) -> str:
     h = read(cfg)
     if not h["enabled"]:
-        return "设置喝水间隔…"
-    return f"设置喝水间隔…  （{h['interval_min']} 分钟）"
+        return "设置喝水久坐提醒…"
+    extra = "，含久坐" if h["strengthen"] else ""
+    return f"设置喝水久坐提醒…  （{h['interval_min']} 分钟{extra}）"

@@ -19,6 +19,11 @@ IDLE_LIMIT_SEC = 300
 # 只有最后活动落在应下班前 CLOSE_LEAD_MIN 内（或之后）才封账，下午开长会回来继续干不会被截断。
 CLOSE_GAP_MIN = 90
 CLOSE_LEAD_MIN = 60
+# 离开上次「还在干活」超过这么久，再碰一下鼠标不算回来，离开时间先停住。
+AWAY_GAP_MIN = 15
+# 安静之后要连续这么久都有输入，才把离开时间往后挪。中间停超过 RESUME_IDLE_SEC 就重新算。
+RESUME_MIN = 2
+RESUME_IDLE_SEC = 20
 # 采样把「离开」写成轮询时刻时，最多偏这么多分钟，下一笔用真实最后输入收回来。
 SNAP_MIN = IDLE_LIMIT_SEC // 60
 WEEKDAY_CN = "一二三四五六日"
@@ -179,6 +184,25 @@ def last_active_minute(now: datetime, idle_sec: float) -> int | None:
     return last.hour * 60 + last.minute
 
 
+def touch_presence(state: dict | None, day: date, minute: int) -> dict:
+    """记下这一轮连续活动的起止分钟。换天或时间倒退就另起一轮。"""
+    key = day.isoformat()
+    if state is None or state.get("day") != key or not isinstance(state.get("start"), int) or minute < state["start"]:
+        return {"day": key, "start": minute, "last": minute}
+    state["last"] = minute
+    return state
+
+
+def presence_confirms(state: dict | None) -> bool:
+    """连续活动盖住了 RESUME_MIN 分钟，才算真的回来了。"""
+    if not state:
+        return False
+    start, last = state.get("start"), state.get("last")
+    if not isinstance(start, int) or not isinstance(last, int):
+        return False
+    return last - start >= RESUME_MIN
+
+
 def heartbeat(
     cfg: dict,
     now: datetime,
@@ -186,10 +210,12 @@ def heartbeat(
     active: bool,
     target_hm: tuple[int, int] | None,
     activity_min: int | None = None,
+    confirm: bool = False,
 ) -> bool:
     """离开时刻记最后一次键鼠所在的分钟，不记轮询时刻。
 
     空闲时只更新应下班、必要时封账，不把「现在」写成离开。
+    离上次离开已超过 AWAY_GAP_MIN 时，confirm 不为真就不改离开时间。
     activity_min 缺省时用 now 的分钟（测试）。返回是否改了账本。
     """
     book = _days(cfg)
@@ -223,6 +249,8 @@ def heartbeat(
         item["closed"] = True
         return True
     if not active:
+        return changed
+    if last is not None and mark - last > AWAY_GAP_MIN and not confirm:
         return changed
     if "in" not in item:
         item["in"] = mark

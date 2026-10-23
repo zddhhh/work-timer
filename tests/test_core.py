@@ -766,7 +766,9 @@ class HydrateTests(unittest.TestCase):
         hydrate.ensure_fields(cfg)
         self.assertFalse(hydrate.enabled(cfg))
         self.assertEqual(hydrate.interval_min(cfg), 45)
-        self.assertEqual(hydrate.menu_caption(cfg), "设置喝水间隔…")
+        self.assertEqual(hydrate.menu_caption(cfg), "设置喝水久坐提醒…")
+        self.assertFalse(hydrate.strengthen(cfg))
+        self.assertEqual(hydrate.card_copy(cfg), ("该喝水了", "点一下", "喝过了再点"))
 
     def test_clamp_interval(self):
         self.assertEqual(hydrate.clamp_interval(0), 15)
@@ -838,6 +840,13 @@ class HydrateTests(unittest.TestCase):
     def test_menu_caption_on(self):
         cfg = self._cfg(enabled=True, interval_min=30)
         self.assertIn("30", hydrate.menu_caption(cfg))
+        self.assertFalse(hydrate.strengthen(cfg))
+        hydrate.set_strengthen(cfg, True)
+        self.assertTrue(hydrate.strengthen(cfg))
+        self.assertEqual(hydrate.card_copy(cfg)[1], "起来站一会")
+        self.assertIn("含久坐", hydrate.menu_caption(cfg))
+        hydrate.set_enabled(cfg, False)
+        self.assertTrue(hydrate.strengthen(cfg))
 
     def test_disable_clears(self):
         cfg = self._cfg(enabled=True, interval_min=45, anchor="2026-10-13T09:00:00", pending=True)
@@ -1519,7 +1528,7 @@ class WorklogTests(unittest.TestCase):
         late = worklog.row(cfg, self.D.date(), today=self.D.date())
         # 14:00 还没到 18:10，差额仍隐藏
         self.assertIsNone(late["diff"])
-        worklog.heartbeat(cfg, self.at(18, 30), active=True, target_hm=(18, 10))
+        worklog.heartbeat(cfg, self.at(18, 30), active=True, target_hm=(18, 10), confirm=True)
         overtime = worklog.row(cfg, self.D.date(), today=self.D.date())
         self.assertTrue(overtime["live"])
         self.assertEqual(overtime["diff"], 20)
@@ -1529,8 +1538,8 @@ class WorklogTests(unittest.TestCase):
         worklog.heartbeat(cfg, self.at(8, 20), active=True, target_hm=None)
         self.assertEqual(worklog.get_day(cfg, self.D.date())["src"], "seen")
         worklog.record_arrival(cfg, self.at(8, 40), (8, 40))
-        worklog.heartbeat(cfg, self.at(12, 0), active=True, target_hm=(18, 10))
-        worklog.heartbeat(cfg, self.at(18, 35), active=True, target_hm=(18, 10))
+        worklog.heartbeat(cfg, self.at(12, 0), active=True, target_hm=(18, 10), confirm=True)
+        worklog.heartbeat(cfg, self.at(18, 35), active=True, target_hm=(18, 10), confirm=True)
         self.assertFalse(worklog.heartbeat(cfg, self.at(18, 50), active=False, target_hm=(18, 10)))
         r = worklog.row(cfg, self.D.date(), today=self.LATER)
         self.assertEqual((r["in"], r["out"], r["target"]), (520, 1115, 1090))
@@ -1542,10 +1551,10 @@ class WorklogTests(unittest.TestCase):
         cfg = {}
         tgt = (18, 0)
         worklog.heartbeat(cfg, self.at(9, 0), active=True, target_hm=tgt)
-        worklog.heartbeat(cfg, self.at(11, 30), active=True, target_hm=tgt)
-        worklog.heartbeat(cfg, self.at(13, 40), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(11, 30), active=True, target_hm=tgt, confirm=True)
+        worklog.heartbeat(cfg, self.at(13, 40), active=True, target_hm=tgt, confirm=True)
         self.assertEqual(worklog.row(cfg, self.D.date())["out"], 13 * 60 + 40)
-        worklog.heartbeat(cfg, self.at(18, 20), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(18, 20), active=True, target_hm=tgt, confirm=True)
         worklog.heartbeat(cfg, self.at(21, 0), active=True, target_hm=tgt)
         worklog.heartbeat(cfg, self.at(21, 5), active=True, target_hm=tgt)
         r = worklog.row(cfg, self.D.date())
@@ -1555,8 +1564,9 @@ class WorklogTests(unittest.TestCase):
     def test_long_afternoon_meeting_keeps_counting(self):
         cfg = {}
         tgt = (18, 0)
-        for hm in ((9, 0), (15, 0), (18, 40), (19, 10)):
-            worklog.heartbeat(cfg, self.at(*hm), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(9, 0), active=True, target_hm=tgt)
+        for hm in ((15, 0), (18, 40), (19, 10)):
+            worklog.heartbeat(cfg, self.at(*hm), active=True, target_hm=tgt, confirm=True)
         r = worklog.row(cfg, self.D.date())
         self.assertEqual(r["out"], 19 * 60 + 10)
         self.assertFalse(r["closed"])
@@ -1565,7 +1575,7 @@ class WorklogTests(unittest.TestCase):
         cfg = {}
         tgt = (18, 0)
         worklog.heartbeat(cfg, self.at(9, 0), active=True, target_hm=tgt)
-        worklog.heartbeat(cfg, self.at(17, 0), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(17, 0), active=True, target_hm=tgt, confirm=True)
         worklog.heartbeat(cfg, self.at(20, 30), active=True, target_hm=tgt)
         self.assertEqual(worklog.row(cfg, self.D.date())["out"], 17 * 60)
 
@@ -1637,6 +1647,30 @@ class WorklogTests(unittest.TestCase):
         self.assertEqual(r["out"], 16 * 60)
         self.assertFalse(r["closed"])
         self.assertIsNone(worklog.last_active_minute(self.at(0, 10), 20 * 60))
+
+    def test_a_bump_after_quiet_does_not_count_as_overtime(self):
+        cfg = {}
+        tgt = (18, 30)
+        worklog.heartbeat(cfg, self.at(18, 10), active=True, target_hm=tgt)
+        worklog.heartbeat(cfg, self.at(18, 40), active=True, target_hm=tgt)
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 18 * 60 + 10)
+        state = worklog.touch_presence(None, self.D.date(), 18 * 60 + 40)
+        self.assertFalse(worklog.presence_confirms(state))
+        state = worklog.touch_presence(state, self.D.date(), 18 * 60 + 42)
+        self.assertTrue(worklog.presence_confirms(state))
+        worklog.heartbeat(cfg, self.at(18, 42), active=True, target_hm=tgt, confirm=True)
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 18 * 60 + 42)
+        # 十五分钟以内仍跟着最后一次输入走
+        worklog.heartbeat(cfg, self.at(18, 50), active=True, target_hm=tgt)
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 18 * 60 + 50)
+
+    def test_a_late_bump_still_seals_on_the_old_leave_time(self):
+        cfg = {}
+        worklog.heartbeat(cfg, self.at(18, 10), active=True, target_hm=(18, 0))
+        self.assertTrue(worklog.heartbeat(cfg, self.at(20, 0), active=True, target_hm=(18, 0)))
+        row = worklog.row(cfg, self.D.date())
+        self.assertEqual(row["out"], 18 * 60 + 10)
+        self.assertTrue(row["closed"])
 
     def test_ensure_fields_prunes_garbage_and_old(self):
         cfg = {
@@ -2090,6 +2124,10 @@ class ActivityTests(unittest.TestCase):
         sampled = {im.getpixel((x, y)) for x in range(0, im.width, 12) for y in range(0, im.height, 12)}
         self.assertGreater(len(sampled), 8)
         self.assertTrue(any("鼠标" in h["text"] and "滚轮" in h["text"] for h in hits))
+        held = {"today_ptr": (hits[0]["x0"] + 1, hits[0]["y0"] + 1), "week_ptr": None}
+        x, y = activity_chart.remembered_hover(held, "today")
+        self.assertEqual(activity_chart.hover_text(hits, x, y), hits[0]["text"])
+        self.assertEqual(activity_chart.remembered_hover(held, "week"), (-1, -1))
         off, off_hits = activity_chart.render(pack, days, enabled=False, this_week=True)
         self.assertEqual(off.size, im.size)
         self.assertEqual(off_hits, [])

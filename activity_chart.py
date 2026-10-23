@@ -594,10 +594,17 @@ def paint_into(
     ui["week_base"] = week_im
     ui["week_hits"] = week_hits
     ui["chart_sig"] = sig
-    ui["today_hover"] = None
-    ui["week_hover"] = None
-    apply_hover(ui, "today", -1, -1)
-    apply_hover(ui, "week", -1, -1)
+    for panel in ("today", "week"):
+        ui[f"{panel}_hover"] = None
+        apply_hover(ui, panel, *remembered_hover(ui, panel))
+
+
+def remembered_hover(ui: dict, panel: str) -> tuple[int, int]:
+    """鼠标还停在图上时，重画不能把底部数字收掉。"""
+    ptr = ui.get(f"{panel}_ptr")
+    if isinstance(ptr, tuple) and len(ptr) == 2:
+        return int(ptr[0]), int(ptr[1])
+    return -1, -1
 
 
 def apply_hover(ui: dict, panel: str, x: int, y: int) -> None:

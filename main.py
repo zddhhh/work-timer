@@ -208,6 +208,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._worklog_at = 0.0
         self._worklog_dirty = False
         self._worklog_save_at = 0.0
+        self._presence: dict | None = None
         self._activity_dirty = False
         self._ui_prewarmed = False
         self._worklog_ui: dict | None = None
@@ -1103,8 +1104,20 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         mark = worklog.last_active_minute(now, idle)
         # 打开面板、退出都不能假装「此刻正在干活」，否则离开时间会被改成现在
         active = mark is not None and idle < worklog.IDLE_LIMIT_SEC
+        day = worklog.get_day(self.cfg, now.date()) or {}
+        last_out = day.get("out") if isinstance(day.get("out"), int) else None
+        away = last_out is not None and mark is not None and mark - last_out > worklog.AWAY_GAP_MIN
+        if (not away) or mark is None or idle > worklog.RESUME_IDLE_SEC:
+            self._presence = None
+        else:
+            self._presence = worklog.touch_presence(self._presence, now.date(), mark)
         if worklog.heartbeat(
-            self.cfg, now, active=active, activity_min=mark, target_hm=self._off_hm()
+            self.cfg,
+            now,
+            active=active,
+            activity_min=mark,
+            target_hm=self._off_hm(),
+            confirm=worklog.presence_confirms(self._presence),
         ):
             self._worklog_dirty = True
         if (self._worklog_dirty or self._activity_dirty) and (flush or mono - self._worklog_save_at >= 180):
@@ -1486,13 +1499,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         _run_card_modal(dlg, self.win)
 
     def _open_hydrate_dialog(self) -> None:
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=420, height=300)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=440, height=380)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         body = tk.Frame(dlg, bg=_CARD_BG)
         body.pack(side="top", fill="both", expand=True, padx=18)
         tk.Label(
-            body, text="喝水提醒", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
+            body, text="喝水久坐提醒", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(pady=(16, 10), anchor="w")
         interval_var = tk.IntVar(value=hydrate.interval_min(self.cfg))
         box = tk.Frame(body, bg=_CARD_BG)
@@ -1509,7 +1522,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         enabled_var = tk.BooleanVar(value=self._hydrate_on())
         tk.Checkbutton(
             body,
-            text="启用喝水提醒",
+            text="启用提醒",
             variable=enabled_var,
             fg=_CARD_FG,
             bg=_CARD_BG,
@@ -1518,15 +1531,36 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             selectcolor="#222733",
             font=("Microsoft YaHei UI", 10),
         ).pack(anchor="w", pady=(4, 0))
+        strong_var = tk.BooleanVar(value=hydrate.strengthen(self.cfg))
+        tk.Checkbutton(
+            body,
+            text="加强：到点同时提醒久坐",
+            variable=strong_var,
+            fg=_CARD_FG,
+            bg=_CARD_BG,
+            activebackground=_CARD_BG,
+            activeforeground=_CARD_FG,
+            selectcolor="#222733",
+            font=("Microsoft YaHei UI", 10),
+        ).pack(anchor="w", pady=(8, 0))
+        tk.Label(
+            body,
+            text="默认只催喝水。勾上加强后，卡片会写「起来站一会」，\n并注明要喝一杯、离开座位站一会。点一下表示两件都做了。",
+            fg=_CARD_MUTED,
+            bg=_CARD_BG,
+            justify="left",
+            font=("Microsoft YaHei UI", 9),
+        ).pack(anchor="w", pady=(6, 0))
 
         def save() -> None:
             hydrate.set_interval(self.cfg, interval_var.get())
+            hydrate.set_strengthen(self.cfg, bool(strong_var.get()))
             self._set_hydrate(bool(enabled_var.get()))
             dlg.destroy()
 
         _card_btn(bar, "保存", save, accent=True).pack(side="left", padx=(18, 6))
         _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
-        _reveal_card(dlg, min_w=420, min_h=280, near=self._dialog_near())
+        _reveal_card(dlg, min_w=440, min_h=360, near=self._dialog_near())
         _run_card_modal(dlg, self.win)
 
     def _prewarm_ui(self) -> None:
@@ -1783,9 +1817,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 key = f"{key}-gh{gx // 16}-{gy // 16}"
             if self._hydrate_waiting:
                 blink = int(phase * 2) % 2 == 0
-                shown_title = "该喝水了"
-                big = "点一下"
-                sub = "喝过了再点"
+                shown_title, big, sub = hydrate.card_copy(self.cfg)
                 accent = theme.warn if blink else theme.big
                 key = f"hydrate-wait-{int(blink)}-{theme.id}-{w}x{h}"
 

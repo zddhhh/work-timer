@@ -589,11 +589,22 @@ class WorklogDialogMixin:
             def move(e) -> None:
                 ww = max(1, lbl.winfo_width())
                 wh = max(1, lbl.winfo_height())
-                activity_chart.apply_hover(
-                    ui, panel, int(e.x * activity_chart.W / ww), int(e.y * activity_chart.H / wh),
-                )
+                x = int(e.x * activity_chart.W / ww)
+                y = int(e.y * activity_chart.H / wh)
+                ui[f"{panel}_ptr"] = (x, y)
+                activity_chart.apply_hover(ui, panel, x, y)
 
             def leave(_e) -> None:
+                # 数字一变就换图，Tk 会多送一次 Leave。鼠标还在格子上就保持底部那行。
+                try:
+                    px, py = lbl.winfo_pointerxy()
+                    x, y = lbl.winfo_rootx(), lbl.winfo_rooty()
+                    inside = x <= px < x + lbl.winfo_width() and y <= py < y + lbl.winfo_height()
+                except tk.TclError:
+                    inside = False
+                if inside:
+                    return
+                ui[f"{panel}_ptr"] = None
                 activity_chart.apply_hover(ui, panel, -1, -1)
 
             lbl.bind("<Motion>", move)

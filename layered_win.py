@@ -1115,7 +1115,7 @@ class LayeredPetWindow:
         key_hide_enabled: bool = False,
         key_hide_settings_label: str = "设置隐藏按键…",
         hydrate_enabled: bool = False,
-        hydrate_settings_label: str = "设置喝水间隔…",
+        hydrate_settings_label: str = "设置喝水久坐提醒…",
         trail_enabled: bool = False,
         auto_start: bool = False,
     ) -> str:
@@ -1166,7 +1166,7 @@ class LayeredPetWindow:
             hset,
             MF_STRING | (MF_CHECKED if hydrate_enabled else 0),
             ID_HYDRATE,
-            "喝水提醒",
+            "喝水久坐提醒",
         )
         user32.AppendMenuW(hset, MF_STRING, ID_HYDRATE_SETTINGS, hydrate_settings_label)
         user32.AppendMenuW(
