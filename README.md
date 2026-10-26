@@ -74,7 +74,19 @@ python main.py
 
 1.3.34 及更早的单文件版只认 `WorkTimer.exe`，找不到时取第一个 `.exe` 附件、校验第一行 `sha256:`，并把它当新 exe 带 `--ota-replace` 参数拉起。所以：主安装包必须先上传、文件名排序在前，说明里要保留一行主包的 `sha256:`；安装包认出这种拉起方式后会转成静默安装，新版启动后删掉老 exe 和 `%LOCALAPPDATA%\WorkTimer` 里的旧副本。
 
-发版：改 `version.py` 的 `APP_VERSION` → `scripts\gitcode_release.py`（打包两个安装包到 `release/`、创建 Release、把两个包的 sha256 写进说明、按顺序上传）。本地已打包测过的用 `--no-build` 直接发。
+发版只在 `mdslanruo` 这台已经配好令牌、`.venv` 和 `.venv38` 的机器上做：改 `version.py` 的 `APP_VERSION` → `scripts\gitcode_release.py`（打包两个安装包到 `release/`、创建 Release、把两个包的 sha256 写进说明、按顺序上传）。本地已打包测过的用 `--no-build` 直接发。
+
+## 两人协作
+
+维护者克隆这一份仓库：`https://gitcode.com/mdslanruo/work-timer.git`。从最新的 `main` 拉短分支，推上去再开合并请求。不要另建私仓。
+
+`main` 已保护。只有 `mdslanruo` 能直接推送和合并。合并请求会指给 `mdslanruo`，至少一人审核通过才能合，也不能合并自己开的请求。
+
+功能分支不要改 `version.py`，不要打 `v*` 标签，不要跑 `scripts\gitcode_release.py`。合进 `main` 之后，版本号和发版仍由上面那台发版机做。
+
+`themes.json` 一进 `main` 就会对所有用户换皮，跟代码一起走合并请求。
+
+不要索取或提交 `.gitcode_token`、`update_defaults.secret.json`、`release_mail.secret.json`。
 
 测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests -v`。待办见 [`docs/优化清单.md`](docs/优化清单.md)。
 
