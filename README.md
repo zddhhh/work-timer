@@ -76,17 +76,26 @@ python main.py
 
 发版：改 `version.py` 的 `APP_VERSION`、`docs/更新说明.md` 最上面一节和 `scripts\gitcode_release.py` 的 `RELEASE_NOTE`，提交进 `main`，拉到本地，再跑 `scripts\gitcode_release.py`（打包两个安装包到 `release/`、创建 Release、把两个包的 sha256 写进说明、按顺序上传）。脚本先确认工作目录没有未提交的改动、和远程 `main` 一致、版本号比线上所有 Release 都新，有一条不满足就不发。本地已打包测过的用 `--no-build` 直接发。
 
-发版机要有：`.venv`（3.12）和 `.venv38`（3.8），两个都跑过 `scripts\build_bootloader.py`；Inno Setup 6；WinLibs gcc；自己的 GitCode 令牌（`GITCODE_TOKEN` 或 `.gitcode_token`）。没有 `update_defaults.secret.json` 打出来的包，应用内反馈用不了。
+发版只在 `mdslanruo` 的机器上做。这台机器要有：`.venv`（3.12）和 `.venv38`（3.8），两个都跑过 `scripts\build_bootloader.py`；Inno Setup 6；WinLibs gcc；GitCode 令牌（`GITCODE_TOKEN` 或 `.gitcode_token`）。没有 `update_defaults.secret.json` 打出来的包，应用内反馈用不了。
 
-## 两人协作
+## 贡献代码
 
-克隆这一份仓库：`https://gitcode.com/mdslanruo/work-timer.git`。从最新的 `main` 拉短分支，推上去再开合并请求。不要另建私仓。
+审核和发版只由 `mdslanruo` 做。贡献者是开发者：能在这个仓库拉分支、开合并请求，不能推 `main`，不能合并，不能打标签，也不能发 Release。
 
-`main` 已保护。只有 `mdslanruo` 能直接推送和合并。合并请求会指给 `mdslanruo`，至少一人审核通过才能合，也不能合并自己开的请求。
+已经加进仓库的人，克隆 `https://gitcode.com/mdslanruo/work-timer.git`。还没加进来的人，先 Fork，再从自己的仓库开合并请求。
 
-功能分支不要改 `version.py`、`docs/更新说明.md` 最上面一节和 `RELEASE_NOTE`。这三处每次发版都要改，放进功能分支两边会一直冲突。功能合进 `main` 之后，谁发版谁单独提交这三处（维护者的这次提交也走合并请求），发版前在群里说一声。
+```powershell
+git switch main
+git pull
+git switch -c feat/简短说明
+# 改完
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+git push -u origin feat/简短说明
+```
 
-合并请求提示冲突时，在自己的分支上 `git fetch origin`，再 `git merge origin/main`。解完冲突、测试通过再推。`mdslanruo` 直接推 `main` 之前也先 `git pull`。
+然后在网页上开合并请求，目标选 `main`。网页提示冲突时，在自己的分支上 `git fetch origin`，再 `git merge origin/main`，解完、测试通过再推。
+
+功能分支不要改 `version.py`、`docs/更新说明.md` 最上面一节、`scripts/gitcode_release.py` 里的 `RELEASE_NOTE`。这三处由 `mdslanruo` 发版时单独提交。本地只要 Python 3.12 的 `.venv` 能跑测试，不用装 Win7 环境、Inno Setup 和 gcc。
 
 `themes.json` 一进 `main` 就会对所有用户换皮，跟代码一起走合并请求。
 
