@@ -59,10 +59,12 @@ class LauncherTests(unittest.TestCase):
         _compile_stub(gcc, cls.stub_path)
         cls.stub = cls.stub_path.read_bytes()
         cls.objdump = gcc / "objdump.exe"
+        cls.mutex_name = f"Local\\WorkTimer.LauncherTest.{os.getpid()}"
 
     def _run(self, app: Path, boot: Path, extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
         env = os.environ.copy()
         env["WT_BOOT_DIR"] = str(boot)
+        env["WT_MUTEX_NAME"] = self.mutex_name
         return subprocess.run(
             [str(app / "WorkTimer.exe"), *extra],
             cwd=app,
@@ -213,6 +215,64 @@ class LauncherTests(unittest.TestCase):
             self.assertTrue((app / "WorkTimer.bin.exe").read_bytes().endswith(b"NEW1"))
             self.assertTrue((app / "_internal" / "python38.dll").is_file())
             self.assertFalse((app / "_internal" / "vcruntime140_1.dll").exists())
+
+    def test_running_app_blocks_any_swap(self) -> None:
+        import ctypes
+        import tempfile
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        handle = kernel32.CreateMutexW(None, False, self.mutex_name)
+        self.assertTrue(handle)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                app = root / "app"
+                self._install_launcher(app)
+                _runtime(app)
+                _exe(app, self.stub, b"GOOD")
+                prev = app / "_prev"
+                _runtime(prev)
+                _exe(prev, self.stub, b"OLD1")
+                (prev / "COMMIT").write_text("1", encoding="ascii")
+                pending = app / "_pending"
+                _runtime(pending)
+                _exe(pending, self.stub, b"NEW1")
+                (pending / "READY").write_text("ok", encoding="ascii")
+                result = self._run(app, root / "boot")
+                self.assertEqual(result.returncode, 0)
+                self.assertTrue((app / "WorkTimer.bin.exe").read_bytes().endswith(b"GOOD"))
+                self.assertTrue((prev / "COMMIT").is_file())
+                self.assertTrue((pending / "READY").is_file())
+                import time
+                for _ in range(40):
+                    try:
+                        (app / "WorkTimer.bin.exe").unlink()
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+        finally:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+    def test_locked_live_runtime_is_not_half_deleted(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = root / "app"
+            self._install_launcher(app)
+            _runtime(app)
+            _exe(app, self.stub, b"BAD!")
+            prev = app / "_prev"
+            _runtime(prev)
+            _exe(prev, self.stub, b"GOOD")
+            (prev / "COMMIT").write_text("1", encoding="ascii")
+            locked = (app / "_internal" / "zz-locked.pyd").open("wb")
+            try:
+                result = self._run(app, root / "boot")
+            finally:
+                locked.close()
+            self.assertNotEqual(result.returncode, 2)
+            for name in ("python312.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+                self.assertTrue((app / "_internal" / name).is_file(), name)
 
     def test_shortcut_points_at_the_launcher(self) -> None:
         import tempfile

@@ -287,14 +287,69 @@ static int restore_prev(void) {
     if (!join2(prev_b, 1024, g_dir, L"_prev\\WorkTimer.bin.exe"))
         return 0;
     log_line(L"restore previous version");
-    if (dir_exists(live_i) && !delete_tree(live_i))
-        return 0;
-    if (file_exists(live_b) && !DeleteFileW(live_b))
-        return 0;
-    if (!move_item(prev_i, live_i) || !move_item(prev_b, live_b))
-        return 0;
+    {
+        /* 先整个挪开，挪不动说明有文件被占用，什么都不删。 */
+        wchar_t aside_i[1024], aside_b[1024];
+        if (!join2(aside_i, 1024, g_dir, L"_broken_internal") || !join2(aside_b, 1024, g_dir, L"_broken.bin.exe"))
+            return 0;
+        if (dir_exists(aside_i) && !delete_tree(aside_i))
+            return 0;
+        if (file_exists(aside_b) && !DeleteFileW(aside_b))
+            return 0;
+        if (dir_exists(live_i) && !move_item(live_i, aside_i))
+            return 0;
+        if (file_exists(live_b) && !move_item(live_b, aside_b)) {
+            move_item(aside_i, live_i);
+            return 0;
+        }
+        if (!move_item(prev_i, live_i)) {
+            move_item(aside_i, live_i);
+            move_item(aside_b, live_b);
+            return 0;
+        }
+        if (!move_item(prev_b, live_b)) {
+            move_item(live_i, prev_i);
+            move_item(aside_i, live_i);
+            move_item(aside_b, live_b);
+            return 0;
+        }
+        delete_tree(aside_i);
+        if (file_exists(aside_b))
+            DeleteFileW(aside_b);
+    }
     delete_tree(prev);
     return runtime_ok(live_i) && file_exists(live_b);
+}
+
+static int app_running(void) {
+    /* 名字和 single_instance.py 一致。WT_MUTEX_NAME 只给测试用。 */
+    wchar_t name[256];
+    HANDLE h;
+    DWORD n = GetEnvironmentVariableW(L"WT_MUTEX_NAME", name, 256);
+    if (n == 0 || n >= 256)
+        wcscpy(name, L"Local\\WorkTimer.SingleInstance");
+    h = OpenMutexW(SYNCHRONIZE, FALSE, name);
+    if (!h)
+        return 0;
+    CloseHandle(h);
+    return 1;
+}
+
+/* 已经开着一份：不换文件，交给它自己唤起窗口。 */
+static void hand_to_running(void) {
+    wchar_t bin[1024], cmd[1100];
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    if (!join2(bin, 1024, g_dir, L"WorkTimer.bin.exe") || !file_exists(bin))
+        return;
+    if (_snwprintf(cmd, 1100, L"\"%s\"", bin) <= 0)
+        return;
+    ZeroMemory(&si, sizeof si);
+    si.cb = sizeof si;
+    if (CreateProcessW(bin, cmd, NULL, NULL, FALSE, 0, NULL, g_dir, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
 }
 
 static void heal_internal_old(void) {
@@ -503,6 +558,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show) {
         return 2;
     wcscpy(g_dir, self);
     log_open();
+    if (app_running()) {
+        log_line(L"already running");
+        hand_to_running();
+        return 0;
+    }
     heal_launch_name();
     heal_internal_old();
     start_or_recover();

@@ -22,12 +22,18 @@
 #endif
 
 #define AppExe "WorkTimer.exe"
-#define AppMutex "Local\WorkTimer.SingleInstance"
+; 下面两项只在本地装测试包时用 /D 换掉，免得改到本机真正装着的那份
+#ifndef AppMutex
+  #define AppMutex "Local\WorkTimer.SingleInstance"
+#endif
+#ifndef AppGuid
+  #define AppGuid "8E3B6C1A-5D2F-4B7E-9A41-6C0F2D7E9B53"
+#endif
 #define LnkName "下班倒计时.lnk"
 
 [Setup]
 ; AppId 定了就别改，改了会被当成另一个程序装两份
-AppId={{8E3B6C1A-5D2F-4B7E-9A41-6C0F2D7E9B53}
+AppId={{{#AppGuid}}
 AppName=下班倒计时
 AppVersion={#AppVersion}
 AppVerName=下班倒计时 {#AppVersion}
@@ -105,25 +111,46 @@ var
   LegacyTarget: String;
   LegacyMode: Boolean;
   ReachedPostInstall: Boolean;
+  AppKnown: Boolean;
+
+// 上次装在哪。安装目录要到开始装文件时才定下来，之前出错只能靠这个把旧版拉回来。
+function PreviousDir: String;
+var
+  Key: String;
+begin
+  Result := '';
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{#AppGuid}}_is1';
+  if not RegQueryStringValue(HKCU, Key, 'Inno Setup: App Path', Result) then
+    RegQueryStringValue(HKLM, Key, 'Inno Setup: App Path', Result);
+  Result := RemoveBackslashUnlessRoot(Trim(Result));
+end;
+
+function AppRoot: String;
+begin
+  if AppKnown then
+    Result := ExpandConstant('{app}')
+  else
+    Result := PreviousDir;
+end;
 
 function LiveExe: String;
 begin
-  Result := ExpandConstant('{app}\{#AppExe}');
+  Result := AppRoot + '\{#AppExe}';
 end;
 
 function LiveBin: String;
 begin
-  Result := ExpandConstant('{app}\WorkTimer.bin.exe');
+  Result := AppRoot + '\WorkTimer.bin.exe';
 end;
 
 function LaunchTmp: String;
 begin
-  Result := ExpandConstant('{app}\WorkTimer.launch.exe');
+  Result := AppRoot + '\WorkTimer.launch.exe';
 end;
 
 function PendingRoot: String;
 begin
-  Result := ExpandConstant('{app}\_pending');
+  Result := AppRoot + '\_pending';
 end;
 
 { 运行库是否齐全，和 launcher/launcher.c、scripts/build_release.py 三处要一起改。 }
@@ -149,14 +176,18 @@ procedure RelaunchCurrent;
 var
   Code: Integer;
 begin
-  if FileExists(LiveExe) then
-    ShellExec('', LiveExe, '', ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, Code);
+  if (AppRoot = '') or not FileExists(LiveExe) then
+    Exit;
+  if CheckForMutexes('{#AppMutex}') then
+    Exit;
+  Log('relaunch ' + LiveExe);
+  ShellExec('', LiveExe, '', AppRoot, SW_SHOWNORMAL, ewNoWait, Code);
 end;
 
 { 换名换到一半就中断时，把还能用的那个放回 WorkTimer.exe，快捷方式才打得开。 }
 procedure HealNames;
 begin
-  if FileExists(LiveExe) then
+  if (AppRoot = '') or FileExists(LiveExe) then
     Exit;
   if FileExists(LaunchTmp) then
     RenameFile(LaunchTmp, LiveExe)
@@ -275,7 +306,12 @@ end;
 
 function InitializeSetup: Boolean;
 begin
-  HealNames;
+  try
+    Log('previous install dir: ' + PreviousDir);
+    HealNames;
+  except
+    Log('HealNames: ' + GetExceptionMessage);
+  end;
   Result := True;
   LegacyTarget := LegacyLaunchTarget;
   LegacyMode := LegacyTarget <> '';
@@ -332,6 +368,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
+    AppKnown := True;
     { 只清掉上次没换完的暂存。正在用的 exe 和 _internal 不动。 }
     if DirExists(PendingRoot) then
       if not DelTree(PendingRoot, True, True, True) then
@@ -343,24 +380,32 @@ begin
   else if CurStep = ssPostInstall then
   begin
     ReachedPostInstall := True;
-    if PendingReady then
-    begin
-      if SaveStringToFile(PendingRoot + '\READY', 'ok', False) then
-        PlaceLauncher
+    try
+      if PendingReady then
+      begin
+        if SaveStringToFile(PendingRoot + '\READY', 'ok', False) then
+          PlaceLauncher
+        else
+          Log('cannot write READY, leave the installed app');
+      end
       else
-        Log('cannot write READY, leave the installed app');
-    end
-    else
-      Log('pending runtime incomplete, leave the installed app');
+        Log('pending runtime incomplete, leave the installed app');
+    except
+      Log('post install: ' + GetExceptionMessage);
+    end;
   end;
 end;
 
 procedure DeinitializeSetup;
 begin
-  HealNames;
-  { 文件还没装完就退出时，把刚才关掉的程序拉回来。装完由 [Run] 启动。 }
-  if not ReachedPostInstall then
-    RelaunchCurrent;
+  try
+    HealNames;
+    { 检查更新时老进程已经退了。没装完就退出，要把它拉回来；装完由 [Run] 启动。 }
+    if (WizardSilent or LegacyMode) and not ReachedPostInstall then
+      RelaunchCurrent;
+  except
+    Log('DeinitializeSetup: ' + GetExceptionMessage);
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
