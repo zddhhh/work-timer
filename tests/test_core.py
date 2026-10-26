@@ -1893,6 +1893,8 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(sum(activity.counts(cfg, t0.date())["keys_pace"]), 0)
         for sec in (0, 0.4, 0.8, 1.2):
             activity.note(cfg, "key", t0 + timedelta(seconds=10 + sec))
+        live = activity.speed_snapshot(cfg, t0 + timedelta(seconds=11.2))
+        self.assertEqual(activity.rate_value("key", *live["key"]), 180)
         activity.settle(cfg, t0 + timedelta(seconds=15))
         stored = activity.counts(cfg, t0.date())
         self.assertEqual(sum(stored["keys_pace"]), 4)
@@ -1913,7 +1915,7 @@ class ActivityTests(unittest.TestCase):
         self.assertIn("打字", activity.fmt_speed_line(4, 1200, 0, 0, 0, 0))
         self.assertIn("滚轮 —", activity.fmt_speed_line(4, 1200, 0, 0, 0, 0))
         done = activity.counts(cfg, t0.date())
-        self.assertEqual(done["keys_last"][10], 4)
+        self.assertEqual(done["keys_last"][10], 3)
         self.assertEqual(len(done["inst_key"]), 1)
         self.assertEqual(activity.card_slots(cfg), ("keys", "clicks", "wheels"))
         swapped = activity.set_card_slot(cfg, 0, "key_now")
@@ -1921,11 +1923,11 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(len(set(swapped)), 3)
         again = activity.set_card_slot(cfg, 1, "key_now")
         self.assertEqual(again.count("key_now"), 1)
-        when = t0.replace(minute=30)
-        snap = activity.speed_snapshot(cfg, when)
-        self.assertEqual(snap["key"], (4, done["keys_last_ms"][10]))
-        parts = activity.card_parts(cfg, when, speed=snap)
-        self.assertTrue(any(text == "200/分" for _icon, text in parts))
+        stopped = t0.replace(minute=30)
+        idle = activity.speed_snapshot(cfg, stopped)
+        self.assertEqual(idle["key"], (0, 0))
+        parts = activity.card_parts(cfg, stopped, speed=idle)
+        self.assertTrue(any(text == "0/分" for _icon, text in parts))
 
     def test_speed_charts_draw_average_and_curve(self):
         import activity_chart
@@ -1937,7 +1939,7 @@ class ActivityTests(unittest.TestCase):
         today = {
             "mode": "split",
             "keys": 4, "clicks": 0, "wheels": 0,
-            "keys_h": [0] * 24, "clicks_h": [0] * 24, "wheels_h": [0] * 24, "hours": [0] * 24,
+            "keys_h": pace[:], "clicks_h": [0] * 24, "wheels_h": [0] * 24, "hours": [0] * 24,
             "travel": 0, "travel_h": [0] * 24,
             "keys_pace": pace, "keys_ms": ms,
             "wheels_pace": [0] * 24, "wheels_ms": [0] * 24,
@@ -1955,7 +1957,7 @@ class ActivityTests(unittest.TestCase):
             [[36000, 10, 1000], [36020, 20, 21000], [36300, 5, 1000]],
             "key",
         )
-        self.assertEqual(steps, [(36000, 600), (36020, 30), (36300, 300)])
+        self.assertEqual(steps, [(36000, 600), (36020, 30), (36021, 0), (36300, 300)])
 
     def test_instant_speed_follows_the_last_few_seconds(self):
         import activity
@@ -1977,6 +1979,54 @@ class ActivityTests(unittest.TestCase):
         activity.settle(cfg, when + timedelta(seconds=3))
         saved = activity.counts(cfg, t0.date())
         self.assertGreater(activity.rate_value("key", saved["keys_last"][10], saved["keys_last_ms"][10]), 150)
+        self.assertEqual(activity.speed_snapshot(cfg, when + timedelta(seconds=3))["key"], (0, 0))
+
+    def test_instant_drops_when_typing_slows_and_is_zero_when_idle(self):
+        """按真实节奏：打快、放慢、停手，滚轮和鼠标停了也是 0。均速能反推操作秒数。"""
+        import activity
+
+        cfg = {}
+        activity.set_enabled(cfg, True)
+        t0 = datetime(2026, 10, 26, 11, 0, 0)
+        for i in range(8):
+            activity.note(cfg, "key", t0 + timedelta(milliseconds=250 * i))
+        fast_at = t0 + timedelta(milliseconds=250 * 7)
+        fast = activity.rate_value("key", *activity.speed_snapshot(cfg, fast_at)["key"])
+        self.assertEqual(fast, 300)
+        slow_at = fast_at
+        for i in range(1, 4):
+            slow_at = fast_at + timedelta(milliseconds=900 * i)
+            activity.note(cfg, "key", slow_at)
+        slow = activity.rate_value("key", *activity.speed_snapshot(cfg, slow_at)["key"])
+        self.assertLess(slow, fast)
+        self.assertGreater(slow, 0)
+        self.assertEqual(activity.speed_snapshot(cfg, slow_at + timedelta(seconds=1.2))["key"], (0, 0))
+        self.assertEqual(activity.fmt_instant("key", 0, 0), "0下/分")
+
+        w0 = t0 + timedelta(minutes=5)
+        for i in range(10):
+            activity.note(cfg, "wheel", w0 + timedelta(milliseconds=80 * i))
+        wheel_at = w0 + timedelta(milliseconds=80 * 9)
+        self.assertGreater(activity.rate_value("wheel", *activity.speed_snapshot(cfg, wheel_at)["wheel"]), 0)
+        self.assertEqual(activity.speed_snapshot(cfg, wheel_at + timedelta(seconds=1.2))["wheel"], (0, 0))
+        self.assertEqual(activity.fmt_instant("wheel", 0, 0), "0格/分")
+
+        m0 = t0 + timedelta(minutes=8)
+        for i in range(6):
+            activity.add_travel(cfg, 400, 0, m0 + timedelta(milliseconds=100 * i))
+        move_at = m0 + timedelta(milliseconds=500)
+        self.assertGreater(activity.rate_value("move", *activity.speed_snapshot(cfg, move_at)["move"]), 0)
+        self.assertEqual(activity.speed_snapshot(cfg, move_at + timedelta(seconds=1.2))["move"], (0, 0))
+        self.assertEqual(activity.fmt_instant("move", 0, 0), "0")
+
+        activity.settle(cfg, slow_at + timedelta(seconds=3))
+        counted = activity.counts(cfg, t0.date())
+        total = sum(counted["keys_h"])
+        active = sum(counted["keys_ms"])
+        rate = activity.rate_value("key", total, active)
+        self.assertGreater(active, 0)
+        self.assertEqual(rate, round(total * 60000 / active))
+        self.assertAlmostEqual(total * 60000 / rate, active, delta=active * 0.01)
 
     def test_tally_bubble_sits_above_and_falls_below_at_top(self):
         import tally_bubble

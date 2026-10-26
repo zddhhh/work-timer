@@ -107,16 +107,18 @@ def _speed_line_from(src: dict, hour: int | None = None) -> str:
         return int(vals[hour])
 
     return activity.fmt_speed_line(
-        take("keys_pace"), take("keys_ms"),
-        take("travel_pace"), take("travel_ms"),
-        take("wheels_pace"), take("wheels_ms"),
+        take("keys_h"), take("keys_ms"),
+        take("travel_h"), take("travel_ms"),
+        take("wheels_h"), take("wheels_ms"),
     )
 
 
 def today_pack(cfg: dict, d: date, now: datetime | None = None) -> dict:
+    now = now or datetime.now()
     c = activity.counts(cfg, d)
     pace = activity.pace_of(cfg, d, now)
     mode, keys_h, clicks_h, wheels_h = hourly_series(c)
+    live = activity.speed_snapshot(cfg, now) if now.date() == d else {"key": (0, 0), "move": (0, 0), "wheel": (0, 0)}
     return {
         "mode": mode,
         "keys": c["keys"],
@@ -135,6 +137,8 @@ def today_pack(cfg: dict, d: date, now: datetime | None = None) -> dict:
         "keys_ms": pace["keys_ms"],
         "wheels_ms": pace["wheels_ms"],
         "travel_ms": pace["travel_ms"],
+        "inst_live": live,
+        "now_sec": now.hour * 3600 + now.minute * 60 + now.second if now.date() == d else None,
         **activity.inst_rows(cfg, d, now),
     }
 
@@ -227,6 +231,7 @@ def signature(
         tuple(today.get("wheels_ms") or ()),
         tuple(today.get("travel_pace") or ()),
         tuple(today.get("travel_ms") or ()),
+        tuple(today.get("inst_live", {}).get(k) or (0, 0) for k in ("key", "move", "wheel")),
         tuple(
             (
                 row["keys"], row["clicks"], row["wheels"], row.get("travel", 0), row.get("combined", 0),
@@ -774,8 +779,8 @@ def _same_stretch(prev: tuple[int, int, int], sec: int, ms: int) -> bool:
     return ms + 1500 >= pms and ms >= expected * 0.5
 
 
-def _interval_points(rows, kind: str) -> list[tuple[int, int]]:
-    """每个采样点单独一个速度：这一小段比上一段多出来的次数和时长。空着的间隔不留点。"""
+def _interval_points(rows, kind: str, *, tail_sec: int | None = None) -> list[tuple[int, int]]:
+    """每个采样点是这一小段的速度。一段结束就落到 0，停着的时候右端也是 0。"""
     out = []
     prev: tuple[int, int, int] | None = None
     for row in rows or []:
@@ -789,12 +794,25 @@ def _interval_points(rows, kind: str) -> list[tuple[int, int]]:
             if dn <= 0 or dms <= 0:
                 dn, dms = n, ms
         else:
+            if prev is not None and sec > prev[0]:
+                out.append((prev[0] + 1, 0))
             dn, dms = n, ms
         rate = activity.rate_value(kind, dn, dms)
         if rate > 0:
             out.append((sec, rate))
         prev = (sec, n, ms)
+    if tail_sec is not None and out and out[-1][1] > 0 and tail_sec > out[-1][0]:
+        out.append((tail_sec, 0))
     return out
+
+
+def _live_tail(src: dict, kind: str) -> int | None:
+    """还在操作就不补 0。已经停了，就把线收到当前这一秒。"""
+    live = (src.get("inst_live") or {}).get(kind) or (0, 0)
+    if int(live[0] or 0) > 0 and int(live[1] or 0) > 0:
+        return None
+    sec = src.get("now_sec")
+    return int(sec) if sec is not None else None
 
 
 def _recent_pair(rows) -> tuple[int, int]:
@@ -861,33 +879,37 @@ def _render_speed(
     if view == "week":
         base = h - 74
         if mode == "inst":
-            kn = km = vn = vm = wn = wm = 0
-            for row in days:
-                if row.get("inst_key"):
-                    kn, km = _recent_pair(row.get("inst_key"))
-                if row.get("inst_move"):
-                    vn, vm = _recent_pair(row.get("inst_move"))
-                if row.get("inst_wheel"):
-                    wn, wm = _recent_pair(row.get("inst_wheel"))
+            live = today.get("inst_live") or {}
+            kn, km = live.get("key") or (0, 0)
+            vn, vm = live.get("move") or (0, 0)
+            wn, wm = live.get("wheel") or (0, 0)
         else:
-            kn = sum(int(r.get("keys_pace") or 0) for r in days)
+            kn = sum(int(r.get("keys") or 0) for r in days)
             km = sum(int(r.get("keys_ms") or 0) for r in days)
-            vn = sum(int(r.get("travel_pace") or 0) for r in days)
+            vn = sum(int(r.get("travel") or 0) for r in days)
             vm = sum(int(r.get("travel_ms") or 0) for r in days)
-            wn = sum(int(r.get("wheels_pace") or 0) for r in days)
+            wn = sum(int(r.get("wheels") or 0) for r in days)
             wm = sum(int(r.get("wheels_ms") or 0) for r in days)
-        cap = "最近 5 秒的速度，停久了会断开" if mode == "inst" else "每天的平均速度"
+        cap = "当前速度，停手就是 0" if mode == "inst" else "每天的平均速度"
     elif mode == "inst":
-        kn, km = _recent_pair(today.get("inst_key"))
-        vn, vm = _recent_pair(today.get("inst_move"))
-        wn, wm = _recent_pair(today.get("inst_wheel"))
-        cap = "最近 5 秒的速度，停久了会断开" if any((kn, vn, wn)) else "这天还没有瞬时速度"
+        live = today.get("inst_live") or {}
+        kn, km = live.get("key") or (0, 0)
+        vn, vm = live.get("move") or (0, 0)
+        wn, wm = live.get("wheel") or (0, 0)
+        cap = "当前速度，停手就是 0"
     else:
-        kn, km = sum(today.get("keys_pace") or []), sum(today.get("keys_ms") or [])
-        vn, vm = sum(today.get("travel_pace") or []), sum(today.get("travel_ms") or [])
-        wn, wm = sum(today.get("wheels_pace") or []), sum(today.get("wheels_ms") or [])
+        kn, km = sum(today.get("keys_h") or []), sum(today.get("keys_ms") or [])
+        vn, vm = sum(today.get("travel_h") or []), sum(today.get("travel_ms") or [])
+        wn, wm = sum(today.get("wheels_h") or []), sum(today.get("wheels_ms") or [])
         cap = "各小时平均速度" if any((km, vm, wm)) else "这天还没有速度"
-    _paint_totals(dr, w, _speed_head(kn, km, vn, vm, wn, wm))
+    if mode == "inst":
+        _paint_totals(dr, w, (
+            ("打字", activity.fmt_instant("key", kn, km), _KEY),
+            ("鼠标", activity.fmt_instant("move", vn, vm), _TRAVEL),
+            ("滚轮", activity.fmt_instant("wheel", wn, wm), _WHEEL),
+        ))
+    else:
+        _paint_totals(dr, w, _speed_head(kn, km, vn, vm, wn, wm))
     _caption(im, w, cap, (("打字", _KEY), ("鼠标", _TRAVEL), ("滚轮", _WHEEL)))
     _grid(dr, plot_l, plot_r, rows_top, base)
 
@@ -895,9 +917,9 @@ def _render_speed(
         group_w = (plot_r - plot_l) / max(1, len(days))
         if mode == "avg":
             cols = (
-                ("key", [activity.rate_value("key", int(r.get("keys_pace") or 0), int(r.get("keys_ms") or 0)) for r in days], _KEY),
-                ("move", [activity.rate_value("move", int(r.get("travel_pace") or 0), int(r.get("travel_ms") or 0)) for r in days], _TRAVEL),
-                ("wheel", [activity.rate_value("wheel", int(r.get("wheels_pace") or 0), int(r.get("wheels_ms") or 0)) for r in days], _WHEEL),
+                ("key", [activity.rate_value("key", int(r.get("keys") or 0), int(r.get("keys_ms") or 0)) for r in days], _KEY),
+                ("move", [activity.rate_value("move", int(r.get("travel") or 0), int(r.get("travel_ms") or 0)) for r in days], _TRAVEL),
+                ("wheel", [activity.rate_value("wheel", int(r.get("wheels") or 0), int(r.get("wheels_ms") or 0)) for r in days], _WHEEL),
             )
             xs = [plot_l + (i + 0.5) * group_w for i in range(len(days))]
             if style == "line":
@@ -923,7 +945,11 @@ def _render_speed(
             for i, row in enumerate(days):
                 for key, kind in (("inst_key", "key"), ("inst_move", "move"), ("inst_wheel", "wheel")):
                     gathered[kind].extend(
-                        (i * 86400 + sec, rate) for sec, rate in _interval_points(row.get(key), kind)
+                        (i * 86400 + sec, rate)
+                        for sec, rate in _interval_points(
+                            row.get(key), kind,
+                            tail_sec=(i * 86400 + _live_tail(today, kind)) if row.get("today") and _live_tail(today, kind) is not None else None,
+                        )
                     )
 
             def x_of(sec: int, _width=width) -> float:
@@ -964,9 +990,9 @@ def _render_speed(
 
     if mode == "avg":
         cols = (
-            _hour_rates(today.get("keys_pace"), today.get("keys_ms"), "key"),
-            _hour_rates(today.get("travel_pace"), today.get("travel_ms"), "move"),
-            _hour_rates(today.get("wheels_pace"), today.get("wheels_ms"), "wheel"),
+            _hour_rates(today.get("keys_h"), today.get("keys_ms"), "key"),
+            _hour_rates(today.get("travel_h"), today.get("travel_ms"), "move"),
+            _hour_rates(today.get("wheels_h"), today.get("wheels_ms"), "wheel"),
         )
         colors = (_KEY, _TRAVEL, _WHEEL)
         lo, hi = visible_span(*cols)
@@ -1009,9 +1035,9 @@ def _render_speed(
         return im, hits
 
     pieces = (
-        (_interval_points(today.get("inst_key"), "key"), _KEY),
-        (_interval_points(today.get("inst_move"), "move"), _TRAVEL),
-        (_interval_points(today.get("inst_wheel"), "wheel"), _WHEEL),
+        (_interval_points(today.get("inst_key"), "key", tail_sec=_live_tail(today, "key")), _KEY),
+        (_interval_points(today.get("inst_move"), "move", tail_sec=_live_tail(today, "move")), _TRAVEL),
+        (_interval_points(today.get("inst_wheel"), "wheel", tail_sec=_live_tail(today, "wheel")), _WHEEL),
     )
     marks = [0] * 24
     for pts, _color in pieces:
@@ -1182,21 +1208,22 @@ def paint_into(
     pack = today_pack(cfg, focus or today, now)
     week = week_pack(cfg, days, today, now)
     if mode == "inst":
-        ui["today_idle_speed"] = _inst_line_at(pack, None)
-        last = {"inst_key": [], "inst_move": [], "inst_wheel": []}
-        for row in week:
-            for key in last:
-                if row.get(key):
-                    last[key] = row[key]
-        ui["week_idle_speed"] = _inst_line_at(last, None)
+        live = pack.get("inst_live") or {}
+        line = "    ".join((
+            "打字 " + activity.fmt_instant("key", *(live.get("key") or (0, 0))),
+            "鼠标 " + activity.fmt_instant("move", *(live.get("move") or (0, 0))),
+            "滚轮 " + activity.fmt_instant("wheel", *(live.get("wheel") or (0, 0))),
+        ))
+        ui["today_idle_speed"] = line
+        ui["week_idle_speed"] = line
     else:
         ui["today_idle_speed"] = _speed_line_from(pack)
         ui["week_idle_speed"] = activity.fmt_speed_line(
-            sum(int(r.get("keys_pace") or 0) for r in week),
+            sum(int(r.get("keys") or 0) for r in week),
             sum(int(r.get("keys_ms") or 0) for r in week),
-            sum(int(r.get("travel_pace") or 0) for r in week),
+            sum(int(r.get("travel") or 0) for r in week),
             sum(int(r.get("travel_ms") or 0) for r in week),
-            sum(int(r.get("wheels_pace") or 0) for r in week),
+            sum(int(r.get("wheels") or 0) for r in week),
             sum(int(r.get("wheels_ms") or 0) for r in week),
         )
     sig = signature(pack, week, enabled=enabled, this_week=this_week, view="both", style=style, mode=mode)

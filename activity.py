@@ -18,10 +18,10 @@ _WHEEL_GAP_S = 1.0
 _WHEEL_MIN_S = 1.0
 _MOVE_GAP_S = 0.3
 _MOVE_MIN_S = 0.05
-# 瞬时看最近这一小段，不看整段的平均。曲线也按这个间隔留点。
-_INST_WINDOW_S = 5.0
+# 瞬时是此刻这一秒。这一秒里没有操作就是 0，不沿用刚才那一段。
+_INST_WINDOW_S = 1.0
 _INST_GAP_S = _INST_WINDOW_S
-_INST_CAP = 8000
+_INST_CAP = 20000
 _PACE_KEYS = ("keys_pace", "wheels_pace", "travel_pace", "keys_ms", "wheels_ms", "travel_ms")
 _LAST_KEYS = ("keys_last", "wheels_last", "travel_last", "keys_last_ms", "wheels_last_ms", "travel_last_ms")
 _INST_FIELDS = ("inst_key", "inst_wheel", "inst_move")
@@ -294,20 +294,18 @@ def _trail_add(burst: dict, when: datetime, n: int) -> None:
         del trail[0]
 
 
-def _window_pair(burst: dict) -> tuple[int, int]:
-    """最近几秒的次数和时长。从这一窗口里的第一下算到现在，更早的不算。"""
-    end = burst["t1"]
+def _window_pair(burst: dict, now: datetime | None = None) -> tuple[int, int]:
+    """此刻往前 1 秒里的次数。这一秒是空的就返回 0，不用更早的记录顶上。"""
+    end = now or burst["t1"]
     limit = end - timedelta(seconds=_INST_WINDOW_S)
-    trail = burst.get("trail") or []
-    chosen = [row for row in trail if row[1] >= limit]
-    if not chosen:
-        chosen = list(trail)
-    if not chosen:
-        _sec, n, ms = _burst_point(burst)
-        return n, ms
-    n = sum(int(row[2]) for row in chosen)
-    ms = int(round((end - chosen[0][0]).total_seconds() * 1000))
-    return n, max(0, ms)
+    n = 0
+    for row in burst.get("trail") or []:
+        if row[1] < limit or row[0] > end:
+            continue
+        n += int(row[2])
+    if n <= 0:
+        return 0, 0
+    return n, int(_INST_WINDOW_S * 1000)
 
 
 def _burst_point(burst: dict) -> tuple[int, int, int]:
@@ -450,25 +448,14 @@ def inst_rows(cfg: dict, d: date, now: datetime | None = None) -> dict:
     return out
 
 
-def _live_pair(cfg: dict, kind: str, min_s: float, now: datetime) -> tuple[int, int] | None:
+def _live_pair(cfg: dict, kind: str, now: datetime) -> tuple[int, int]:
+    """正在做就是这一秒的速度，停了就是 0。不退回上一段。"""
     burst = (_OPEN.get(id(cfg)) or {}).get(kind)
     if not burst or burst["t1"].date() != now.date():
-        return None
-    if (burst["t1"] - burst["t0"]).total_seconds() < min_s:
-        return None
-    n, ms = _window_pair(burst)
-    if n <= 0 or ms <= 0:
-        return None
-    return n, ms
-
-
-def _saved_last(cfg: dict, now: datetime, n_key: str, ms_key: str) -> tuple[int, int]:
-    c = counts(cfg, now.date())
-    for hour in range(min(23, now.hour), -1, -1):
-        n, ms = _n(c[n_key][hour]), _n(c[ms_key][hour])
-        if n > 0 and ms > 0:
-            return n, ms
-    return 0, 0
+        return 0, 0
+    if (now - burst["t1"]).total_seconds() > _INST_WINDOW_S:
+        return 0, 0
+    return _window_pair(burst, now)
 
 
 def speed_snapshot(cfg: dict, now: datetime | None = None) -> dict:
@@ -478,14 +465,14 @@ def speed_snapshot(cfg: dict, now: datetime | None = None) -> dict:
     extra = _pending(cfg, now.date(), now)
     hour = now.hour if 0 <= now.hour < 24 else 0
 
-    def hour_pair(n_key: str, ms_key: str) -> tuple[int, int]:
-        return _n(c[n_key][hour]) + _n(extra[n_key][hour]), _n(c[ms_key][hour]) + _n(extra[ms_key][hour])
-
+    count_of = {"key": "keys_h", "wheel": "wheels_h", "move": "travel_h"}
     out = {}
-    for kind, _gap, min_s, pace, ms_key, last_n, last_ms, _inst in _SPEED_KINDS:
-        live = _live_pair(cfg, kind, min_s, now)
-        out[kind] = live if live is not None else _saved_last(cfg, now, last_n, last_ms)
-        out[f"{kind}_hour"] = hour_pair(pace, ms_key)
+    for kind, _gap, _min_s, _pace, ms_key, _last_n, _last_ms, _inst in _SPEED_KINDS:
+        out[kind] = _live_pair(cfg, kind, now)
+        # 均速的分子用这一小时的总次数，分母用实际操作的毫秒。总次数 / 均速 = 操作时长。
+        n = _n(c[count_of[kind]][hour])
+        ms = _n(c[ms_key][hour]) + _n(extra[ms_key][hour])
+        out[f"{kind}_hour"] = (n, ms)
     return out
 
 
@@ -521,15 +508,30 @@ def rate_value(kind: str, n: int, ms: int) -> int:
     return max(0, int(round(n * 60000 / ms)))
 
 
+def fmt_instant(kind: str, n: int, ms: int) -> str:
+    """瞬时。停手是 0，不是「—」。"""
+    if n <= 0 or ms <= 0:
+        if kind == "move":
+            return "0"
+        if kind == "wheel":
+            return "0格/分"
+        return "0下/分"
+    if kind == "move":
+        return fmt_move_rate(n, ms)
+    if kind == "wheel":
+        return fmt_wheel_rate(n, ms)
+    return fmt_key_rate(n, ms)
+
+
 def fmt_card_speed(kind: str, n: int, ms: int, *, avg: bool = False) -> str:
+    if not avg:
+        return fmt_instant(kind, n, ms).replace("下", "").replace("格", "").replace("约 ", "").replace(" ", "")
     if kind == "key":
         text = fmt_key_rate(n, ms).replace("下", "")
     elif kind == "wheel":
         text = fmt_wheel_rate(n, ms).replace("格", "")
     else:
         text = fmt_move_rate(n, ms).replace("约 ", "").replace(" ", "")
-    if not avg:
-        return text
     return "均—" if text == "—" else f"均{text}"
 
 
