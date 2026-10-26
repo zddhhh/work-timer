@@ -10,12 +10,16 @@ import os
 from datetime import date, datetime
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageTk
 
 import activity
 
 W, H = 492, 258
 GAP = 12
+_SS = 3
+_BOX = getattr(Image, "Resampling", Image).BOX
+_CAP_Y = 58
+_TOP = 76
 IDLE_READOUT = ""
 WEEK_IDLE = ""
 _WD = "一二三四五六日"
@@ -367,52 +371,248 @@ def _busiest_caption(days: list[dict]) -> str:
     return f"最勤 周{_WD[d.weekday()]}"
 
 
-def _stroke(dr: ImageDraw.ImageDraw, pts: list[tuple[float, float]], color) -> None:
-    if not pts:
-        return
-    if len(pts) == 1:
-        x, y = pts[0]
-        dr.ellipse((x - 2, y - 2, x + 2, y + 2), fill=color)
-        return
-    dr.line([(int(x), int(y)) for x, y in pts], fill=color, width=2)
-    for x, y in pts:
-        dr.ellipse((x - 2, y - 2, x + 2, y + 2), fill=color)
+class _Ink:
+    """曲线和面积画在 3 倍大的透明层上再缩回来，斜线边缘才不发毛。"""
+
+    def __init__(self, size: tuple[int, int]):
+        self.size = size
+        self.im = Image.new("RGBA", (size[0] * _SS, size[1] * _SS), (0, 0, 0, 0))
+        self.dr = ImageDraw.Draw(self.im)
+
+    @staticmethod
+    def _up(pts):
+        return [(x * _SS, y * _SS) for x, y in pts]
+
+    def area(self, pts: list[tuple[float, float]], top: float, base: float, color, alpha: int = 60) -> None:
+        """渐隐从图顶算到底线，同一条线断成几段时，各段深浅才对得上。"""
+        if len(pts) < 2:
+            return
+        x0 = int(min(x for x, _y in pts) * _SS)
+        x1 = int(math.ceil(max(x for x, _y in pts) * _SS)) + 1
+        y0 = int(top * _SS)
+        y1 = int(math.ceil(base * _SS)) + 1
+        bw, bh = x1 - x0, y1 - y0
+        if bw < 2 or bh < 2:
+            return
+        mask = Image.new("L", (bw, bh), 0)
+        poly = [(x - x0, y - y0) for x, y in self._up([(pts[0][0], base), *pts, (pts[-1][0], base)])]
+        ImageDraw.Draw(mask).polygon(poly, fill=255)
+        fade = Image.linear_gradient("L").resize((bw, bh)).point(lambda v: (255 - v) * alpha // 255)
+        layer = Image.new("RGBA", (bw, bh), tuple(color[:3]) + (0,))
+        layer.putalpha(ImageChops.multiply(mask, fade))
+        self.im.alpha_composite(layer, (x0, y0))
+
+    def line(self, pts: list[tuple[float, float]], color, width: float = 2.0) -> None:
+        if len(pts) < 2:
+            return
+        w = max(1, round(width * _SS))
+        r = w / 2
+        up = self._up(pts)
+        self.dr.line(up, fill=color, width=w, joint="curve")
+        for x, y in (up[0], up[-1]):
+            self.dr.ellipse((x - r, y - r, x + r, y + r), fill=color)
+
+    def dot(self, x: float, y: float, color, r: float = 3.0) -> None:
+        cx, cy = x * _SS, y * _SS
+        for rr, fill in ((r + 1.5, _PANEL), (r, color)):
+            rr *= _SS
+            self.dr.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), fill=fill)
+
+    def onto(self, im: Image.Image) -> None:
+        im.alpha_composite(self.im.convert("RGBa").resize(self.size, _BOX).convert("RGBA"))
 
 
-def _plot_lines(dr: ImageDraw.ImageDraw, xs: list[float], series: list[tuple[list[int], tuple]], top: int, base: int) -> int:
-    """几条线共用一根纵轴。全是 0 的不画。返回纵轴上限，方便标数字。"""
-    live = [(vals, color) for vals, color in series if any(vals)]
-    if not xs or not live:
-        return 0
-    vmax = max(max(vals) for vals, _ in live)
+def _disc(im: Image.Image, x: float, y: float, r: float, color) -> None:
+    d = int(math.ceil(r * 2)) + 2
+    big = Image.new("RGBA", (d * _SS, d * _SS), (0, 0, 0, 0))
+    lo, hi = (d / 2 - r) * _SS, (d / 2 + r) * _SS
+    ImageDraw.Draw(big).ellipse((lo, lo, hi, hi), fill=color)
+    small = big.convert("RGBa").resize((d, d), _BOX).convert("RGBA")
+    im.alpha_composite(small, (int(round(x - d / 2)), int(round(y - d / 2))))
+
+
+def _smooth(pts: list[tuple[float, float]], steps: int = 8) -> list[tuple[float, float]]:
+    """单调三次插值：曲线过每个点，两点之间不会冲得比两端更高或更低。"""
+    n = len(pts)
+    if n < 3:
+        return list(pts)
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    d = [(ys[i + 1] - ys[i]) / max(1e-9, xs[i + 1] - xs[i]) for i in range(n - 1)]
+    m = [d[0]] + [0.0 if d[i - 1] * d[i] <= 0 else (d[i - 1] + d[i]) / 2 for i in range(1, n - 1)] + [d[-1]]
+    for i in range(n - 1):
+        if d[i] == 0:
+            m[i] = m[i + 1] = 0.0
+            continue
+        a, b = m[i] / d[i], m[i + 1] / d[i]
+        s = a * a + b * b
+        if s > 9:
+            t = 3 / math.sqrt(s)
+            m[i], m[i + 1] = t * a * d[i], t * b * d[i]
+    out = []
+    for i in range(n - 1):
+        hx = xs[i + 1] - xs[i]
+        for k in range(steps):
+            t = k / steps
+            t2, t3 = t * t, t * t * t
+            y = (
+                (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * hx * m[i]
+                + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * hx * m[i + 1]
+            )
+            out.append((xs[i] + t * hx, y))
+    out.append(pts[-1])
+    return out
+
+
+def _runs(xs: list[float], vals: list[int], *, skip_zero: bool) -> list[list[tuple[float, float]]]:
+    """速度为 0 是那一段没数据，不是慢，所以断开；次数为 0 就是 0，照常连着。"""
+    runs: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    for x, v in zip(xs, vals):
+        if skip_zero and not v:
+            if cur:
+                runs.append(cur)
+                cur = []
+            continue
+        cur.append((x, v))
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+def _inst_runs(pts: list[tuple[int, int]], x_of, gap: int) -> list[list[tuple[float, float]]]:
+    """瞬时点按 4 像素一格取平均，再和左右各两格加权揉一下。
+
+    停得比 gap 秒久、并且在图上隔开超过 8 像素才断开；一周的图一像素就是几十分钟，不能按 5 分钟断。
+    """
+    raw: list[list[tuple[float, int]]] = []
+    prev = None
+    for sec, rate in pts:
+        x = x_of(sec)
+        if prev is None or (sec - prev[0] > gap and x - prev[1] > 8):
+            raw.append([])
+        raw[-1].append((x, rate))
+        prev = (sec, x)
+    out = []
+    for run in raw:
+        cells: dict[int, list[float]] = {}
+        for x, v in run:
+            acc = cells.setdefault(int(x // 4), [0.0, 0.0, 0])
+            acc[0] += x
+            acc[1] += v
+            acc[2] += 1
+        keys = sorted(cells)
+        xs = [cells[k][0] / cells[k][2] for k in keys]
+        vs = [cells[k][1] / cells[k][2] for k in keys]
+        sm = []
+        for i, k in enumerate(keys):
+            tot = wt = 0.0
+            for j in range(max(0, i - 2), min(len(keys), i + 3)):
+                dist = abs(keys[j] - k)
+                if dist <= 2:
+                    tot += vs[j] * (3 - dist)
+                    wt += 3 - dist
+            sm.append(tot / wt)
+        out.append(list(zip(xs, sm)))
+    return out
+
+
+def _headroom(vals, *, robust: bool = False) -> float:
+    """纵轴上限：最高点上面留一截。瞬时速度偶尔一个尖峰，按 95% 分位截住，尖峰贴顶。"""
+    got = sorted(v for v in vals if v > 0)
+    if not got:
+        return 0.0
+    top = float(got[-1])
+    if robust and len(got) >= 12:
+        top = min(top, got[int(len(got) * 0.95)] * 1.3)
+    return top * 1.12
+
+
+def _paint_series(im: Image.Image, items: list[tuple], top: float, base: float, *, smooth: bool = True) -> None:
+    """items：(若干段 [(x, 值)], 颜色, 纵轴上限)。先铺面积，再画线，最后在每条的最高点打一个点。"""
+    ink = _Ink(im.size)
+    span = max(1.0, base - top)
+    drawn = []
+    for runs, color, vmax in items:
+        if vmax <= 0:
+            continue
+        best = None
+        paths = []
+        for run in runs:
+            pts = [(x, base - min(v, vmax) / vmax * span) for x, v in run]
+            for (x, v), (_x, y) in zip(run, pts):
+                if v > 0 and (best is None or v > best[2]):
+                    best = (x, y, v)
+            paths.append(_smooth(pts) if smooth else pts)
+        drawn.append((paths, color, best))
+    for paths, color, _best in drawn:
+        for path in paths:
+            ink.area(path, top, base, color, alpha=60 if smooth else 40)
+    for paths, color, _best in drawn:
+        for path in paths:
+            if len(path) == 1:
+                ink.dot(path[0][0], path[0][1], color, r=2)
+            else:
+                ink.line(path, color, width=2.0 if smooth else 1.6)
+    for _paths, color, best in drawn:
+        if best is not None:
+            ink.dot(best[0], best[1], color)
+    ink.onto(im)
+
+
+def _dash(dr: ImageDraw.ImageDraw, x0: float, x1: float, y: float, fill=_GRID) -> None:
+    x = x0
+    while x < x1:
+        dr.line((int(x), int(y), int(min(x + 3, x1)), int(y)), fill=fill, width=1)
+        x += 7
+
+
+def _grid(dr: ImageDraw.ImageDraw, l: float, r: float, top: float, base: float) -> None:
+    _dash(dr, l, r, top)
+    _dash(dr, l, r, (top + base) / 2)
+    dr.line((int(l), int(base), int(r), int(base)), fill=_LINE, width=1)
+
+
+def _y_labels(dr: ImageDraw.ImageDraw, plot_l: float, top: float, base: float, vmax: int) -> None:
     if vmax <= 0:
-        return 0
-    span = max(1, base - top)
-    for vals, color in live:
-        pts = [(x, base - (v / vmax) * span) for x, v in zip(xs, vals)]
-        _stroke(dr, pts, color)
-    return vmax
+        return
+    x = plot_l - 6
+    _text(dr, (x, top), activity.fmt_count(vmax), size=10, fill=_DIM, anchor="rm")
+    _text(dr, (x, (top + base) / 2), activity.fmt_count(vmax // 2), size=10, fill=_DIM, anchor="rm")
+    _text(dr, (x, base), "0", size=10, fill=_DIM, anchor="rm")
 
 
-def _plot_own(dr: ImageDraw.ImageDraw, xs: list[float], vals: list[int], color, top: int, base: int) -> int:
-    """单独一根纵轴。距离和次数不是同一个单位，跟次数挤在一起会把次数压成一条底线。"""
-    if not xs or not any(vals):
-        return 0
-    vmax = max(vals)
-    if vmax <= 0:
-        return 0
-    span = max(1, base - top)
-    pts = [(x, base - (v / vmax) * span) for x, v in zip(xs, vals)]
-    _stroke(dr, pts, color)
-    return vmax
+def _travel_label(im: Image.Image, plot_r: float, top: float, peak: int) -> None:
+    """距离用自己的纵轴，右上角注明最高那一格有多远。"""
+    dr = ImageDraw.Draw(im)
+    _text(dr, (plot_r, top + 3), "距离最高 " + activity.fmt_travel(int(peak)), size=10, fill=_TRAVEL, anchor="rt")
 
 
-def _legend(dr: ImageDraw.ImageDraw, x: int, y: int, items: tuple) -> None:
-    cx = x
-    for name, color in items:
-        dr.line((cx, y, cx + 14, y), fill=color, width=2)
-        _text(dr, (cx + 18, y), name, size=11, fill=color, anchor="lm")
-        cx += 18 + int(dr.textlength(name, font=_font(11))) + 14
+def _caption(im: Image.Image, w: int, text: str, legend: tuple = ()) -> None:
+    """说明靠左，图例靠右，同一行。"""
+    dr = ImageDraw.Draw(im)
+    _text(dr, (14, _CAP_Y), text, size=11, fill=_MUTED, anchor="lm")
+    x = w - 14
+    for name, color in reversed(legend):
+        tw = dr.textlength(name, font=_font(11))
+        _text(dr, (x, _CAP_Y), name, size=11, fill=_MUTED, anchor="rm")
+        _disc(im, x - tw - 7, _CAP_Y, 3.5, color)
+        x -= tw + 7 + 4 + 12
+
+
+def _paint_focus(im: Image.Image, band) -> None:
+    x0, y0, x1, y1 = (int(v) for v in band)
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return
+    layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    dr = ImageDraw.Draw(layer)
+    _round(dr, (x0 + 1, y0, x1 - 1, y1), (255, 255, 255, 14), radius=4)
+    mid = (x0 + x1) // 2
+    y = y0
+    while y < y1:
+        dr.line((mid, y, mid, min(y + 3, y1)), fill=(255, 255, 255, 60), width=1)
+        y += 6
+    im.alpha_composite(layer)
 
 
 def _render_week(
@@ -435,13 +635,18 @@ def _render_week(
     keys, clicks, wheels = week_totals(days)
     travel = sum(int(r.get("travel") or 0) for r in days if not r.get("future"))
     _paint_totals(dr, w, _totals(keys, clicks, wheels, travel))
-    _text(dr, (inset, 54), _busiest_caption(days), size=11, fill=_MUTED, anchor="lm")
+    split = any(r.get("mode") == "split" and not r.get("future") for r in days)
+    combined = any(r.get("mode") == "combined" and not r.get("future") for r in days)
+    legend = ((("键盘", _KEY), ("鼠标", _CLICK), ("滚轮", _WHEEL)) if split or not combined else ()) + (
+        (("操作", _COMBINED),) if combined else ()
+    ) + ((("距离", _TRAVEL),) if activity.travel_meters(travel) >= 0.001 else ())
+    _caption(im, w, _busiest_caption(days), legend)
 
-    plot_l, plot_r = 16, w - inset
-    plot_top, base = 68, h - 74
+    plot_l, plot_r = 40, w - inset
+    plot_top, base = _TOP, h - 74
     bar_room = base - plot_top
     group_w = (plot_r - plot_l) / max(1, len(days))
-    dr.line((plot_l + 8, base, plot_r - 8, base), fill=_LINE, width=1)
+    _grid(dr, plot_l, plot_r, plot_top, base)
     values = []
     for row in days:
         if row.get("future") or row.get("mode") == "empty":
@@ -450,8 +655,10 @@ def _render_week(
             values.append(int(row.get("combined") or 0))
         else:
             values.extend((int(row["keys"]), int(row["clicks"]), int(row["wheels"])))
-    vmax = max(values or [0])
-    travel_max = max((int(r.get("travel") or 0) for r in days if not r.get("future")), default=0)
+    peak = max(values or [0])
+    vmax = nice_max(peak) if peak else 0
+    _y_labels(dr, plot_l, plot_top, base, vmax)
+    travel_max = _headroom(int(r.get("travel") or 0) for r in days if not r.get("future"))
     for i, row in enumerate(days):
         gx0 = plot_l + i * group_w
         gx1 = gx0 + group_w
@@ -473,7 +680,7 @@ def _render_week(
                 if not v or scale <= 0:
                     continue
                 x0 = int(left + j * (bar_w + 3))
-                y0 = int(base - (v / scale) * (bar_room - 8))
+                y0 = int(base - min(1.0, v / scale) * bar_room)
                 _bar(dr, (x0, y0, x0 + bar_w, base), color, radius=2)
         label_fill = _TODAY if row.get("today") else (_DIM if row.get("weekend") else _MUTED)
         d = row["date"]
@@ -487,6 +694,7 @@ def _render_week(
                 "x1": int(gx1),
                 "y0": plot_top - 6,
                 "y1": base + 26,
+                "band": (gx0, plot_top - 4, gx1, base),
                 "text": _day_text(row),
                 "speed": activity.fmt_speed_line(
                     int(row.get("keys_pace") or 0), int(row.get("keys_ms") or 0),
@@ -527,17 +735,16 @@ def _render_week(
             if row.get("future"):
                 continue
             ts.append(int(row.get("travel") or 0))
-        top = plot_top + 4
-        ymax = _plot_lines(
-            dr, xs,
-            [(ks, _KEY), (cs, _CLICK), (ws, _WHEEL), (combos, _COMBINED)],
-            top, base - 2,
-        )
-        if ymax:
-            _text(dr, (plot_l + 8, top), activity.fmt_count(ymax), size=10, fill=_DIM, anchor="lt")
-        tscale = _plot_own(dr, xs, ts, _TRAVEL, top, base - 2)
-        if tscale:
-            _text(dr, (plot_r - 8, top), activity.fmt_travel(tscale), size=10, fill=_TRAVEL, anchor="rt")
+        items = [
+            (_runs(xs, vals, skip_zero=False), color, vmax)
+            for vals, color in ((ks, _KEY), (cs, _CLICK), (ws, _WHEEL), (combos, _COMBINED))
+            if any(vals)
+        ]
+        if any(ts):
+            items.append((_runs(xs, ts, skip_zero=False), _TRAVEL, travel_max))
+        _paint_series(im, items, plot_top, base)
+        if any(ts):
+            _travel_label(im, plot_r, plot_top, max(ts))
     return im, hits
 
 
@@ -562,39 +769,45 @@ def _hour_rates(ns, mss, kind: str) -> list[int]:
     return [activity.rate_value(kind, int(n or 0), int(ms or 0)) for n, ms in zip(ns, mss)]
 
 
-def _inst_points(rows, kind: str) -> list[tuple[int, int]]:
-    out = []
+def _same_stretch(prev: tuple[int, int, int], sec: int, ms: int) -> bool:
+    """上一个点的时长还在往上加，才是同一段。新的一段时长会重新变小。"""
+    psec, _pn, pms = prev
+    if sec < psec:
+        return False
+    expected = pms + (sec - psec) * 1000
+    return ms + 1500 >= pms and ms >= expected * 0.5
+
+
+def _minute_points(rows, kind: str) -> list[tuple[int, int]]:
+    """每分钟一个点：这一分钟里各段的有效次数和有效时长。空着的分钟不留点。"""
+    bins: dict[int, list[int]] = {}
+    prev: tuple[int, int, int] | None = None
     for row in rows or []:
-        if len(row) != 3:
+        if not isinstance(row, (list, tuple)) or len(row) < 3:
             continue
-        rate = activity.rate_value(kind, int(row[1]), int(row[2]))
+        sec, n, ms = int(row[0]), int(row[1]), int(row[2])
+        if n <= 0 or ms <= 0:
+            continue
+        if prev is not None and _same_stretch(prev, sec, ms):
+            dn, dms = n - prev[1], ms - prev[2]
+            if dn <= 0 or dms <= 0:
+                dn, dms = n, ms
+        else:
+            dn, dms = n, ms
+        minute = sec // 60
+        acc = bins.get(minute)
+        if acc is None:
+            bins[minute] = [dn, dms]
+        else:
+            acc[0] += dn
+            acc[1] += dms
+        prev = (sec, n, ms)
+    out = []
+    for minute, (dn, dms) in sorted(bins.items()):
+        rate = activity.rate_value(kind, dn, dms)
         if rate > 0:
-            out.append((int(row[0]), rate))
+            out.append((minute * 60 + 30, rate))
     return out
-
-
-def _plot_curve(dr, pts: list[tuple[int, int]], color, x_of, top: int, base: int, gap: int) -> int:
-    if not pts:
-        return 0
-    vmax = max(rate for _sec, rate in pts)
-    if vmax <= 0:
-        return 0
-    span = max(1, base - top)
-    run: list[tuple[float, float]] = []
-    prev = None
-
-    def flush() -> None:
-        if run:
-            _stroke(dr, run, color)
-            run.clear()
-
-    for sec, rate in pts:
-        if prev is not None and sec - prev > gap:
-            flush()
-        run.append((x_of(sec), base - (rate / vmax) * span))
-        prev = sec
-    flush()
-    return vmax
 
 
 def _inst_line_at(src: dict, hour: int | None) -> str:
@@ -632,8 +845,8 @@ def _render_speed(
         return im, hits
 
     inset = 14
-    plot_l, plot_r = 36, w - inset
-    rows_top, base = 86, h - 68
+    plot_l, plot_r = 24, w - inset
+    rows_top, base = _TOP, h - 68
     if view == "week":
         base = h - 74
         if mode == "inst":
@@ -652,21 +865,20 @@ def _render_speed(
             vm = sum(int(r.get("travel_ms") or 0) for r in days)
             wn = sum(int(r.get("wheels_pace") or 0) for r in days)
             wm = sum(int(r.get("wheels_ms") or 0) for r in days)
-        cap = "瞬时速度按时间连起来" if mode == "inst" else "每天的平均速度"
+        cap = "瞬时速度，停久了会断开" if mode == "inst" else "每天的平均速度"
     elif mode == "inst":
         kn, km = _latest_pair(today.get("inst_key"))
         vn, vm = _latest_pair(today.get("inst_move"))
         wn, wm = _latest_pair(today.get("inst_wheel"))
-        cap = "瞬时速度，中间停过会断开" if any((kn, vn, wn)) else "这天还没有瞬时速度"
+        cap = "瞬时速度，停久了会断开" if any((kn, vn, wn)) else "这天还没有瞬时速度"
     else:
         kn, km = sum(today.get("keys_pace") or []), sum(today.get("keys_ms") or [])
         vn, vm = sum(today.get("travel_pace") or []), sum(today.get("travel_ms") or [])
         wn, wm = sum(today.get("wheels_pace") or []), sum(today.get("wheels_ms") or [])
         cap = "各小时平均速度" if any((km, vm, wm)) else "这天还没有速度"
     _paint_totals(dr, w, _speed_head(kn, km, vn, vm, wn, wm))
-    _text(dr, (inset, 54), cap, size=11, fill=_MUTED, anchor="lm")
-    _legend(dr, inset, 72, (("打字", _KEY), ("鼠标", _TRAVEL), ("滚轮", _WHEEL)))
-    dr.line((plot_l, base, plot_r, base), fill=_LINE, width=1)
+    _caption(im, w, cap, (("打字", _KEY), ("鼠标", _TRAVEL), ("滚轮", _WHEEL)))
+    _grid(dr, plot_l, plot_r, rows_top, base)
 
     if view == "week":
         group_w = (plot_r - plot_l) / max(1, len(days))
@@ -678,10 +890,13 @@ def _render_speed(
             )
             xs = [plot_l + (i + 0.5) * group_w for i in range(len(days))]
             if style == "line":
-                for _name, vals, color in cols:
-                    _plot_own(dr, xs, vals, color, rows_top, base)
+                _paint_series(
+                    im,
+                    [(_runs(xs, vals, skip_zero=True), color, _headroom(vals)) for _n, vals, color in cols],
+                    rows_top, base,
+                )
             else:
-                maxes = [max(vals or [0]) for _n, vals, _c in cols]
+                maxes = [_headroom(vals) for _n, vals, _c in cols]
                 bar_w = max(4, int(group_w / 4))
                 room = max(16, base - rows_top)
                 for i in range(len(days)):
@@ -696,13 +911,21 @@ def _render_speed(
             gathered = {"key": [], "move": [], "wheel": []}
             for i, row in enumerate(days):
                 for key, kind in (("inst_key", "key"), ("inst_move", "move"), ("inst_wheel", "wheel")):
-                    gathered[kind].extend((i * 86400 + sec, rate) for sec, rate in _inst_points(row.get(key), kind))
+                    gathered[kind].extend(
+                        (i * 86400 + sec, rate) for sec, rate in _minute_points(row.get(key), kind)
+                    )
 
             def x_of(sec: int, _width=width) -> float:
                 return plot_l + sec / _width * (plot_r - plot_l)
 
-            for kind, color in (("key", _KEY), ("move", _TRAVEL), ("wheel", _WHEEL)):
-                _plot_curve(dr, gathered[kind], color, x_of, rows_top, base, 45)
+            _paint_series(
+                im,
+                [
+                    (_inst_runs(gathered[kind], x_of, 300), color, _headroom((r for _s, r in gathered[kind]), robust=True))
+                    for kind, color in (("key", _KEY), ("move", _TRAVEL), ("wheel", _WHEEL))
+                ],
+                rows_top, base, smooth=False,
+            )
         for i, row in enumerate(days):
             gx0 = plot_l + i * group_w
             mid = gx0 + group_w / 2
@@ -721,6 +944,7 @@ def _render_speed(
                 )
             hits.append({
                 "x0": int(gx0), "x1": int(gx0 + group_w), "y0": rows_top, "y1": base + 26,
+                "band": (gx0, rows_top - 4, gx0 + group_w, base),
                 "text": f"周{_WD[d.weekday()]} {d.month}/{d.day}",
                 "speed": speed,
                 "date": d.isoformat(),
@@ -744,10 +968,13 @@ def _render_speed(
         xs = [x_center(hour) for hour in range(lo, hi + 1)]
         window = [vals[lo:hi + 1] for vals in cols]
         if style == "line":
-            for vals, color in zip(window, colors):
-                _plot_own(dr, xs, vals, color, rows_top, base)
+            _paint_series(
+                im,
+                [(_runs(xs, vals, skip_zero=True), color, _headroom(vals)) for vals, color in zip(window, colors)],
+                rows_top, base,
+            )
         else:
-            maxes = [max(vals or [0]) for vals in window]
+            maxes = [_headroom(vals) for vals in window]
             bar_w = max(3, int(slot / 4))
             room = max(16, base - rows_top)
             for i, hour in enumerate(range(lo, hi + 1)):
@@ -758,21 +985,22 @@ def _render_speed(
                     y0 = int(base - vals[i] / scale * room)
                     _bar(dr, (int(cx - bar_w / 2), y0, int(cx + bar_w / 2), base), color, radius=2)
         for hour in range(lo, hi + 1):
-            if hour in (8, 10, 12, 14, 16, 18):
-                _text(dr, (x_center(hour), base + 4), str(hour), size=10, fill=_DIM, anchor="mt")
             cx = x_center(hour)
+            if hour % 2 == 0:
+                _text(dr, (cx, base + 5), str(hour), size=10, fill=_DIM, anchor="mt")
             hits.append({
                 "x0": int(cx - slot / 2), "x1": int(cx + slot / 2),
                 "y0": rows_top, "y1": base + 16,
+                "band": (cx - slot / 2, rows_top - 4, cx + slot / 2, base),
                 "text": f"{hour}点",
                 "speed": _speed_line_from(today, hour),
             })
         return im, hits
 
     pieces = (
-        (_inst_points(today.get("inst_key"), "key"), _KEY),
-        (_inst_points(today.get("inst_move"), "move"), _TRAVEL),
-        (_inst_points(today.get("inst_wheel"), "wheel"), _WHEEL),
+        (_minute_points(today.get("inst_key"), "key"), _KEY),
+        (_minute_points(today.get("inst_move"), "move"), _TRAVEL),
+        (_minute_points(today.get("inst_wheel"), "wheel"), _WHEEL),
     )
     marks = [0] * 24
     for pts, _color in pieces:
@@ -786,16 +1014,23 @@ def _render_speed(
     def x_of(sec: int) -> float:
         return plot_l + (sec / 3600 - lo) / span_h * (plot_r - plot_l)
 
-    for pts, color in pieces:
-        _plot_curve(dr, pts, color, x_of, rows_top, base, 45)
+    _paint_series(
+        im,
+        [
+            (_inst_runs(pts, x_of, 300), color, _headroom((r for _s, r in pts), robust=True))
+            for pts, color in pieces
+        ],
+        rows_top, base, smooth=False,
+    )
     slot = (plot_r - plot_l) / span_h
     for hour in range(lo, hi + 1):
         cx = plot_l + (hour - lo + 0.5) * slot
-        if hour in (8, 10, 12, 14, 16, 18):
-            _text(dr, (cx, base + 4), str(hour), size=10, fill=_DIM, anchor="mt")
+        if hour % 2 == 0:
+            _text(dr, (x_of(hour * 3600), base + 5), str(hour), size=10, fill=_DIM, anchor="mt")
         hits.append({
             "x0": int(cx - slot / 2), "x1": int(cx + slot / 2),
             "y0": rows_top, "y1": base + 16,
+            "band": (cx - slot / 2, rows_top - 4, cx + slot / 2, base),
             "text": f"{hour}点",
             "speed": _inst_line_at(today, hour),
         })
@@ -829,11 +1064,10 @@ def render(
         return im, hits
 
     inset = 14
-    plot_l, plot_r = 36, w - inset
+    plot_l, plot_r = 40, w - inset
     _paint_totals(dr, w, _totals(today["keys"], today["clicks"], today["wheels"], int(today.get("travel") or 0)))
 
     cap = "这天还没记到次数" if today["mode"] == "empty" else _peak_caption(today)
-    _text(dr, (inset, 54), cap, size=11, fill=_MUTED, anchor="lm")
 
     travel_h = list(today.get("travel_h") or [0] * 24)
     lo, hi = visible_span(today["hours"], today["keys_h"], today["clicks_h"], today["wheels_h"], travel_h)
@@ -853,20 +1087,25 @@ def render(
         )
     rows = count_rows + ((("距离", travel_h, _TRAVEL),) if any(travel_h) else ())
     if style == "line":
-        rows_top = 86
-        _legend(dr, inset, 72, tuple((name, color) for name, _series, color in count_rows) + (("距离", _TRAVEL),))
+        rows_top = _TOP
+        _caption(im, w, cap, tuple((name, color) for name, _series, color in rows))
         base = h - 68
-        dr.line((plot_l, base, plot_r, base), fill=_LINE, width=1)
+        _grid(dr, plot_l, plot_r, rows_top, base)
         xs = [x_center(hour) for hour in range(lo, hi + 1)]
         series = [([row[hour] for hour in range(lo, hi + 1)], color) for _name, row, color in count_rows]
-        ymax = _plot_lines(dr, xs, series, rows_top, base)
-        if ymax:
-            _text(dr, (4, rows_top), activity.fmt_count(ymax), size=10, fill=_DIM, anchor="lt")
-        tscale = _plot_own(dr, xs, [travel_h[hour] for hour in range(lo, hi + 1)], _TRAVEL, rows_top, base)
-        if tscale:
-            _text(dr, (plot_r, rows_top), activity.fmt_travel(tscale), size=10, fill=_TRAVEL, anchor="rt")
-        axis_y = base + 4
+        peak = max((max(vals) for vals, _c in series), default=0)
+        ymax = nice_max(peak) if peak else 0
+        _y_labels(dr, plot_l, rows_top, base, ymax)
+        items = [(_runs(xs, vals, skip_zero=False), color, ymax) for vals, color in series if any(vals)]
+        tvals = [travel_h[hour] for hour in range(lo, hi + 1)]
+        if any(tvals):
+            items.append((_runs(xs, tvals, skip_zero=False), _TRAVEL, _headroom(tvals)))
+        _paint_series(im, items, rows_top, base)
+        if any(tvals):
+            _travel_label(im, plot_r, rows_top, max(tvals))
+        axis_y = base + 5
     else:
+        _caption(im, w, cap)
         plot_l = 46
         slot = (plot_r - plot_l) / n
 
@@ -896,7 +1135,7 @@ def render(
         x_center = x_center_bar
         axis_y = rows_top + len(rows) * room + 2
     for hour in range(lo, hi + 1):
-        if hour in (8, 10, 12, 14, 16, 18):
+        if hour % 2 == 0:
             _text(dr, (x_center(hour), axis_y), str(hour), size=10, fill=_DIM, anchor="mt")
     for hour in range(lo, hi + 1):
         cx = x_center(hour)
@@ -906,6 +1145,7 @@ def render(
                 "x1": int(cx + slot / 2),
                 "y0": rows_top,
                 "y1": axis_y + 12,
+                "band": (cx - slot / 2, rows_top - 4, cx + slot / 2, axis_y - 5),
                 "text": _hour_text(hour, today),
                 "speed": _speed_line_from(today, hour),
             }
@@ -989,6 +1229,8 @@ def apply_hover(ui: dict, panel: str, x: int, y: int) -> None:
     if shown == ui.get(f"{panel}_hover") and ui.get(f"{panel}_photo") is not None:
         return
     im = base.copy()
+    if hit and hit.get("band"):
+        _paint_focus(im, hit["band"])
     _paint_readout(im, text, speed, active=active)
     photo = ImageTk.PhotoImage(im)
     lbl = ui.get(f"{panel}_lbl")

@@ -1951,6 +1951,11 @@ class ActivityTests(unittest.TestCase):
         _curve, curve_hits = activity_chart.render(today, [], enabled=True, this_week=True, mode="inst")
         self.assertTrue(any(h["text"] == "10点" and "200下/分" in h["speed"] for h in curve_hits))
         self.assertTrue(any("25 厘米/秒" in h["speed"] for h in curve_hits))
+        minutes = activity_chart._minute_points(
+            [[36000, 10, 1000], [36020, 20, 21000], [36300, 5, 1000]],
+            "key",
+        )
+        self.assertEqual([sec // 60 for sec, _rate in minutes], [600, 605])
 
     def test_tally_bubble_sits_above_and_falls_below_at_top(self):
         import tally_bubble
