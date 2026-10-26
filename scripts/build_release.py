@@ -19,7 +19,7 @@ OUT_DIR = ROOT / "release"
 ISS = ROOT / "installer" / "WorkTimer.iss"
 
 HIDDEN_IMPORTS = [
-    "themes", "changelog", "backdrop", "ornaments", "schedules", "memos", "worklog", "attachments",
+    "themes", "changelog", "backdrop", "boot_ok", "ornaments", "schedules", "memos", "worklog", "attachments",
     "PIL.ImageTk", "autostart", "desktop_shortcut", "single_instance", "key_hide", "uninstall", "store",
     "layered_win", "festival", "kinetic", "meow", "mines", "golf", "pool", "flex_time", "hydrate", "activity", "activity_chart", "feedback", "updater", "win_drop", "tkinterdnd2",
     "suofen", "tally_bubble", "card_ui", "worklog_ui", "schedule_ui", "update_ui", "PIL.ImageStat",
@@ -115,6 +115,54 @@ def _check_bootloader(venv: Path, py: Path) -> None:
         )
 
 
+# 安装包认这三份文件才把新版本换上去。launcher/launcher.c、WorkTimer.iss 里同一份名单。
+_RUNTIME_DLLS = ("vcruntime140.dll", "vcruntime140_1.dll")
+
+
+def _gcc_bin() -> Path:
+    found = shutil.which("gcc")
+    if found:
+        return Path(found).parent
+    pkgs = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
+    for d in sorted(pkgs.glob("BrechtSanders.WinLibs.POSIX.MSVCRT_*")):
+        b = d / "mingw64" / "bin"
+        if (b / "gcc.exe").exists():
+            return b
+    raise SystemExit("找不到 gcc：winget install BrechtSanders.WinLibs.POSIX.MSVCRT")
+
+
+def compile_launcher() -> Path:
+    """启动器静态链接，不依赖 vcruntime140，更新把运行库换坏了它自己还能起来。"""
+    gcc_dir = _gcc_bin()
+    out = ROOT / "launcher" / "WorkTimer.exe"
+    res = ROOT / "launcher" / "launcher.res"
+    subprocess.check_call(
+        [str(gcc_dir / "windres"), "-O", "coff", "-o", str(res), str(ROOT / "launcher" / "launcher.rc")],
+        cwd=ROOT / "launcher",
+    )
+    subprocess.check_call(
+        [
+            str(gcc_dir / "gcc.exe"),
+            "-Os", "-s", "-static", "-static-libgcc", "-mwindows",
+            "-Wl,--subsystem,windows:6.1",
+            "-o", str(out),
+            str(ROOT / "launcher" / "launcher.c"),
+            str(res),
+            "-luser32", "-lkernel32",
+        ],
+        cwd=ROOT / "launcher",
+    )
+    return out
+
+
+def _require_runtime(dist: Path, win7: bool) -> None:
+    internal = dist / "_internal"
+    py = "python38.dll" if win7 else "python312.dll"
+    missing = [name for name in (py, *_RUNTIME_DLLS) if not (internal / name).is_file()]
+    if missing:
+        raise SystemExit(f"运行库缺 {', '.join(missing)}，安装包不会把这一版换上去")
+
+
 def _iscc() -> Path:
     found = shutil.which("ISCC")
     if found:
@@ -160,6 +208,7 @@ def build(variant: str) -> Path:
         cmd += ["--hidden-import", mod]
     cmd.append(str(ROOT / "main.py"))
     subprocess.check_call(cmd, cwd=ROOT)
+    _require_runtime(app_dir / DIST_NAME, cfg["win7"])
 
     OUT_DIR.mkdir(exist_ok=True)
     out = setup_path(variant)
@@ -188,6 +237,7 @@ def main() -> None:
         (OUT_DIR / f"{DIST_NAME}.exe").unlink(missing_ok=True)  # 单文件时代的产物
     except OSError:
         pass
+    compile_launcher()
     for w in which:
         build(w)
     print("已写入 release/，未改动 dist/。")

@@ -300,9 +300,13 @@ def check_update(cfg: dict) -> tuple[str, ReleaseInfo | None]:
 
 
 def current_exe_path() -> Path | None:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve()
-    return None
+    if not getattr(sys, "frozen", False):
+        return None
+    try:
+        import desktop_shortcut
+        return desktop_shortcut.installed_exe()
+    except OSError:
+        return None
 
 
 def is_installed() -> bool:
@@ -447,8 +451,9 @@ def _unlink(path: Path) -> None:
 
 
 def apply_update_and_restart(setup: Path) -> None:
-    """静默运行新版安装包覆盖安装，装完由安装包拉起新版。
+    """静默运行新版安装包，装完由安装包拉起启动器。
 
+    安装包把新版本放在旁边，启动器确认进了主界面才换上；没确认就回到上一版。
     不再复制自己当隐藏助手去换 exe：那套「自我复制 + 无窗口进程 + 替换自身」最像木马，杀软重点盯。
     """
     cur = current_exe_path()

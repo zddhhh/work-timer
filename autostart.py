@@ -35,7 +35,9 @@ def _lnk_path() -> Path | None:
 
 def _wanted() -> tuple[Path, str]:
     if getattr(sys, "frozen", False):
-        exe = Path(sys.executable).resolve()
+        exe = desktop_shortcut.installed_exe()
+        if exe is None:
+            exe = Path(sys.executable).resolve()
         return exe, ""
     main = Path(__file__).resolve().parent / "main.py"
     py = Path(sys.executable).resolve()

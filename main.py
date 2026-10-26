@@ -18,6 +18,7 @@ import activity
 import attachments
 import autostart
 import backdrop
+import boot_ok
 import changelog
 import cursor_trail
 import desktop_shortcut
@@ -1992,6 +1993,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
 
     def run(self) -> None:
         self._paint()
+        boot_ok.signal()
         self._maybe_show_whats_new()
         last_save = time.monotonic()
         booted = time.monotonic()

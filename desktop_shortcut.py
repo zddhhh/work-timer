@@ -121,13 +121,26 @@ def _start_menu_programs_dir() -> Path | None:
     )
 
 
+def installed_exe(exe: Path | None = None) -> Path | None:
+    """快捷方式和开机启动指向启动器。真正的程序在旁边的 WorkTimer.bin.exe。"""
+    if exe is None:
+        if not getattr(sys, "frozen", False):
+            return None
+        try:
+            exe = Path(sys.executable).resolve()
+        except OSError:
+            return None
+    if exe.name.lower() == "worktimer.bin.exe":
+        launcher = exe.with_name("WorkTimer.exe")
+        if launcher.is_file():
+            return launcher
+    return exe
+
+
 def _current_exe() -> Path | None:
     if not getattr(sys, "frozen", False):
         return None
-    try:
-        return Path(sys.executable).resolve()
-    except OSError:
-        return None
+    return installed_exe()
 
 
 def _load_shell_link(lnk: Path) -> tuple[int, int] | None:

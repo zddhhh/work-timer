@@ -70,7 +70,7 @@ python main.py
 
 ## 自动更新
 
-右键「检查更新」读 GitCode Release，按当前系统下载对应安装包（Win7 版下 `WorkTimer-Win7-Setup.exe`，其余下 `WorkTimer-Setup.exe`），校验 PE 头与 Release 说明里的 `sha256(<附件名>):`，然后退出并静默运行安装包覆盖安装，装完由安装包拉起新版。
+右键「检查更新」读 GitCode Release，按当前系统下载对应安装包（Win7 版下 `WorkTimer-Win7-Setup.exe`，其余下 `WorkTimer-Setup.exe`），校验 PE 头与 Release 说明里的 `sha256(<附件名>):`，然后退出并静默运行安装包。新版本先放到旁边，进了主界面才换上；没进去就自动打开上一版。
 
 1.3.34 及更早的单文件版只认 `WorkTimer.exe`，找不到时取第一个 `.exe` 附件、校验第一行 `sha256:`，并把它当新 exe 带 `--ota-replace` 参数拉起。所以：主安装包必须先上传、文件名排序在前，说明里要保留一行主包的 `sha256:`；安装包认出这种拉起方式后会转成静默安装，新版启动后删掉老 exe 和 `%LOCALAPPDATA%\WorkTimer` 里的旧副本。
 

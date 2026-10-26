@@ -5,6 +5,8 @@
 ;   OutputName  安装包文件名（不带 .exe）
 ;   Win7        定义了就是 Python 3.8 的 Win7 包
 ; 按用户安装到 %LOCALAPPDATA%\Programs\WorkTimer，不要管理员权限。
+; 新版本只进 {app}\_pending，不直接覆盖正在用的 exe 和 _internal。
+; WorkTimer.exe 是不依赖 VC 运行库的启动器，确认新版本进了主界面才丢掉上一版。
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -82,7 +84,10 @@ chs.WindowsVersionNotSupported=这个安装包需要 Windows 8.1 或更高版本
 #endif
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 先放到旁边。正在用的 WorkTimer.exe / WorkTimer.bin.exe / _internal 这里不动。
+Source: "{#SourceDir}\WorkTimer.exe"; DestDir: "{app}\_pending"; DestName: "WorkTimer.bin.exe"; Flags: ignoreversion
+Source: "{#SourceDir}\_internal\*"; DestDir: "{app}\_pending\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\launcher\WorkTimer.exe"; DestDir: "{app}\_pending"; DestName: "WorkTimer.exe"; Flags: ignoreversion
 
 [Run]
 Filename: "{app}\{#AppExe}"; Parameters: "{code:RunParams}"; Description: "启动下班倒计时"; Flags: nowait postinstall; Check: ShouldLaunch
@@ -99,43 +104,118 @@ Type: filesandordirs; Name: "{app}"
 var
   LegacyTarget: String;
   LegacyMode: Boolean;
-  RuntimeBackedUp: Boolean;
-  InstallCommitted: Boolean;
+  ReachedPostInstall: Boolean;
 
-function RuntimeDir: String;
+function LiveExe: String;
 begin
-  Result := ExpandConstant('{app}\_internal');
+  Result := ExpandConstant('{app}\{#AppExe}');
 end;
 
-function RuntimeBackup: String;
+function LiveBin: String;
 begin
-  Result := ExpandConstant('{app}\_internal.old');
+  Result := ExpandConstant('{app}\WorkTimer.bin.exe');
 end;
 
+function LaunchTmp: String;
+begin
+  Result := ExpandConstant('{app}\WorkTimer.launch.exe');
+end;
+
+function PendingRoot: String;
+begin
+  Result := ExpandConstant('{app}\_pending');
+end;
+
+{ 运行库是否齐全，和 launcher/launcher.c、scripts/build_release.py 三处要一起改。 }
 function RuntimeReady(const Dir: String): Boolean;
+var
+  Py: Boolean;
 begin
 #ifdef Win7
-  Result := FileExists(Dir + '\python38.dll') and FileExists(Dir + '\vcruntime140.dll');
+  Py := FileExists(Dir + '\python38.dll');
 #else
-  Result := FileExists(Dir + '\python312.dll') and FileExists(Dir + '\vcruntime140.dll');
+  Py := FileExists(Dir + '\python312.dll');
 #endif
+  Result := Py and FileExists(Dir + '\vcruntime140.dll') and FileExists(Dir + '\vcruntime140_1.dll');
 end;
 
-procedure RestoreRuntime;
+function PendingReady: Boolean;
 begin
-  if not RuntimeBackedUp then
-    Exit;
-  { 新库没就位就不要留半截，把刚挪走的旧库放回来 }
-  DelTree(RuntimeDir, True, True, True);
-  if RenameFile(RuntimeBackup, RuntimeDir) then
-    RuntimeBackedUp := False;
+  Result :=
+    FileExists(PendingRoot + '\{#AppExe}') and
+    FileExists(PendingRoot + '\WorkTimer.bin.exe') and
+    RuntimeReady(PendingRoot + '\_internal');
 end;
 
 procedure RelaunchCurrent;
 var
   Code: Integer;
 begin
-  ShellExec('', ExpandConstant('{app}\{#AppExe}'), '', ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, Code);
+  if FileExists(LiveExe) then
+    ShellExec('', LiveExe, '', ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, Code);
+end;
+
+{ 换名换到一半就中断时，把还能用的那个放回 WorkTimer.exe，快捷方式才打得开。 }
+procedure HealNames;
+begin
+  if FileExists(LiveExe) then
+    Exit;
+  if FileExists(LaunchTmp) then
+    RenameFile(LaunchTmp, LiveExe)
+  else if FileExists(LiveBin) then
+    RenameFile(LiveBin, LiveExe);
+end;
+
+{ 先把旧的 PyInstaller exe 改名为 WorkTimer.bin.exe，再把启动器放到 WorkTimer.exe。
+  两步都失败会改回去。正在用的 _internal 不动。 }
+procedure PlaceLauncher;
+var
+  Staged: String;
+  MovedOld: Boolean;
+begin
+  Staged := PendingRoot + '\{#AppExe}';
+  if not FileExists(Staged) then
+    Exit;
+  DeleteFile(LaunchTmp);
+  if not FileCopy(Staged, LaunchTmp, False) then
+  begin
+    Log('copy launcher failed, leave the installed app');
+    Exit;
+  end;
+  MovedOld := False;
+  if (not FileExists(LiveBin)) and FileExists(LiveExe) then
+  begin
+    if not RenameFile(LiveExe, LiveBin) then
+    begin
+      DeleteFile(LaunchTmp);
+      Log('cannot park current exe as WorkTimer.bin.exe');
+      Exit;
+    end;
+    MovedOld := True;
+  end;
+  if FileExists(LiveExe) then
+  begin
+    DeleteFile(LaunchTmp + '.bak');
+    if not RenameFile(LiveExe, LaunchTmp + '.bak') then
+    begin
+      DeleteFile(LaunchTmp);
+      Log('cannot move current launcher aside');
+      Exit;
+    end;
+    if not RenameFile(LaunchTmp, LiveExe) then
+    begin
+      RenameFile(LaunchTmp + '.bak', LiveExe);
+      Log('cannot replace launcher');
+      Exit;
+    end;
+    DeleteFile(LaunchTmp + '.bak');
+  end
+  else if not RenameFile(LaunchTmp, LiveExe) then
+  begin
+    if MovedOld then
+      RenameFile(LiveBin, LiveExe);
+    Log('cannot put launcher in place');
+  end;
 end;
 
 function HasParam(const Flag: String): Boolean;
@@ -197,6 +277,7 @@ end;
 
 function InitializeSetup: Boolean;
 begin
+  HealNames;
   Result := True;
   LegacyTarget := LegacyLaunchTarget;
   LegacyMode := LegacyTarget <> '';
@@ -253,48 +334,35 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
-    { 上次换到一半：能用的库在 .old，残缺的在 _internal }
-    if (not RuntimeReady(RuntimeDir)) and RuntimeReady(RuntimeBackup) then
-    begin
-      DelTree(RuntimeDir, True, True, True);
-      RenameFile(RuntimeBackup, RuntimeDir);
-    end;
-    if DirExists(RuntimeBackup) then
-      DelTree(RuntimeBackup, True, True, True);
-    if DirExists(RuntimeDir) then
-    begin
-      if not RenameFile(RuntimeDir, RuntimeBackup) then
+    { 只清掉上次没换完的暂存。正在用的 exe 和 _internal 不动。 }
+    if DirExists(PendingRoot) then
+      if not DelTree(PendingRoot, True, True, True) then
       begin
-        Log('cannot move _internal aside, leave the installed files untouched');
-        if not WizardSilent then
-          MsgBox('更新没能换掉正在使用的文件，已保持当前版本。', mbError, MB_OK);
-        RelaunchCurrent;
+        Log('cannot clear _pending, abort without touching the installed app');
         Abort;
       end;
-      RuntimeBackedUp := True;
-    end;
   end
   else if CurStep = ssPostInstall then
   begin
-    if RuntimeReady(RuntimeDir) then
+    ReachedPostInstall := True;
+    if PendingReady then
     begin
-      InstallCommitted := True;
-      DelTree(RuntimeBackup, True, True, True);
-      RuntimeBackedUp := False;
+      if SaveStringToFile(PendingRoot + '\READY', 'ok', False) then
+        PlaceLauncher
+      else
+        Log('cannot write READY, leave the installed app');
     end
     else
-      RestoreRuntime;
+      Log('pending runtime incomplete, leave the installed app');
   end;
 end;
 
 procedure DeinitializeSetup;
 begin
-  if RuntimeBackedUp and not InstallCommitted then
-  begin
-    RestoreRuntime;
-    if not RuntimeBackedUp then
-      RelaunchCurrent;
-  end;
+  HealNames;
+  { 文件还没装完就退出时，把刚才关掉的程序拉回来。装完由 [Run] 启动。 }
+  if not ReachedPostInstall then
+    RelaunchCurrent;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
