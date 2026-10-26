@@ -58,6 +58,8 @@ WizardStyle=modern
 ShowLanguageDialog=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; 静默更新失败时在 %TEMP% 留一份日志，方便看是哪一步没换成
+SetupLogging=yes
 ; 进程等待在 [Code] 里自己做：OTA 时老进程正在退出，Inno 自带的检测在静默模式下会直接失败
 CloseApplications=no
 RestartApplications=no
@@ -79,10 +81,6 @@ chs.SelectDirBrowseLabel=用这个位置就点「下一步」，想换地方点�
 chs.WindowsVersionNotSupported=这个安装包需要 Windows 8.1 或更高版本。%n%nWindows 7 请到发布页下载 WorkTimer-Win7-Setup.exe。
 #endif
 
-[InstallDelete]
-; 换版本时先清掉旧的运行库，避免新旧 DLL 混用
-Type: filesandordirs; Name: "{app}\_internal"
-
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -101,6 +99,44 @@ Type: filesandordirs; Name: "{app}"
 var
   LegacyTarget: String;
   LegacyMode: Boolean;
+  RuntimeBackedUp: Boolean;
+  InstallCommitted: Boolean;
+
+function RuntimeDir: String;
+begin
+  Result := ExpandConstant('{app}\_internal');
+end;
+
+function RuntimeBackup: String;
+begin
+  Result := ExpandConstant('{app}\_internal.old');
+end;
+
+function RuntimeReady(const Dir: String): Boolean;
+begin
+#ifdef Win7
+  Result := FileExists(Dir + '\python38.dll') and FileExists(Dir + '\vcruntime140.dll');
+#else
+  Result := FileExists(Dir + '\python312.dll') and FileExists(Dir + '\vcruntime140.dll');
+#endif
+end;
+
+procedure RestoreRuntime;
+begin
+  if not RuntimeBackedUp then
+    Exit;
+  { 新库没就位就不要留半截，把刚挪走的旧库放回来 }
+  DelTree(RuntimeDir, True, True, True);
+  if RenameFile(RuntimeBackup, RuntimeDir) then
+    RuntimeBackedUp := False;
+end;
+
+procedure RelaunchCurrent;
+var
+  Code: Integer;
+begin
+  ShellExec('', ExpandConstant('{app}\{#AppExe}'), '', ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, Code);
+end;
 
 function HasParam(const Flag: String): Boolean;
 var
@@ -169,8 +205,13 @@ begin
   Log('WorkTimer legacy mode: ' + IntToStr(Ord(LegacyMode)) + ', cleanup target: ' + LegacyTarget);
   if WizardSilent or LegacyMode then
   begin
-    { OTA：老进程刚发起更新正在退出 }
+    { OTA：老进程刚发起更新正在退出。等不到就中止，绝不能接着去动 _internal。 }
     WaitAppClosed(15);
+    if CheckForMutexes('{#AppMutex}') then
+    begin
+      Log('WorkTimer still running after wait, abort before touching files');
+      Result := False;
+    end;
     Exit;
   end;
   while CheckForMutexes('{#AppMutex}') do
@@ -205,6 +246,54 @@ begin
     if not UninstallSilent then
       MsgBox('下班倒计时还在运行，请先在托盘或右键菜单里退出它，再卸载。', mbError, MB_OK);
     Result := False;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    { 上次换到一半：能用的库在 .old，残缺的在 _internal }
+    if (not RuntimeReady(RuntimeDir)) and RuntimeReady(RuntimeBackup) then
+    begin
+      DelTree(RuntimeDir, True, True, True);
+      RenameFile(RuntimeBackup, RuntimeDir);
+    end;
+    if DirExists(RuntimeBackup) then
+      DelTree(RuntimeBackup, True, True, True);
+    if DirExists(RuntimeDir) then
+    begin
+      if not RenameFile(RuntimeDir, RuntimeBackup) then
+      begin
+        Log('cannot move _internal aside, leave the installed files untouched');
+        if not WizardSilent then
+          MsgBox('更新没能换掉正在使用的文件，已保持当前版本。', mbError, MB_OK);
+        RelaunchCurrent;
+        Abort;
+      end;
+      RuntimeBackedUp := True;
+    end;
+  end
+  else if CurStep = ssPostInstall then
+  begin
+    if RuntimeReady(RuntimeDir) then
+    begin
+      InstallCommitted := True;
+      DelTree(RuntimeBackup, True, True, True);
+      RuntimeBackedUp := False;
+    end
+    else
+      RestoreRuntime;
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  if RuntimeBackedUp and not InstallCommitted then
+  begin
+    RestoreRuntime;
+    if not RuntimeBackedUp then
+      RelaunchCurrent;
   end;
 end;
 
