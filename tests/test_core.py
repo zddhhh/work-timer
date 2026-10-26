@@ -1951,11 +1951,32 @@ class ActivityTests(unittest.TestCase):
         _curve, curve_hits = activity_chart.render(today, [], enabled=True, this_week=True, mode="inst")
         self.assertTrue(any(h["text"] == "10点" and "200下/分" in h["speed"] for h in curve_hits))
         self.assertTrue(any("25 厘米/秒" in h["speed"] for h in curve_hits))
-        minutes = activity_chart._minute_points(
+        steps = activity_chart._interval_points(
             [[36000, 10, 1000], [36020, 20, 21000], [36300, 5, 1000]],
             "key",
         )
-        self.assertEqual([sec // 60 for sec, _rate in minutes], [600, 605])
+        self.assertEqual(steps, [(36000, 600), (36020, 30), (36300, 300)])
+
+    def test_instant_speed_follows_the_last_few_seconds(self):
+        import activity
+
+        cfg = {}
+        activity.set_enabled(cfg, True)
+        t0 = datetime(2026, 10, 26, 10, 0, 0)
+        for i in range(25):
+            activity.note(cfg, "key", t0 + timedelta(seconds=i))
+        end = t0 + timedelta(seconds=24)
+        for k in range(20):
+            activity.note(cfg, "key", end + timedelta(milliseconds=300 * k))
+        when = end + timedelta(milliseconds=300 * 19)
+        snap = activity.speed_snapshot(cfg, when)
+        n, ms = snap["key"]
+        self.assertGreater(activity.rate_value("key", n, ms), 150)
+        whole = activity.rate_value("key", 45, int((when - t0).total_seconds() * 1000))
+        self.assertLess(whole, 120)
+        activity.settle(cfg, when + timedelta(seconds=3))
+        saved = activity.counts(cfg, t0.date())
+        self.assertGreater(activity.rate_value("key", saved["keys_last"][10], saved["keys_last_ms"][10]), 150)
 
     def test_tally_bubble_sits_above_and_falls_below_at_top(self):
         import tally_bubble

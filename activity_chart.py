@@ -481,7 +481,7 @@ def _runs(xs: list[float], vals: list[int], *, skip_zero: bool) -> list[list[tup
 
 
 def _inst_runs(pts: list[tuple[int, int]], x_of, gap: int) -> list[list[tuple[float, float]]]:
-    """瞬时点按 4 像素一格取平均，再和左右各两格加权揉一下。
+    """瞬时点按 2 像素一格取平均，再和相邻一格揉一下。
 
     停得比 gap 秒久、并且在图上隔开超过 8 像素才断开；一周的图一像素就是几十分钟，不能按 5 分钟断。
     """
@@ -497,7 +497,7 @@ def _inst_runs(pts: list[tuple[int, int]], x_of, gap: int) -> list[list[tuple[fl
     for run in raw:
         cells: dict[int, list[float]] = {}
         for x, v in run:
-            acc = cells.setdefault(int(x // 4), [0.0, 0.0, 0])
+            acc = cells.setdefault(int(x // 2), [0.0, 0.0, 0])
             acc[0] += x
             acc[1] += v
             acc[2] += 1
@@ -507,13 +507,16 @@ def _inst_runs(pts: list[tuple[int, int]], x_of, gap: int) -> list[list[tuple[fl
         sm = []
         for i, k in enumerate(keys):
             tot = wt = 0.0
-            for j in range(max(0, i - 2), min(len(keys), i + 3)):
+            for j in range(max(0, i - 1), min(len(keys), i + 2)):
                 dist = abs(keys[j] - k)
-                if dist <= 2:
-                    tot += vs[j] * (3 - dist)
-                    wt += 3 - dist
+                if dist <= 1:
+                    tot += vs[j] * (2 - dist)
+                    wt += 2 - dist
             sm.append(tot / wt)
-        out.append(list(zip(xs, sm)))
+        drawn = list(zip(xs, sm))
+        # 最右端用最新那一下的速度，不被前面几分钟的平均拖住。
+        drawn.append((run[-1][0], run[-1][1]))
+        out.append(drawn)
     return out
 
 
@@ -748,13 +751,6 @@ def _render_week(
     return im, hits
 
 
-def _latest_pair(rows) -> tuple[int, int]:
-    if not rows:
-        return 0, 0
-    row = rows[-1]
-    return int(row[1]), int(row[2])
-
-
 def _speed_head(keys: int, key_ms: int, travel: int, travel_ms: int, wheels: int, wheel_ms: int) -> tuple:
     return (
         ("打字", activity.fmt_key_rate(keys, key_ms), _KEY),
@@ -778,9 +774,9 @@ def _same_stretch(prev: tuple[int, int, int], sec: int, ms: int) -> bool:
     return ms + 1500 >= pms and ms >= expected * 0.5
 
 
-def _minute_points(rows, kind: str) -> list[tuple[int, int]]:
-    """每分钟一个点：这一分钟里各段的有效次数和有效时长。空着的分钟不留点。"""
-    bins: dict[int, list[int]] = {}
+def _interval_points(rows, kind: str) -> list[tuple[int, int]]:
+    """每个采样点单独一个速度：这一小段比上一段多出来的次数和时长。空着的间隔不留点。"""
+    out = []
     prev: tuple[int, int, int] | None = None
     for row in rows or []:
         if not isinstance(row, (list, tuple)) or len(row) < 3:
@@ -794,29 +790,44 @@ def _minute_points(rows, kind: str) -> list[tuple[int, int]]:
                 dn, dms = n, ms
         else:
             dn, dms = n, ms
-        minute = sec // 60
-        acc = bins.get(minute)
-        if acc is None:
-            bins[minute] = [dn, dms]
-        else:
-            acc[0] += dn
-            acc[1] += dms
-        prev = (sec, n, ms)
-    out = []
-    for minute, (dn, dms) in sorted(bins.items()):
         rate = activity.rate_value(kind, dn, dms)
         if rate > 0:
-            out.append((minute * 60 + 30, rate))
+            out.append((sec, rate))
+        prev = (sec, n, ms)
     return out
+
+
+def _recent_pair(rows) -> tuple[int, int]:
+    """最后一小段的次数和时长。只有一个点时，用这个点自己的累计。"""
+    cleaned = []
+    for row in rows or []:
+        if isinstance(row, (list, tuple)) and len(row) >= 3:
+            cleaned.append((int(row[0]), int(row[1]), int(row[2])))
+    if not cleaned:
+        return 0, 0
+    sec, n, ms = cleaned[-1]
+    if len(cleaned) >= 2 and _same_stretch(cleaned[-2], sec, ms):
+        dn, dms = n - cleaned[-2][1], ms - cleaned[-2][2]
+        if dn > 0 and dms > 0:
+            return dn, dms
+    return n, ms
 
 
 def _inst_line_at(src: dict, hour: int | None) -> str:
     def take(key: str) -> tuple[int, int]:
         found = (0, 0)
+        prev = None
         for row in src.get(key) or []:
-            if hour is not None and int(row[0]) // 3600 != hour:
+            if not isinstance(row, (list, tuple)) or len(row) < 3:
                 continue
-            found = (int(row[1]), int(row[2]))
+            sec, n, ms = int(row[0]), int(row[1]), int(row[2])
+            if hour is None or sec // 3600 == hour:
+                if prev is not None and _same_stretch(prev, sec, ms):
+                    dn, dms = n - prev[1], ms - prev[2]
+                    found = (dn, dms) if dn > 0 and dms > 0 else (n, ms)
+                else:
+                    found = (n, ms)
+            prev = (sec, n, ms)
         return found
 
     k, km = take("inst_key")
@@ -853,11 +864,11 @@ def _render_speed(
             kn = km = vn = vm = wn = wm = 0
             for row in days:
                 if row.get("inst_key"):
-                    kn, km = _latest_pair(row.get("inst_key"))
+                    kn, km = _recent_pair(row.get("inst_key"))
                 if row.get("inst_move"):
-                    vn, vm = _latest_pair(row.get("inst_move"))
+                    vn, vm = _recent_pair(row.get("inst_move"))
                 if row.get("inst_wheel"):
-                    wn, wm = _latest_pair(row.get("inst_wheel"))
+                    wn, wm = _recent_pair(row.get("inst_wheel"))
         else:
             kn = sum(int(r.get("keys_pace") or 0) for r in days)
             km = sum(int(r.get("keys_ms") or 0) for r in days)
@@ -865,12 +876,12 @@ def _render_speed(
             vm = sum(int(r.get("travel_ms") or 0) for r in days)
             wn = sum(int(r.get("wheels_pace") or 0) for r in days)
             wm = sum(int(r.get("wheels_ms") or 0) for r in days)
-        cap = "瞬时速度，停久了会断开" if mode == "inst" else "每天的平均速度"
+        cap = "最近 5 秒的速度，停久了会断开" if mode == "inst" else "每天的平均速度"
     elif mode == "inst":
-        kn, km = _latest_pair(today.get("inst_key"))
-        vn, vm = _latest_pair(today.get("inst_move"))
-        wn, wm = _latest_pair(today.get("inst_wheel"))
-        cap = "瞬时速度，停久了会断开" if any((kn, vn, wn)) else "这天还没有瞬时速度"
+        kn, km = _recent_pair(today.get("inst_key"))
+        vn, vm = _recent_pair(today.get("inst_move"))
+        wn, wm = _recent_pair(today.get("inst_wheel"))
+        cap = "最近 5 秒的速度，停久了会断开" if any((kn, vn, wn)) else "这天还没有瞬时速度"
     else:
         kn, km = sum(today.get("keys_pace") or []), sum(today.get("keys_ms") or [])
         vn, vm = sum(today.get("travel_pace") or []), sum(today.get("travel_ms") or [])
@@ -912,7 +923,7 @@ def _render_speed(
             for i, row in enumerate(days):
                 for key, kind in (("inst_key", "key"), ("inst_move", "move"), ("inst_wheel", "wheel")):
                     gathered[kind].extend(
-                        (i * 86400 + sec, rate) for sec, rate in _minute_points(row.get(key), kind)
+                        (i * 86400 + sec, rate) for sec, rate in _interval_points(row.get(key), kind)
                     )
 
             def x_of(sec: int, _width=width) -> float:
@@ -998,9 +1009,9 @@ def _render_speed(
         return im, hits
 
     pieces = (
-        (_minute_points(today.get("inst_key"), "key"), _KEY),
-        (_minute_points(today.get("inst_move"), "move"), _TRAVEL),
-        (_minute_points(today.get("inst_wheel"), "wheel"), _WHEEL),
+        (_interval_points(today.get("inst_key"), "key"), _KEY),
+        (_interval_points(today.get("inst_move"), "move"), _TRAVEL),
+        (_interval_points(today.get("inst_wheel"), "wheel"), _WHEEL),
     )
     marks = [0] * 24
     for pts, _color in pieces:

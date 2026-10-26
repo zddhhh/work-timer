@@ -18,8 +18,10 @@ _WHEEL_GAP_S = 1.0
 _WHEEL_MIN_S = 1.0
 _MOVE_GAP_S = 0.3
 _MOVE_MIN_S = 0.05
-_INST_GAP_S = 20.0
-_INST_CAP = 1600
+# 瞬时看最近这一小段，不看整段的平均。曲线也按这个间隔留点。
+_INST_WINDOW_S = 5.0
+_INST_GAP_S = _INST_WINDOW_S
+_INST_CAP = 8000
 _PACE_KEYS = ("keys_pace", "wheels_pace", "travel_pace", "keys_ms", "wheels_ms", "travel_ms")
 _LAST_KEYS = ("keys_last", "wheels_last", "travel_last", "keys_last_ms", "wheels_last_ms", "travel_last_ms")
 _INST_FIELDS = ("inst_key", "inst_wheel", "inst_move")
@@ -271,8 +273,41 @@ def _touch(cfg: dict, kind: str, when: datetime, n: int, *, gap: float, min_s: f
     key = (when.date(), when.hour)
     burst["by"][key] = int(burst["by"].get(key, 0)) + int(n)
     burst["t1"] = when
+    _trail_add(burst, when, int(n))
     slot[kind] = burst
     return wrote
+
+
+def _trail_add(burst: dict, when: datetime, n: int) -> None:
+    """最近几秒的每一下。同一小段里的下数并在一起，避免鼠标移动把列表撑满。"""
+    trail = burst.get("trail")
+    if not isinstance(trail, list):
+        trail = []
+        burst["trail"] = trail
+    if trail and (when - trail[-1][1]).total_seconds() < 0.25:
+        trail[-1][1] = when
+        trail[-1][2] = int(trail[-1][2]) + n
+    else:
+        trail.append([when, when, n])
+    limit = when - timedelta(seconds=_INST_WINDOW_S + 1.0)
+    while len(trail) > 1 and trail[0][1] < limit:
+        del trail[0]
+
+
+def _window_pair(burst: dict) -> tuple[int, int]:
+    """最近几秒的次数和时长。从这一窗口里的第一下算到现在，更早的不算。"""
+    end = burst["t1"]
+    limit = end - timedelta(seconds=_INST_WINDOW_S)
+    trail = burst.get("trail") or []
+    chosen = [row for row in trail if row[1] >= limit]
+    if not chosen:
+        chosen = list(trail)
+    if not chosen:
+        _sec, n, ms = _burst_point(burst)
+        return n, ms
+    n = sum(int(row[2]) for row in chosen)
+    ms = int(round((end - chosen[0][0]).total_seconds() * 1000))
+    return n, max(0, ms)
 
 
 def _burst_point(burst: dict) -> tuple[int, int, int]:
@@ -285,7 +320,9 @@ def _burst_point(burst: dict) -> tuple[int, int, int]:
 def _remember_last(cfg: dict, burst: dict, *, min_s: float, n_key: str, ms_key: str) -> bool:
     if (burst["t1"] - burst["t0"]).total_seconds() < min_s:
         return False
-    _sec, n, ms = _burst_point(burst)
+    n, ms = _window_pair(burst)
+    if ms < int(min_s * 1000) or n <= 0:
+        _sec, n, ms = _burst_point(burst)
     if n <= 0 or ms <= 0:
         return False
     hour = burst["t1"].hour
@@ -298,7 +335,7 @@ def _remember_last(cfg: dict, burst: dict, *, min_s: float, n_key: str, ms_key: 
 
 
 def _sample_inst(cfg: dict, burst: dict, *, min_s: float, inst_key: str, force: bool) -> bool:
-    """同一段里大约每 20 秒留一个点。段结束时把最后一个点改成这段的最终速度。"""
+    """同一段里大约每 5 秒留一个点。段结束时把最后一个点改成这段的最终累计。"""
     if (burst["t1"] - burst["t0"]).total_seconds() < min_s:
         return False
     sec, n, ms = _burst_point(burst)
@@ -419,7 +456,7 @@ def _live_pair(cfg: dict, kind: str, min_s: float, now: datetime) -> tuple[int, 
         return None
     if (burst["t1"] - burst["t0"]).total_seconds() < min_s:
         return None
-    _sec, n, ms = _burst_point(burst)
+    n, ms = _window_pair(burst)
     if n <= 0 or ms <= 0:
         return None
     return n, ms
