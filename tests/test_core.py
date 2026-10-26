@@ -1882,6 +1882,37 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(c["hours"][11], 2)
         self.assertEqual(c["wheels_h"][11], 1)
 
+    def test_speed_counts_a_stretch_and_skips_a_tap(self):
+        import activity
+
+        cfg = {}
+        activity.set_enabled(cfg, True)
+        t0 = datetime(2026, 10, 26, 10, 0, 0)
+        activity.note(cfg, "key", t0)
+        activity.settle(cfg, t0 + timedelta(seconds=3))
+        self.assertEqual(sum(activity.counts(cfg, t0.date())["keys_pace"]), 0)
+        for sec in (0, 0.4, 0.8, 1.2):
+            activity.note(cfg, "key", t0 + timedelta(seconds=10 + sec))
+        activity.settle(cfg, t0 + timedelta(seconds=15))
+        stored = activity.counts(cfg, t0.date())
+        self.assertEqual(sum(stored["keys_pace"]), 4)
+        self.assertGreaterEqual(sum(stored["keys_ms"]), 1000)
+        self.assertEqual(activity.fmt_key_rate(4, 1200), "200下/分")
+        move = t0.replace(minute=5)
+        activity.add_travel(cfg, 1600, 0, move)
+        activity.add_travel(cfg, 1600, 0, move + timedelta(seconds=0.2))
+        activity.settle(cfg, move + timedelta(seconds=1))
+        moved = activity.counts(cfg, t0.date())
+        self.assertEqual(sum(moved["travel_pace"]), 3200)
+        self.assertEqual(activity.fmt_move_rate(3200, 200), "约 25 厘米/秒")
+        spin = t0.replace(minute=8)
+        for sec in (0, 0.4, 0.8, 1.2):
+            activity.note(cfg, "wheel", spin + timedelta(seconds=sec))
+        activity.settle(cfg, spin + timedelta(seconds=3))
+        self.assertEqual(sum(activity.counts(cfg, t0.date())["wheels_pace"]), 4)
+        self.assertIn("打字", activity.fmt_speed_line(4, 1200, 0, 0, 0, 0))
+        self.assertIn("滚轮 —", activity.fmt_speed_line(4, 1200, 0, 0, 0, 0))
+
     def test_tally_bubble_sits_above_and_falls_below_at_top(self):
         import tally_bubble
 
@@ -1996,6 +2027,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(im.size, (activity_chart.W, activity_chart.H))
         self.assertGreaterEqual(len(hits), 8)
         self.assertTrue(any("约 1.0 米" in h["text"] for h in hits))
+        self.assertTrue(any(str(h.get("speed", "")).startswith("打字") for h in hits))
         # 距离用自己的纵轴。若跟 6 万计数挤在一根轴上，40 次的键盘线会贴在底上。
         top_blues = lilacs = 0
         for y in range(80, 130):

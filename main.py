@@ -1093,6 +1093,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             return
         self._worklog_at = mono
         now = datetime.now()
+        if activity.settle(self.cfg, now):
+            self._activity_dirty = True
         changed = worklog.touch_target(self.cfg, now.date(), self._off_hm())
         idle = worklog.idle_seconds()
         last = now - timedelta(seconds=max(0.0, idle))
@@ -1997,6 +1999,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     if self.win.hwnd and layered_win.user32.IsWindowVisible(self.win.hwnd):
                         self._show_after_esc()
                     else:
+                        if activity.settle(self.cfg, datetime.now()):
+                            self._activity_dirty = True
                         time.sleep(0.008)
                         continue
                 if self._menu_pos is not None:

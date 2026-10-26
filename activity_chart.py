@@ -7,14 +7,14 @@ from __future__ import annotations
 
 import math
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 import activity
 
-W, H = 492, 236
+W, H = 492, 258
 GAP = 12
 IDLE_READOUT = ""
 WEEK_IDLE = ""
@@ -93,8 +93,25 @@ def hourly_series(c: dict) -> tuple[str, list[int], list[int], list[int]]:
     return "empty", keys, clicks, wheels
 
 
-def today_pack(cfg: dict, d: date) -> dict:
+def _speed_line_from(src: dict, hour: int | None = None) -> str:
+    def take(key: str) -> int:
+        vals = src.get(key) or [0] * 24
+        if hour is None:
+            return sum(int(v) for v in vals)
+        if hour < 0 or hour >= len(vals):
+            return 0
+        return int(vals[hour])
+
+    return activity.fmt_speed_line(
+        take("keys_pace"), take("keys_ms"),
+        take("travel_pace"), take("travel_ms"),
+        take("wheels_pace"), take("wheels_ms"),
+    )
+
+
+def today_pack(cfg: dict, d: date, now: datetime | None = None) -> dict:
     c = activity.counts(cfg, d)
+    pace = activity.pace_of(cfg, d, now)
     mode, keys_h, clicks_h, wheels_h = hourly_series(c)
     return {
         "mode": mode,
@@ -108,13 +125,20 @@ def today_pack(cfg: dict, d: date) -> dict:
         "travel": c["travel"],
         "travel_h": c["travel_h"],
         "peak": activity.peak_hours(c["hours"]),
+        "keys_pace": pace["keys_pace"],
+        "wheels_pace": pace["wheels_pace"],
+        "travel_pace": pace["travel_pace"],
+        "keys_ms": pace["keys_ms"],
+        "wheels_ms": pace["wheels_ms"],
+        "travel_ms": pace["travel_ms"],
     }
 
 
-def week_pack(cfg: dict, days: list[date], today: date) -> list[dict]:
+def week_pack(cfg: dict, days: list[date], today: date, now: datetime | None = None) -> list[dict]:
     out = []
     for d in days:
         c = activity.counts(cfg, d)
+        pace = activity.pace_of(cfg, d, now)
         mode, _, _, _ = hourly_series(c)
         out.append(
             {
@@ -125,6 +149,12 @@ def week_pack(cfg: dict, days: list[date], today: date) -> list[dict]:
                 "wheels": c["wheels"],
                 "travel": c["travel"],
                 "combined": sum(c["hours"]) if mode == "combined" else 0,
+                "keys_pace": sum(pace["keys_pace"]),
+                "keys_ms": sum(pace["keys_ms"]),
+                "wheels_pace": sum(pace["wheels_pace"]),
+                "wheels_ms": sum(pace["wheels_ms"]),
+                "travel_pace": sum(pace["travel_pace"]),
+                "travel_ms": sum(pace["travel_ms"]),
                 "today": d == today,
                 "weekend": d.weekday() >= 5,
                 "future": d > today,
@@ -161,8 +191,20 @@ def signature(today: dict, days: list[dict], *, enabled: bool, this_week: bool, 
         tuple(today["wheels_h"]),
         tuple(today.get("travel_h") or ()),
         tuple(today["hours"]),
+        tuple(today.get("keys_pace") or ()),
+        tuple(today.get("keys_ms") or ()),
+        tuple(today.get("wheels_pace") or ()),
+        tuple(today.get("wheels_ms") or ()),
+        tuple(today.get("travel_pace") or ()),
+        tuple(today.get("travel_ms") or ()),
         tuple(
-            (row["keys"], row["clicks"], row["wheels"], row.get("travel", 0), row.get("combined", 0), row["today"], row.get("mode"))
+            (
+                row["keys"], row["clicks"], row["wheels"], row.get("travel", 0), row.get("combined", 0),
+                row.get("keys_pace", 0), row.get("keys_ms", 0),
+                row.get("wheels_pace", 0), row.get("wheels_ms", 0),
+                row.get("travel_pace", 0), row.get("travel_ms", 0),
+                row["today"], row.get("mode"),
+            )
             for row in days
         ),
     )
@@ -243,15 +285,21 @@ def _paint_totals(dr: ImageDraw.ImageDraw, w: int, items: tuple) -> None:
         _text(dr, (cx, 44), text, size=size, fill=_WHITE, anchor="ms", bold=True)
 
 
-def _paint_readout(im: Image.Image, text: str, *, active: bool = False) -> None:
-    if not text:
+def _paint_readout(im: Image.Image, text: str, speed: str = "", *, active: bool = False) -> None:
+    if not text and not speed:
         return
     w, h = im.size
-    x0, y0, x1, y1 = 12, h - 30, w - 12, h - 8
+    x0, y0, x1, y1 = 12, h - 46, w - 12, h - 6
     dr = ImageDraw.Draw(im)
     dr.rectangle((x0, y0, x1, y1), fill=_PANEL)
     _round(dr, (x0, y0, x1, y1), (36, 44, 58, 255), radius=8)
-    _text(dr, ((x0 + x1) / 2, (y0 + y1) / 2), text, size=12, fill=_WHITE if active else _MUTED, anchor="mm")
+    fill = _WHITE if active else _MUTED
+    mid = (x0 + x1) / 2
+    if text and speed:
+        _text(dr, (mid, y0 + 11), text, size=12, fill=fill, anchor="mm")
+        _text(dr, (mid, y0 + 29), speed, size=11, fill=fill, anchor="mm")
+    else:
+        _text(dr, (mid, (y0 + y1) / 2), text or speed, size=12, fill=fill, anchor="mm")
 
 
 def _day_text(row: dict) -> str:
@@ -364,7 +412,7 @@ def _render_week(
     _text(dr, (inset, 54), _busiest_caption(days), size=11, fill=_MUTED, anchor="lm")
 
     plot_l, plot_r = 16, w - inset
-    plot_top, base = 68, h - 52
+    plot_top, base = 68, h - 74
     bar_room = base - plot_top
     group_w = (plot_r - plot_l) / max(1, len(days))
     dr.line((plot_l + 8, base, plot_r - 8, base), fill=_LINE, width=1)
@@ -414,6 +462,11 @@ def _render_week(
                 "y0": plot_top - 6,
                 "y1": base + 26,
                 "text": _day_text(row),
+                "speed": activity.fmt_speed_line(
+                    int(row.get("keys_pace") or 0), int(row.get("keys_ms") or 0),
+                    int(row.get("travel_pace") or 0), int(row.get("travel_ms") or 0),
+                    int(row.get("wheels_pace") or 0), int(row.get("wheels_ms") or 0),
+                ),
                 "date": row["date"].isoformat(),
             }
         )
@@ -459,7 +512,6 @@ def _render_week(
         tscale = _plot_own(dr, xs, ts, _TRAVEL, top, base - 2)
         if tscale:
             _text(dr, (plot_r - 8, top), activity.fmt_travel(tscale), size=10, fill=_TRAVEL, anchor="rt")
-    _paint_readout(im, WEEK_IDLE)
     return im, hits
 
 
@@ -511,7 +563,7 @@ def render(
     if style == "line":
         rows_top = 86
         _legend(dr, inset, 72, tuple((name, color) for name, _series, color in count_rows) + (("距离", _TRAVEL),))
-        base = h - 46
+        base = h - 68
         dr.line((plot_l, base, plot_r, base), fill=_LINE, width=1)
         xs = [x_center(hour) for hour in range(lo, hi + 1)]
         series = [([row[hour] for hour in range(lo, hi + 1)], color) for _name, row, color in count_rows]
@@ -531,7 +583,7 @@ def render(
 
         bar_w = max(6, int(slot * 0.46))
         rows_top = 68
-        room = max(24, (h - 30 - 14 - rows_top) // max(1, len(rows)))
+        room = max(24, (h - 50 - 14 - rows_top) // max(1, len(rows)))
         bar_room = max(16, room - 8)
         for i, (name, series_row, color) in enumerate(rows):
             top = rows_top + i * room
@@ -563,10 +615,10 @@ def render(
                 "y0": rows_top,
                 "y1": axis_y + 12,
                 "text": _hour_text(hour, today),
+                "speed": _speed_line_from(today, hour),
             }
         )
 
-    _paint_readout(im, IDLE_READOUT)
     return im, hits
 
 
@@ -582,8 +634,18 @@ def paint_into(
     style: str = "line",
 ) -> None:
     """左边看 focus 这一天，右边看这一周。尺寸相同。数据没变就跳过。"""
-    pack = today_pack(cfg, focus or today)
-    week = week_pack(cfg, days, today)
+    now = datetime.now()
+    pack = today_pack(cfg, focus or today, now)
+    week = week_pack(cfg, days, today, now)
+    ui["today_idle_speed"] = _speed_line_from(pack)
+    ui["week_idle_speed"] = activity.fmt_speed_line(
+        sum(int(r.get("keys_pace") or 0) for r in week),
+        sum(int(r.get("keys_ms") or 0) for r in week),
+        sum(int(r.get("travel_pace") or 0) for r in week),
+        sum(int(r.get("travel_ms") or 0) for r in week),
+        sum(int(r.get("wheels_pace") or 0) for r in week),
+        sum(int(r.get("wheels_ms") or 0) for r in week),
+    )
     sig = signature(pack, week, enabled=enabled, this_week=this_week, view="both", style=style)
     if ui.get("chart_sig") == sig and ui.get("today_base") is not None and ui.get("week_base") is not None:
         return
@@ -611,18 +673,23 @@ def apply_hover(ui: dict, panel: str, x: int, y: int) -> None:
     base = ui.get(f"{panel}_base")
     if base is None:
         return
-    idle = WEEK_IDLE if panel == "week" else IDLE_READOUT
-    text = hover_text(ui.get(f"{panel}_hits") or [], x, y) or idle
-    if text == ui.get(f"{panel}_hover") and ui.get(f"{panel}_photo") is not None:
+    hit = hit_at(ui.get(f"{panel}_hits") or [], x, y)
+    idle_speed = str(ui.get(f"{panel}_idle_speed") or "")
+    if hit:
+        text, speed, active = str(hit.get("text") or ""), str(hit.get("speed") or ""), True
+    else:
+        text, speed, active = "", idle_speed, False
+    shown = (text, speed)
+    if shown == ui.get(f"{panel}_hover") and ui.get(f"{panel}_photo") is not None:
         return
     im = base.copy()
-    _paint_readout(im, text, active=text != idle)
+    _paint_readout(im, text, speed, active=active)
     photo = ImageTk.PhotoImage(im)
     lbl = ui.get(f"{panel}_lbl")
     if lbl is not None:
         lbl.configure(image=photo)
     ui[f"{panel}_photo"] = photo
-    ui[f"{panel}_hover"] = text
+    ui[f"{panel}_hover"] = shown
 
 
 def hit_at(hits: list[dict], x: int, y: int) -> dict | None:
