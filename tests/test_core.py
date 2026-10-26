@@ -1912,6 +1912,45 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(sum(activity.counts(cfg, t0.date())["wheels_pace"]), 4)
         self.assertIn("打字", activity.fmt_speed_line(4, 1200, 0, 0, 0, 0))
         self.assertIn("滚轮 —", activity.fmt_speed_line(4, 1200, 0, 0, 0, 0))
+        done = activity.counts(cfg, t0.date())
+        self.assertEqual(done["keys_last"][10], 4)
+        self.assertEqual(len(done["inst_key"]), 1)
+        self.assertEqual(activity.card_slots(cfg), ("keys", "clicks", "wheels"))
+        swapped = activity.set_card_slot(cfg, 0, "key_now")
+        self.assertEqual(swapped[0], "key_now")
+        self.assertEqual(len(set(swapped)), 3)
+        again = activity.set_card_slot(cfg, 1, "key_now")
+        self.assertEqual(again.count("key_now"), 1)
+        when = t0.replace(minute=30)
+        snap = activity.speed_snapshot(cfg, when)
+        self.assertEqual(snap["key"], (4, done["keys_last_ms"][10]))
+        parts = activity.card_parts(cfg, when, speed=snap)
+        self.assertTrue(any(text == "200/分" for _icon, text in parts))
+
+    def test_speed_charts_draw_average_and_curve(self):
+        import activity_chart
+
+        pace = [0] * 24
+        ms = [0] * 24
+        pace[10] = 4
+        ms[10] = 1200
+        today = {
+            "mode": "split",
+            "keys": 4, "clicks": 0, "wheels": 0,
+            "keys_h": [0] * 24, "clicks_h": [0] * 24, "wheels_h": [0] * 24, "hours": [0] * 24,
+            "travel": 0, "travel_h": [0] * 24,
+            "keys_pace": pace, "keys_ms": ms,
+            "wheels_pace": [0] * 24, "wheels_ms": [0] * 24,
+            "travel_pace": [0] * 24, "travel_ms": [0] * 24,
+            "inst_key": [[10 * 3600, 4, 1200], [10 * 3600 + 30, 8, 2400]],
+            "inst_wheel": [],
+            "inst_move": [[10 * 3600 + 300, 3200, 200]],
+        }
+        _im, hits = activity_chart.render(today, [], enabled=True, this_week=True, mode="avg")
+        self.assertTrue(any(h["text"] == "10点" and "200下/分" in h["speed"] for h in hits))
+        _curve, curve_hits = activity_chart.render(today, [], enabled=True, this_week=True, mode="inst")
+        self.assertTrue(any(h["text"] == "10点" and "200下/分" in h["speed"] for h in curve_hits))
+        self.assertTrue(any("25 厘米/秒" in h["speed"] for h in curve_hits))
 
     def test_tally_bubble_sits_above_and_falls_below_at_top(self):
         import tally_bubble

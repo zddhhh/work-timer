@@ -176,7 +176,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._last_key = ""
         self._present_hz = 0
         self._tally_at = 0.0
-        self._tally_counts = (0, 0, 0)
+        self._tally_speed_at = 0.0
+        self._tally_parts: tuple | None = None
+        self._tally_speed: dict | None = None
         self._fest_day = datetime.now().strftime("%Y-%m-%d")
         self._wall_at = datetime.now()
         self._mono_at = time.monotonic()
@@ -957,17 +959,24 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.cfg["auto_start"] = on
         store.save_config(self.cfg)
 
-    def _tally_for_paint(self) -> tuple[int, int, int] | None:
-        """顶部次数。最多一秒读四次，数字写进绘制键，变了才重画。"""
+    def _tally_for_paint(self) -> tuple | None:
+        """顶部三项。次数变了就换，速度最多一秒换一次，避免鼠标一动就重画整张卡片。"""
         if not activity.show_on_card(self.cfg):
             return None
         now = time.monotonic()
         if now - self._tally_at >= 0.25:
             self._tally_at = now
-            counts = activity.totals(self.cfg, date.today())
-            if counts != self._tally_counts:
-                self._tally_counts = counts
-        return self._tally_counts
+            speed = self._tally_speed
+            if speed is None or now - self._tally_speed_at >= 1.0:
+                self._tally_speed_at = now
+                if activity.settle(self.cfg, datetime.now()):
+                    self._activity_dirty = True
+                speed = activity.speed_snapshot(self.cfg, datetime.now())
+                self._tally_speed = speed
+            parts = activity.card_parts(self.cfg, datetime.now(), speed=speed)
+            if parts != self._tally_parts:
+                self._tally_parts = parts
+        return self._tally_parts
 
     def _show_after_esc(self) -> None:
         self.win.show()
@@ -1821,7 +1830,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 hz = max(hz, 45)
             self._present_hz = hz
             if tally is not None:
-                key = f"{key}-y{tally[0]}-{tally[1]}-{tally[2]}"
+                key = f"{key}-y{''.join(icon + text for icon, text in tally)}"
             if still:
                 key = f"{key}-s{still}"
 

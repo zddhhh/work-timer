@@ -264,6 +264,8 @@ class WorklogDialogMixin:
             else:
                 caption = f"{focus.month}/{focus.day} 周{worklog.WEEKDAY_CN[focus.weekday()]}"
             day_var.set(caption)
+        if activity.settle(self.cfg, datetime.now()):
+            self._activity_dirty = True
         activity_chart.paint_into(
             ui,
             self.cfg,
@@ -273,6 +275,7 @@ class WorklogDialogMixin:
             this_week=days[0] <= today <= days[-1],
             focus=focus,
             style=activity.chart_style(self.cfg),
+            mode=activity.chart_view(self.cfg),
         )
         self._style_chart_buttons(ui)
 
@@ -284,11 +287,27 @@ class WorklogDialogMixin:
                 fg=_CARD_FG if on else _CARD_MUTED,
                 font=("Microsoft YaHei UI", 9, "bold" if on else "normal"),
             )
+        view = activity.chart_view(self.cfg)
+        for key, btn in (ui.get("view_btns") or {}).items():
+            on = key == view
+            btn.configure(
+                fg=_CARD_FG if on else _CARD_MUTED,
+                font=("Microsoft YaHei UI", 9, "bold" if on else "normal"),
+            )
 
     def _set_chart_style(self, ui: dict, style: str) -> None:
         if activity.chart_style(self.cfg) == style:
             return
         activity.set_chart_style(self.cfg, style)
+        store.save_config(self.cfg)
+        self._style_chart_buttons(ui)
+        ui["chart_sig"] = None
+        self._paint_activity_chart(ui)
+
+    def _set_chart_view(self, ui: dict, view: str) -> None:
+        if activity.chart_view(self.cfg) == view:
+            return
+        activity.set_chart_view(self.cfg, view)
         store.save_config(self.cfg)
         self._style_chart_buttons(ui)
         ui["chart_sig"] = None
@@ -439,6 +458,14 @@ class WorklogDialogMixin:
             font=("Microsoft YaHei UI", 11, "bold"),
         ).pack(side="left", padx=(2, 6))
         _chev("›", 1, "next")
+        view_btns: dict[str, tk.Label] = {}
+        for key, label in (("inst", "瞬时"), ("avg", "均速"), ("counts", "次数")):
+            btn = tk.Label(
+                day_head, text=label, fg=_CARD_MUTED, bg=_CARD_BG,
+                font=("Microsoft YaHei UI", 9), cursor="hand2",
+            )
+            btn.pack(side="right", padx=(8, 0))
+            view_btns[key] = btn
         today_lbl = tk.Label(day_card, bg=_CARD_BG, bd=0, highlightthickness=0)
         today_lbl.pack(anchor="w")
 
@@ -516,6 +543,36 @@ class WorklogDialogMixin:
             keep_btns[days_n] = btn
         _style_keep()
 
+        slot_row = tk.Frame(sheet, bg=_CARD_BG)
+        slot_row.pack(fill="x", pady=(6, 0))
+        tk.Label(
+            slot_row, text="顶部三项", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+        ).pack(side="left")
+        slot_vars: list[tk.StringVar] = []
+        slot_labels = [label for _key, label in activity.CARD_CHOICES]
+
+        def pick_slot(index: int, _value: str | None = None) -> None:
+            updated = activity.set_card_slot(self.cfg, index, activity.card_id(slot_vars[index].get()))
+            for j, slot in enumerate(updated):
+                slot_vars[j].set(activity.card_label(slot))
+            store.save_config(self.cfg)
+            self._tally_at = 0.0
+            self._tally_speed_at = 0.0
+            self._tally_speed = None
+            self._last_key = ""
+
+        chosen = activity.card_slots(self.cfg)
+        for index in range(3):
+            var = tk.StringVar(value=activity.card_label(chosen[index]))
+            slot_vars.append(var)
+            menu = tk.OptionMenu(slot_row, var, *slot_labels, command=lambda _v, i=index: pick_slot(i))
+            menu.configure(
+                bg="#222733", fg=_CARD_FG, activebackground="#2a3344", activeforeground=_CARD_FG,
+                highlightthickness=0, relief="flat", font=("Microsoft YaHei UI", 9),
+            )
+            menu["menu"].configure(bg="#222733", fg=_CARD_FG, font=("Microsoft YaHei UI", 9))
+            menu.pack(side="left", padx=(8, 0))
+
         head_bg = "#191e28"
         entry_bg = "#2a3344"
         table = tk.Frame(sheet, bg=head_bg, highlightthickness=1, highlightbackground="#2c3444")
@@ -580,9 +637,12 @@ class WorklogDialogMixin:
             "keep_var": keep_var,
             "chart_sig": None,
             "chart_btns": chart_btns,
+            "view_btns": view_btns,
         }
         for key, btn in chart_btns.items():
             btn.bind("<Button-1>", lambda _e, s=key: self._set_chart_style(ui, s))
+        for key, btn in view_btns.items():
+            btn.bind("<Button-1>", lambda _e, s=key: self._set_chart_view(ui, s))
         self._style_chart_buttons(ui)
 
         def bind_chart(lbl: tk.Label, panel: str) -> None:

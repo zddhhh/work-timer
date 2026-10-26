@@ -78,6 +78,21 @@ def _wheel(d: ImageDraw.ImageDraw, x: int, cy: int, s: int, color=_ICON) -> int:
     return w
 
 
+def _as_parts(spec) -> tuple[tuple[str, str], ...]:
+    """三个整数是键盘、点击、滚轮次数。也可以直接给 (图标, 文字)。"""
+    if spec and isinstance(spec[0], tuple):
+        return tuple((str(icon), str(text)) for icon, text in spec)
+    return (
+        ("key", activity.fmt_count(int(spec[0]))),
+        ("mouse", activity.fmt_count(int(spec[1]))),
+        ("wheel", activity.fmt_count(int(spec[2]))),
+    )
+
+
+_DRAW = {"key": _keyboard, "mouse": _mouse, "wheel": _wheel}
+_ICON_W = {"key": 1.45, "mouse": 0.78, "wheel": 0.8}
+
+
 def render(keys: int, clicks: int, wheels: int, scale: float = 1.0) -> Image.Image:
     """深色胶囊，图标在前、数字在后。先按两倍画再缩小，小图标边缘不发毛。"""
     k = scale * _SS
@@ -87,16 +102,11 @@ def render(keys: int, clicks: int, wheels: int, scale: float = 1.0) -> Image.Ima
     inner = int(round(4 * k))
     sep = int(round(11 * k))
     h = int(round(23 * k))
-    parts = (
-        (_keyboard, activity.fmt_count(keys)),
-        (_mouse, activity.fmt_count(clicks)),
-        (_wheel, activity.fmt_count(wheels)),
-    )
+    parts = _as_parts((keys, clicks, wheels))
     probe = ImageDraw.Draw(Image.new("L", (1, 1)))
     widths = []
-    for draw_icon, text in parts:
-        iw = {_keyboard: int(icon * 1.45), _mouse: int(icon * 0.78), _wheel: int(icon * 0.8)}[draw_icon]
-        widths.append((iw, int(probe.textlength(text, font=font))))
+    for icon_name, text in parts:
+        widths.append((int(icon * _ICON_W[icon_name]), int(probe.textlength(text, font=font))))
     w = pad * 2 + sum(iw + inner + tw for iw, tw in widths) + sep * (len(parts) - 1)
     im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
@@ -105,8 +115,8 @@ def render(keys: int, clicks: int, wheels: int, scale: float = 1.0) -> Image.Ima
     x = pad
     box = probe.textbbox((0, 0), "0", font=font)
     ty = cy - (box[1] + box[3]) // 2
-    for (draw_icon, text), (iw, tw) in zip(parts, widths):
-        draw_icon(d, x, cy, icon)
+    for (icon_name, text), (iw, tw) in zip(parts, widths):
+        _DRAW[icon_name](d, x, cy, icon)
         x += iw + inner
         d.text((x, ty), text, font=font, fill=_TEXT)
         x += tw + sep
@@ -120,16 +130,11 @@ def _row(counts: tuple[int, int, int], scale: float, ink, shade) -> Image.Image 
     icon = max(6, int(round(11 * k)))
     inner = max(2, int(round(3 * k)))
     sep = max(4, int(round(8 * k)))
-    parts = (
-        (_keyboard, activity.fmt_count(counts[0])),
-        (_mouse, activity.fmt_count(counts[1])),
-        (_wheel, activity.fmt_count(counts[2])),
-    )
+    parts = _as_parts(counts)
     probe = ImageDraw.Draw(Image.new("L", (1, 1)))
     widths = []
-    for draw_icon, text in parts:
-        guess = {_keyboard: 1.45, _mouse: 0.78, _wheel: 0.8}[draw_icon]
-        widths.append((int(icon * guess), int(probe.textlength(text, font=font))))
+    for icon_name, text in parts:
+        widths.append((int(icon * _ICON_W[icon_name]), int(probe.textlength(text, font=font))))
     w = sum(iw + inner + tw for iw, tw in widths) + sep * (len(parts) - 1)
     h = int(round(16 * k))
     if w < 4 or h < 4:
@@ -141,8 +146,8 @@ def _row(counts: tuple[int, int, int], scale: float, ink, shade) -> Image.Image 
     ty = cy - (box[1] + box[3]) // 2
     for color, dx, dy in ((shade, _SS, _SS), (ink, 0, 0)):
         x = 0
-        for (draw_icon, text), (iw, tw) in zip(parts, widths):
-            draw_icon(d, x + dx, cy + dy, icon, color)
+        for (icon_name, text), (iw, tw) in zip(parts, widths):
+            _DRAW[icon_name](d, x + dx, cy + dy, icon, color)
             x += iw + inner
             d.text((x + dx, ty + dy), text, font=font, fill=color)
             x += tw + sep
