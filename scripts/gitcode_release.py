@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -116,9 +117,39 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def _git(*args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=ROOT, text=True, encoding="utf-8").strip()
+
+
+def ensure_release_tree() -> None:
+    """安装包按工作目录打。和远程 main 不一致，就会漏掉对方合进去的代码，或带上没提交的改动。"""
+    subprocess.check_call(["git", "fetch", "--quiet", "origin", "main"], cwd=ROOT)
+    dirty = _git("status", "--porcelain", "--untracked-files=no")
+    if dirty:
+        raise SystemExit(f"有没提交的改动，会被打进安装包。先提交推到 main，或 git stash：\n{dirty}")
+    if _git("rev-parse", "HEAD") != _git("rev-parse", "origin/main"):
+        raise SystemExit("本地和远程 main 不一致。先 git pull，把版本号提交推到 main，再发版。")
+
+
+def _version_key(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:4])
+
+
+def ensure_new_version(tok: str, ver: str) -> None:
+    """两个人都能发版：版本号必须比线上所有 Release 都新，撞号就停，不往别人的 Release 上传。"""
+    q = urllib.parse.urlencode({"direction": "desc", "page": 1, "per_page": 20})
+    items = api("GET", f"/repos/{OWNER}/{REPO}/releases?{q}", tok) or []
+    tags = [str(it.get("tag_name") or "") for it in items if isinstance(it, dict)]
+    taken = [t for t in tags if t and _version_key(t) >= _version_key(ver)]
+    if taken:
+        raise SystemExit(f"线上已有 {', '.join(taken)}，不比 {ver} 旧。先 git pull，再把版本号改大。")
+
+
 def main() -> None:
     tok = token()
+    ensure_release_tree()
     ver, tag = version_tag()
+    ensure_new_version(tok, ver)
     setups = ensure_setups(build="--no-build" not in sys.argv[1:])
     digests = {p.name: sha256_of(p) for p in setups}
     print(f"版本 {ver} / {tag}")
@@ -128,22 +159,19 @@ def main() -> None:
     # 新客户端按 `sha256(<附件名>): <hex>` 校验；老客户端只认第一个 `sha256: <hex>`，它们下的是主包。
     sha_lines = "\n".join(f"# sha256({n}): {h}" for n, h in digests.items())
     body = f"WorkTimer {ver}\n\n{RELEASE_NOTE}\n\n{sha_lines}\n\n# sha256: {digests[setups[0].name]}\n"
-    try:
-        api(
-            "POST",
-            f"/repos/{OWNER}/{REPO}/releases",
-            tok,
-            {
-                "tag_name": tag,
-                "name": f"WorkTimer {tag}",
-                "body": body,
-                "prerelease": False,
-                "target_commitish": "main",
-            },
-        )
-        print("Release 已创建:", tag)
-    except SystemExit as e:
-        print("创建 Release 返回:", e)
+    api(
+        "POST",
+        f"/repos/{OWNER}/{REPO}/releases",
+        tok,
+        {
+            "tag_name": tag,
+            "name": f"WorkTimer {tag}",
+            "body": body,
+            "prerelease": False,
+            "target_commitish": "main",
+        },
+    )
+    print("Release 已创建:", tag)
 
     for p in setups:
         upload_asset(tok, tag, p)

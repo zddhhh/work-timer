@@ -1,0 +1,11 @@
+# 仓库里一律存 LF。两人 core.autocrlf 不一样时，也不会出现整文件换行的改动。
+* text=auto
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.ttf binary
+*.otf binary

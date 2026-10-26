@@ -74,15 +74,19 @@ python main.py
 
 1.3.34 及更早的单文件版只认 `WorkTimer.exe`，找不到时取第一个 `.exe` 附件、校验第一行 `sha256:`，并把它当新 exe 带 `--ota-replace` 参数拉起。所以：主安装包必须先上传、文件名排序在前，说明里要保留一行主包的 `sha256:`；安装包认出这种拉起方式后会转成静默安装，新版启动后删掉老 exe 和 `%LOCALAPPDATA%\WorkTimer` 里的旧副本。
 
-发版只在 `mdslanruo` 这台已经配好令牌、`.venv` 和 `.venv38` 的机器上做：改 `version.py` 的 `APP_VERSION` → `scripts\gitcode_release.py`（打包两个安装包到 `release/`、创建 Release、把两个包的 sha256 写进说明、按顺序上传）。本地已打包测过的用 `--no-build` 直接发。
+发版：改 `version.py` 的 `APP_VERSION`、`docs/更新说明.md` 最上面一节和 `scripts\gitcode_release.py` 的 `RELEASE_NOTE`，提交进 `main`，拉到本地，再跑 `scripts\gitcode_release.py`（打包两个安装包到 `release/`、创建 Release、把两个包的 sha256 写进说明、按顺序上传）。脚本先确认工作目录没有未提交的改动、和远程 `main` 一致、版本号比线上所有 Release 都新，有一条不满足就不发。本地已打包测过的用 `--no-build` 直接发。
+
+发版机要有：`.venv`（3.12）和 `.venv38`（3.8），两个都跑过 `scripts\build_bootloader.py`；Inno Setup 6；WinLibs gcc；自己的 GitCode 令牌（`GITCODE_TOKEN` 或 `.gitcode_token`）。没有 `update_defaults.secret.json` 打出来的包，应用内反馈用不了。
 
 ## 两人协作
 
-维护者克隆这一份仓库：`https://gitcode.com/mdslanruo/work-timer.git`。从最新的 `main` 拉短分支，推上去再开合并请求。不要另建私仓。
+克隆这一份仓库：`https://gitcode.com/mdslanruo/work-timer.git`。从最新的 `main` 拉短分支，推上去再开合并请求。不要另建私仓。
 
 `main` 已保护。只有 `mdslanruo` 能直接推送和合并。合并请求会指给 `mdslanruo`，至少一人审核通过才能合，也不能合并自己开的请求。
 
-功能分支不要改 `version.py`，不要打 `v*` 标签，不要跑 `scripts\gitcode_release.py`。合进 `main` 之后，版本号和发版仍由上面那台发版机做。
+功能分支不要改 `version.py`、`docs/更新说明.md` 最上面一节和 `RELEASE_NOTE`。这三处每次发版都要改，放进功能分支两边会一直冲突。功能合进 `main` 之后，谁发版谁单独提交这三处（维护者的这次提交也走合并请求），发版前在群里说一声。
+
+合并请求提示冲突时，在自己的分支上 `git fetch origin`，再 `git merge origin/main`。解完冲突、测试通过再推。`mdslanruo` 直接推 `main` 之前也先 `git pull`。
 
 `themes.json` 一进 `main` 就会对所有用户换皮，跟代码一起走合并请求。
 
