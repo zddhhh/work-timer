@@ -128,15 +128,13 @@ end;
 
 { 运行库是否齐全，和 launcher/launcher.c、scripts/build_release.py 三处要一起改。 }
 function RuntimeReady(const Dir: String): Boolean;
-var
-  Py: Boolean;
 begin
 #ifdef Win7
-  Py := FileExists(Dir + '\python38.dll');
+  Result := FileExists(Dir + '\python38.dll') and FileExists(Dir + '\vcruntime140.dll');
 #else
-  Py := FileExists(Dir + '\python312.dll');
+  Result := FileExists(Dir + '\python312.dll') and FileExists(Dir + '\vcruntime140.dll')
+    and FileExists(Dir + '\vcruntime140_1.dll');
 #endif
-  Result := Py and FileExists(Dir + '\vcruntime140.dll') and FileExists(Dir + '\vcruntime140_1.dll');
 end;
 
 function PendingReady: Boolean;

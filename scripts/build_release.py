@@ -157,8 +157,11 @@ def compile_launcher() -> Path:
 
 def _require_runtime(dist: Path, win7: bool) -> None:
     internal = dist / "_internal"
-    py = "python38.dll" if win7 else "python312.dll"
-    missing = [name for name in (py, *_RUNTIME_DLLS) if not (internal / name).is_file()]
+    if win7:
+        names = ("python38.dll", "vcruntime140.dll")
+    else:
+        names = ("python312.dll", *_RUNTIME_DLLS)
+    missing = [name for name in names if not (internal / name).is_file()]
     if missing:
         raise SystemExit(f"运行库缺 {', '.join(missing)}，安装包不会把这一版换上去")
 

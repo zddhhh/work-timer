@@ -147,20 +147,20 @@ static int delete_tree(const wchar_t *dir) {
 
 static int runtime_ok(const wchar_t *dir) {
     wchar_t p[1024];
-    int py = 0;
+    int has312;
+    int has38;
     if (!join2(p, 1024, dir, L"python312.dll"))
         return 0;
-    if (file_exists(p))
-        py = 1;
+    has312 = file_exists(p);
     if (!join2(p, 1024, dir, L"python38.dll"))
         return 0;
-    if (file_exists(p))
-        py = 1;
-    if (!py)
+    has38 = file_exists(p);
+    if (!has312 && !has38)
         return 0;
     if (!join2(p, 1024, dir, L"vcruntime140.dll") || !file_exists(p))
         return 0;
-    if (!join2(p, 1024, dir, L"vcruntime140_1.dll") || !file_exists(p))
+    /* 3.12 还依赖 vcruntime140_1。Win7 的 3.8 包里没有这份，不能当成缺文件。 */
+    if (has312 && (!join2(p, 1024, dir, L"vcruntime140_1.dll") || !file_exists(p)))
         return 0;
     return 1;
 }

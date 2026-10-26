@@ -16,9 +16,6 @@ import boot_ok  # noqa: E402
 import build_release  # noqa: E402
 import desktop_shortcut  # noqa: E402
 
-_DLLS = ("python312.dll", "vcruntime140.dll", "vcruntime140_1.dll")
-
-
 def _gcc_dir() -> Path:
     return build_release._gcc_bin()
 
@@ -36,12 +33,15 @@ def _compile_stub(gcc_dir: Path, out: Path) -> None:
     )
 
 
-def _runtime(folder: Path, *, ok: bool = True) -> None:
+def _runtime(folder: Path, *, ok: bool = True, py: str = "python312.dll") -> None:
     internal = folder / "_internal"
     internal.mkdir(parents=True, exist_ok=True)
-    names = _DLLS if ok else ("python312.dll",)
-    for name in names:
-        (internal / name).write_bytes(b"x")
+    (internal / py).write_bytes(b"x")
+    if not ok:
+        return
+    (internal / "vcruntime140.dll").write_bytes(b"x")
+    if py == "python312.dll":
+        (internal / "vcruntime140_1.dll").write_bytes(b"x")
 
 
 def _exe(folder: Path, stub: bytes, tail: bytes) -> None:
@@ -195,6 +195,24 @@ class LauncherTests(unittest.TestCase):
             self.assertTrue((app / "WorkTimer.bin.exe").read_bytes().endswith(b"BAD!"))
             self.assertFalse((app / "_prev").exists())
             self.assertTrue((app / "bad-ran.txt").is_file())
+
+    def test_win7_runtime_swaps_without_vcruntime140_1(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = root / "app"
+            self._install_launcher(app)
+            _runtime(app, py="python38.dll")
+            _exe(app, self.stub, b"GOOD")
+            pending = app / "_pending"
+            _runtime(pending, py="python38.dll")
+            _exe(pending, self.stub, b"NEW1")
+            (pending / "READY").write_text("ok", encoding="ascii")
+            result = self._run(app, root / "boot")
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue((app / "WorkTimer.bin.exe").read_bytes().endswith(b"NEW1"))
+            self.assertTrue((app / "_internal" / "python38.dll").is_file())
+            self.assertFalse((app / "_internal" / "vcruntime140_1.dll").exists())
 
     def test_shortcut_points_at_the_launcher(self) -> None:
         import tempfile
