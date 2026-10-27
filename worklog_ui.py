@@ -1,6 +1,8 @@
 """工时账本窗口：一周的来了、走了，键鼠次数图，保留天数。"""
 from __future__ import annotations
 
+import ctypes
+import sys
 import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
@@ -52,6 +54,111 @@ def wheel_pixels(delta: int) -> int:
     if step == 0:
         return -1 if int(delta) > 0 else 1
     return step
+
+
+def _present_once(widget: tk.Misc, move) -> None:
+    """挪动前先停画，挪完再整块刷新。节电时子控件抢着画，会在半帧上撕开。"""
+    if sys.platform != "win32":
+        move()
+        return
+    try:
+        hwnd = int(widget.winfo_id())
+    except (tk.TclError, ValueError, OSError):
+        move()
+        return
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SendMessageW.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p,
+        ]
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+        user32.RedrawWindow.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
+        ]
+        user32.RedrawWindow.restype = ctypes.c_bool
+        user32.SendMessageW(hwnd, 11, 0, 0)  # WM_SETREDRAW
+        try:
+            move()
+        finally:
+            user32.SendMessageW(hwnd, 11, 1, 0)
+            user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0080)
+    except (AttributeError, OSError, ValueError):
+        move()
+
+
+class _ClipScroll(tk.Frame):
+    """固定视口，整页用 place 挪。
+
+    画布滚动会先抄一层像素再挪子窗口，键鼠图在 Windows 上会撕开。
+    子窗口超出视口的部分由系统裁掉，一次只挪整页。
+    """
+
+    def __init__(self, master: tk.Misc, **kwargs) -> None:
+        super().__init__(master, **kwargs)
+        self.pack_propagate(False)
+        self._sheet: tk.Frame | None = None
+        self._offset = 0
+        self._yscrollcommand = None
+
+    def attach(self, sheet: tk.Frame) -> None:
+        self._sheet = sheet
+        sheet.place(x=0, y=0, relwidth=1.0)
+
+    def set_yscrollcommand(self, command) -> None:
+        self._yscrollcommand = command
+
+    def _view_h(self) -> int:
+        return max(1, int(self.cget("height") or 1))
+
+    def _content_h(self) -> int:
+        sheet = self._sheet
+        if sheet is None:
+            return 1
+        return max(1, int(sheet.winfo_reqheight()))
+
+    def _span(self) -> tuple[float, float]:
+        total = self._content_h()
+        view = self._view_h()
+        if total <= view:
+            return (0.0, 1.0)
+        first = self._offset / total
+        return (first, min(1.0, (self._offset + view) / total))
+
+    def refresh(self, *, paint_once: bool = False) -> None:
+        total = self._content_h()
+        view = self._view_h()
+        self._offset = max(0, min(self._offset, max(0, total - view)))
+        if self._sheet is not None:
+            def move() -> None:
+                self._sheet.place(x=0, y=-self._offset, relwidth=1.0)
+
+            if paint_once:
+                _present_once(self, move)
+            else:
+                move()
+        if self._yscrollcommand is not None:
+            first, last = self._span()
+            self._yscrollcommand(first, last)
+
+    def yview(self, *args):
+        if not args:
+            return self._span()
+        if args[0] == "moveto" and len(args) >= 2:
+            self._offset = int(float(args[1]) * self._content_h())
+            self.refresh(paint_once=True)
+        elif args[0] == "scroll" and len(args) >= 2:
+            count = int(float(args[1]))
+            what = str(args[2]) if len(args) > 2 else "units"
+            step = self._view_h() if what == "pages" else 1
+            self._offset += count * step
+            self.refresh(paint_once=True)
+        return None
+
+    def yview_moveto(self, fraction: float) -> None:
+        self.yview("moveto", fraction)
+
+    def yview_scroll(self, number: int, what: str) -> None:
+        self.yview("scroll", number, what)
 
 
 class WorklogDialogMixin:
@@ -481,27 +588,28 @@ class WorklogDialogMixin:
         nav.pack(side="right")
         scroll_host = tk.Frame(body, bg=_CARD_BG)
         scroll_host.pack(anchor="nw", fill="y", expand=True)
-        scroll = tk.Canvas(
-            scroll_host, bg=_CARD_BG, highlightthickness=0, bd=0, relief="flat",
+        scroll = _ClipScroll(
+            scroll_host, bg=_CARD_BG, highlightthickness=0, bd=0,
             width=pair_w, height=200,
         )
         scroll_sb = tk.Scrollbar(
-            scroll_host, orient="vertical", command=scroll.yview, width=8,
+            scroll_host, orient="vertical", width=8,
             bg="#3a4254", activebackground="#5a6478", troughcolor=_CARD_BG,
             relief="flat", bd=0, highlightthickness=0,
         )
+
         def _on_scroll(*args) -> None:
             ui["scroll_until"] = time.monotonic() + 0.25
             if len(args) == 3 and args[0] == "scroll":
-                scroll.yview_scroll(int(args[1]) * 28, "units")
+                scroll.yview_scroll(int(float(args[1])) * 28, "units")
                 return
             scroll.yview(*args)
 
-        scroll.configure(yscrollcommand=scroll_sb.set, yscrollincrement=1)
+        scroll.set_yscrollcommand(scroll_sb.set)
         scroll_sb.configure(command=_on_scroll)
         scroll.pack(side="left", fill="y", expand=True)
         sheet = tk.Frame(scroll, bg=_CARD_BG)
-        scroll_win = scroll.create_window((0, 0), window=sheet, anchor="nw", width=pair_w)
+        scroll.attach(sheet)
         track_on = tk.BooleanVar(value=worklog.tracking_enabled(self.cfg))
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
 
@@ -856,7 +964,6 @@ class WorklogDialogMixin:
             "sheet": sheet,
             "scroll": scroll,
             "scroll_sb": scroll_sb,
-            "scroll_win": scroll_win,
             "pair_w": pair_w,
             "track_on": track_on,
             "act_on": act_on,
@@ -1068,8 +1175,7 @@ class WorklogDialogMixin:
             ui["scroll_h"] = height
             ui["scroll_view"] = view
             ui["scroll_w"] = width
-            scroll.configure(scrollregion=(0, 0, pair_w, height))
-            scroll.itemconfigure(scroll_win, width=pair_w)
+            scroll.refresh()
             shown = bool(scroll_sb.winfo_manager())
             if height > view + 4 and not shown:
                 scroll_sb.pack(side="right", fill="y")
@@ -1091,16 +1197,15 @@ class WorklogDialogMixin:
             return
         sheet.update_idletasks()
         sheet_h = max(1, int(sheet.winfo_reqheight()))
-        pair_w = int(ui.get("pair_w") or sheet.winfo_reqwidth() or 1)
-        canvas.itemconfigure(ui["scroll_win"], width=pair_w)
-        canvas.configure(height=sheet_h, scrollregion=(0, 0, pair_w, sheet_h))
+        canvas.configure(height=sheet_h)
+        canvas.yview_moveto(0)
         if sb is not None and sb.winfo_manager():
             sb.pack_forget()
         dlg.update_idletasks()
         natural = max(1, int(dlg.winfo_reqheight()))
         raw = int(screen_h if screen_h is not None else dlg.winfo_screenheight())
         view, scroll = scroll_view(sheet_h, natural, raw)
-        canvas.configure(height=view, scrollregion=(0, 0, pair_w, sheet_h))
+        canvas.configure(height=view)
         canvas.yview_moveto(0)
         dlg.update_idletasks()
         if sb is None:

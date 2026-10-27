@@ -1987,6 +1987,16 @@ class HabitTests(unittest.TestCase):
         self.assertIn("到岗比前几周晚了", text)
 
 
+class PowerSaveTests(unittest.TestCase):
+    def test_battery_caps_high_frame_rates(self):
+        import power_save
+
+        self.assertEqual(power_save.cap_hz(60, True), 20)
+        self.assertEqual(power_save.cap_hz(12, True), 12)
+        self.assertEqual(power_save.cap_hz(60, False), 60)
+        self.assertEqual(power_save.cap_hz(0, True), 0)
+
+
 class WorklogScrollTests(unittest.TestCase):
     def test_tall_screen_keeps_the_middle_full_height(self):
         import worklog_ui
@@ -2062,9 +2072,10 @@ class WorklogScrollTests(unittest.TestCase):
             dlg.update_idletasks()
             self.assertAlmostEqual(float(ui["scroll"].yview()[0]), held, places=2)
             ui["scroll"].yview_moveto(0)
-            ui["scroll"].event_generate("<MouseWheel>", delta=-120)
+            ui["scroll"].yview_scroll(worklog_ui.wheel_pixels(-120), "units")
             dlg.update_idletasks()
             self.assertGreater(float(ui["scroll"].yview()[0]), 0.0)
+            self.assertLess(int(ui["sheet"].place_info()["y"]), 0)
 
             worklog.set_note(host.cfg, date.today(), "9:00", "18:00")
             worklog.set_tracking_enabled(host.cfg, False)

@@ -33,6 +33,7 @@ import memos
 import meow
 import mines
 import ornaments
+import power_save
 import schedules
 import share
 import single_instance
@@ -1195,7 +1196,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         except Exception as e:  # noqa: BLE001
             store.log_exception("live-timer", e)
 
-    def _tick_alive(self) -> None:
+    def _tick_alive(self, *, paint: bool = True) -> None:
         """倒计时、动画、喝水提醒、日程轮播、工时。不采样桌面，避免在系统对话框里卡住。"""
         self._poll_key_hide()
         self._tick_trail()
@@ -1214,7 +1215,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_pin_rotate = now_m
             self._last_key = ""
         self._worklog_tick()
-        if not self.win.screen_asleep:
+        if paint and not self.win.screen_asleep:
             self._paint()
         self._prune_thunder_hits(now_m)
         self._prune_ink_hits(now_m)
@@ -1222,7 +1223,18 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
     def _card_frame(self) -> None:
         """自家弹窗循环里调用：比定时器多刷新工时账本那一行。"""
         try:
-            self._tick_alive()
+            paint = True
+            ui = getattr(self, "_worklog_ui", None)
+            if ui is not None and time.monotonic() < float(ui.get("scroll_until") or 0):
+                # 账本正在滑。这一帧把 CPU 留给窗口挪动，倒计时晚几十毫秒再画。
+                paint = False
+            elif power_save.saving():
+                now_m = time.monotonic()
+                if now_m - getattr(self, "_card_paint_at", 0.0) < 1.0 / power_save.BATTERY_HZ:
+                    paint = False
+                else:
+                    self._card_paint_at = now_m
+            self._tick_alive(paint=paint)
             self._refresh_worklog_live()
         except Exception as e:  # noqa: BLE001
             store.log_exception("card-frame", e)
@@ -2291,9 +2303,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 if asleep:
                     time.sleep(0.25)
                 elif now < self._surface_hot_until or kinetic.playing(self._kinetic, now):
-                    time.sleep(0.001)
+                    time.sleep(1.0 / power_save.frame_hz(FPS))
                 elif self._trail is not None and self._trail.hot:
-                    time.sleep(1 / 60)
+                    time.sleep(1.0 / power_save.frame_hz(FPS))
                 elif (
                     ornaments.is_animated(self._theme().kind)
                     or now < self._celebrate_until
@@ -2305,12 +2317,12 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                         and (self._mouse_lx >= 0 or self._neon_needs_frames(now))
                     )
                 ):
-                    # 睡到这张皮实际在画的帧率。60Hz 空转时，大半次醒来发现画面没变。
-                    hz = self._present_hz if self._present_hz > 0 else FPS
+                    # 睡到这张皮实际在画的帧率。节电时再收到 20 帧，避免降频后一帧画不完。
+                    hz = power_save.frame_hz(self._present_hz if self._present_hz > 0 else FPS)
                     time.sleep(1.0 / min(FPS, hz))
                 else:
                     # 无动画皮时 _paint 只在秒数变化才重绘，主循环没必要 60Hz 空转
-                    time.sleep(1.0 / IDLE_FPS)
+                    time.sleep(1.0 / power_save.frame_hz(IDLE_FPS))
             except Exception as e:  # noqa: BLE001
                 store.log_exception("loop", e)
                 time.sleep(0.05)
