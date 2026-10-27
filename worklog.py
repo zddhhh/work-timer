@@ -403,6 +403,7 @@ def row(cfg: dict, d: date, *, today: date | None = None) -> dict:
         "diff": diff,
         "arrive_gap": arrive_gap,
         "leave_gap": leave_gap,
+        "note_custom": bool(item.get("note_custom")),
         "src": item.get("src", ""),
         "closed": bool(item.get("closed")),
         "live": live,

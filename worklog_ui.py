@@ -288,16 +288,21 @@ class WorklogDialogMixin:
                 text="" if too_old else worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"]),
                 fg=_CARD_MUTED if too_old else self._note_gap_fg(r["arrive_gap"], r["leave_gap"]),
             )
+            can_reset = d == today and bool(r.get("note_custom")) and not too_old
+            slot["reset"].configure(
+                text="恢复默认" if can_reset else "",
+                fg=_CARD_ACCENT if can_reset else _CARD_MUTED,
+                cursor="hand2" if can_reset else "arrow",
+            )
             if d == today:
                 row_bg = "#243044"
             elif i % 2:
                 row_bg = "#1b212d"
             else:
                 row_bg = "#202634"
-            for w in (slot["date"], slot["came"], slot["left"], slot["dur"], slot["diff"], slot["gap"]):
-                w.configure(bg=row_bg)
             for w in slot.get("row_widgets", ()):
                 w.configure(bg=row_bg)
+            slot["card"].configure(highlightbackground="#38506f" if d == today else "#2c3444")
             slot["ein"].configure(disabledbackground=row_bg)
             slot["eout"].configure(disabledbackground=row_bg)
             ui["edits"].append((d, slot["vin"], slot["vout"], slot["vin"].get(), slot["vout"].get()))
@@ -726,75 +731,93 @@ class WorklogDialogMixin:
             font=("Microsoft YaHei UI", 10), pady=22,
         ).pack(fill="x")
 
-        head_bg = "#191e28"
         entry_bg = "#2a3344"
-        table = tk.Frame(sheet, bg=head_bg, highlightthickness=1, highlightbackground="#2c3444")
+        table = tk.Frame(sheet, bg=_CARD_BG)
         table.pack(fill="x", pady=(10, 0))
-        columns = (
-            ("日期", 138), ("", 48), ("", 84), ("", 40),
-            ("", 84), ("待了多久", 150), ("比该走", 190),
-        )
-        for c, (text, wide) in enumerate(columns):
-            table.columnconfigure(c, minsize=wide, weight=2 if c in (0, 6) else 1)
-            head = tk.Label(
-                table, text=text, fg=_CARD_MUTED, bg=head_bg, font=("Microsoft YaHei UI", 9),
-            )
-            head.grid(row=0, column=c, sticky="w", padx=(14 if c == 0 else 8, 6), pady=(8, 6))
-        tk.Label(
-            table, text="软件记录（只读）", fg=_CARD_MUTED, bg=head_bg,
-            font=("Microsoft YaHei UI", 9),
-        ).grid(row=0, column=1, columnspan=4, sticky="w", padx=8, pady=(8, 6))
+
+        def reset_today() -> None:
+            if not self._worklog_apply(ui):
+                return
+            today = date.today()
+            worklog.set_note(self.cfg, today, "", "")
+            sync_declared = getattr(self, "_sync_declared", None)
+            if callable(sync_declared):
+                sync_declared(today, force=True)
+            store.save_config(self.cfg)
+            self._fill_worklog(ui)
+            err.set("已恢复今天的倒计时时间")
+
         slots = []
         for i in range(7):
-            top = 1 + i * 2
-            bottom = top + 1
-            date_lbl = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
-            date_lbl.grid(row=top, column=0, rowspan=2, sticky="nsew", padx=(14, 6), pady=3)
-            came_tag = tk.Label(table, text="来", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 9), anchor="e")
-            left_tag = tk.Label(table, text="走", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 9), anchor="e")
-            came = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Consolas", 11), anchor="w")
-            left = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Consolas", 11), anchor="w")
-            came_tag.grid(row=top, column=1, sticky="ew", padx=(8, 2), pady=(4, 1))
-            came.grid(row=top, column=2, sticky="ew", padx=(2, 8), pady=(4, 1))
-            left_tag.grid(row=top, column=3, sticky="ew", padx=(4, 2), pady=(4, 1))
-            left.grid(row=top, column=4, sticky="ew", padx=(2, 8), pady=(4, 1))
-            dur = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
-            diff = tk.Label(table, text="", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
-            dur.grid(row=top, column=5, sticky="ew", padx=8, pady=(4, 1))
-            diff.grid(row=top, column=6, sticky="ew", padx=(8, 14), pady=(4, 1))
+            row_bg = "#202634"
+            card = tk.Frame(
+                table, bg=row_bg, highlightthickness=1, highlightbackground="#2c3444",
+            )
+            card.pack(fill="x", pady=(0, 6))
+            date_lbl = tk.Label(
+                card, text="", width=14, fg=_CARD_FG, bg=row_bg,
+                font=("Microsoft YaHei UI", 10), anchor="w",
+            )
+            date_lbl.pack(side="left", fill="y", padx=(12, 6), pady=8)
+            body = tk.Frame(card, bg=row_bg)
+            body.pack(side="left", fill="both", expand=True, pady=5)
+            recorded = tk.Frame(body, bg=row_bg)
+            recorded.pack(fill="x")
+            came_tag = tk.Label(recorded, text="记录", width=5, fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 8), anchor="w")
+            came = tk.Label(recorded, text="", fg=_CARD_FG, bg=row_bg, font=("Consolas", 11), anchor="w")
+            left = tk.Label(recorded, text="", fg=_CARD_FG, bg=row_bg, font=("Consolas", 11), anchor="w")
+            record_arrow = tk.Label(recorded, text="→", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9))
+            dur = tk.Label(recorded, text="", fg=_CARD_FG, bg=row_bg, font=("Microsoft YaHei UI", 9), anchor="w")
+            diff = tk.Label(recorded, text="", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9), anchor="w")
+            came_tag.pack(side="left")
+            came.pack(side="left", padx=(0, 6))
+            record_arrow.pack(side="left")
+            left.pack(side="left", padx=(6, 20))
+            dur.pack(side="left", padx=(0, 18))
+            diff.pack(side="left")
+            declared = tk.Frame(body, bg=row_bg)
+            declared.pack(fill="x", pady=(3, 0))
             note_tag = tk.Label(
-                table, text="自填", fg=_CARD_MUTED, bg="#202634",
-                font=("Microsoft YaHei UI", 8), anchor="e",
+                declared, text="自填", width=5, fg=_CARD_MUTED, bg=row_bg,
+                font=("Microsoft YaHei UI", 8), anchor="w",
             )
             vin = tk.StringVar()
             vout = tk.StringVar()
             ein = tk.Entry(
-                table, textvariable=vin, width=6, font=("Consolas", 11), justify="center",
+                declared, textvariable=vin, width=6, font=("Consolas", 10), justify="center",
                 bg=entry_bg, fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
                 highlightthickness=0, disabledbackground="#202634", disabledforeground=_CARD_MUTED,
             )
             eout = tk.Entry(
-                table, textvariable=vout, width=6, font=("Consolas", 11), justify="center",
+                declared, textvariable=vout, width=6, font=("Consolas", 10), justify="center",
                 bg=entry_bg, fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
                 highlightthickness=0, disabledbackground="#202634", disabledforeground=_CARD_MUTED,
             )
             arrow = tk.Label(
-                table, text="→", fg=_CARD_MUTED, bg="#202634",
+                declared, text="→", fg=_CARD_MUTED, bg=row_bg,
                 font=("Microsoft YaHei UI", 9), anchor="center",
             )
-            note_tag.grid(row=bottom, column=1, sticky="ew", padx=(8, 2), pady=(1, 5))
-            ein.grid(row=bottom, column=2, sticky="w", padx=(2, 8), pady=(1, 5), ipady=2)
-            arrow.grid(row=bottom, column=3, sticky="ew", padx=2, pady=(1, 5))
-            eout.grid(row=bottom, column=4, sticky="w", padx=(2, 8), pady=(1, 5), ipady=2)
-            gap = tk.Label(table, text="", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 9), anchor="w")
-            gap.grid(row=bottom, column=5, columnspan=2, sticky="ew", padx=(8, 14), pady=(1, 5))
+            gap = tk.Label(declared, text="", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9), anchor="w")
+            reset = tk.Label(
+                declared, text="", fg=_CARD_ACCENT, bg=row_bg,
+                font=("Microsoft YaHei UI", 8), cursor="arrow",
+            )
+            note_tag.pack(side="left")
+            ein.pack(side="left", ipady=1)
+            arrow.pack(side="left", padx=6)
+            eout.pack(side="left", ipady=1)
+            gap.pack(side="left", padx=(20, 8))
+            reset.pack(side="right", padx=(8, 12))
+            reset.bind("<Button-1>", lambda _e: reset_today())
             slots.append({
-                "date": date_lbl, "came": came, "left": left,
+                "card": card, "date": date_lbl, "came": came, "left": left,
                 "vin": vin, "vout": vout, "ein": ein, "eout": eout,
-                "dur": dur, "diff": diff, "gap": gap,
-                "row_widgets": (came_tag, left_tag, note_tag, arrow),
+                "dur": dur, "diff": diff, "gap": gap, "reset": reset,
+                "row_widgets": (
+                    card, date_lbl, body, recorded, declared, came_tag, came, left,
+                    record_arrow, dur, diff, note_tag, arrow, gap, reset,
+                ),
             })
-        tk.Frame(table, bg=head_bg, height=8).grid(row=15, column=0, columnspan=7, sticky="ew")
 
         ui = {
             "dlg": dlg,

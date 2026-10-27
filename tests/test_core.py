@@ -8,6 +8,7 @@ import unittest
 import urllib.error
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -1593,6 +1594,7 @@ class WorklogTests(unittest.TestCase):
         r = worklog.row(cfg, self.D.date())
         self.assertEqual((r["in"], r["out"]), (9 * 60, 19 * 60 + 30))
         self.assertEqual((r["note_in"], r["note_out"]), (8 * 60 + 50, 19 * 60 + 5))
+        self.assertTrue(r["note_custom"])
         self.assertEqual(r["arrive_gap"], 10)
         self.assertEqual(r["leave_gap"], 25)
         self.assertEqual(worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"]), "晚到10分，晚走25分")
@@ -1603,6 +1605,7 @@ class WorklogTests(unittest.TestCase):
         self.assertEqual((kept["in"], kept["out"]), (9 * 60, 19 * 60 + 30))
         self.assertNotIn("note_in", kept)
         self.assertNotIn("manual", kept)
+        self.assertFalse(worklog.row(cfg, self.D.date())["note_custom"])
 
     def test_should_track_includes_weekends_and_days_without_a_target(self):
         sat = datetime(2026, 10, 10, 10, 0)
@@ -2061,6 +2064,27 @@ class WorklogScrollTests(unittest.TestCase):
         finally:
             dlg.destroy()
             root.destroy()
+
+
+class BuildReleaseTests(unittest.TestCase):
+    def test_clean_build_env_drops_conda_dll_paths(self):
+        from scripts import build_release
+
+        raw = os.pathsep.join((
+            r"C:\Windows\System32",
+            r"C:\Users\me\Miniforge",
+            r"C:\Tools",
+        ))
+        with mock.patch.dict(
+            os.environ,
+            {"PATH": raw, "CONDA_PREFIX": r"C:\Users\me\Miniforge", "CONDA_SHLVL": "1"},
+            clear=False,
+        ):
+            env = build_release._clean_build_env()
+        self.assertNotIn("Miniforge", env["PATH"])
+        self.assertIn(r"C:\Windows\System32", env["PATH"])
+        self.assertNotIn("CONDA_PREFIX", env)
+        self.assertEqual(env["PYTHONNOUSERSITE"], "1")
 
 
 class ActivityTests(unittest.TestCase):

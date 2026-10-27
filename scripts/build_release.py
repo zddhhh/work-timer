@@ -177,6 +177,21 @@ def _iscc() -> Path:
     raise SystemExit("找不到 ISCC.exe：winget install JRSoftware.InnoSetup")
 
 
+def _clean_build_env() -> dict[str, str]:
+    """构建只能从当前 Python 和系统目录找 DLL，不能捎上外部 Conda 运行库。"""
+    env = dict(os.environ)
+    blocked = ("miniforge", "miniconda", "anaconda", "mambaforge")
+    paths = [
+        entry for entry in env.get("PATH", "").split(os.pathsep)
+        if entry and not any(name in entry.lower() for name in blocked)
+    ]
+    env["PATH"] = os.pathsep.join(paths)
+    env["PYTHONNOUSERSITE"] = "1"
+    for key in ("CONDA_PREFIX", "CONDA_DEFAULT_ENV", "CONDA_PROMPT_MODIFIER", "CONDA_SHLVL"):
+        env.pop(key, None)
+    return env
+
+
 def build(variant: str) -> Path:
     cfg = VARIANTS[variant]
     venv: Path = cfg["venv"]
@@ -210,8 +225,12 @@ def build(variant: str) -> Path:
     for mod in HIDDEN_IMPORTS:
         cmd += ["--hidden-import", mod]
     cmd.append(str(ROOT / "main.py"))
-    subprocess.check_call(cmd, cwd=ROOT)
+    subprocess.check_call(cmd, cwd=ROOT, env=_clean_build_env())
     _require_runtime(app_dir / DIST_NAME, cfg["win7"])
+    leaked = sorted((app_dir / DIST_NAME / "_internal").glob("api-ms-win-*.dll"))
+    if leaked:
+        names = ", ".join(p.name for p in leaked[:5])
+        raise SystemExit(f"打包环境混入了外部 Windows 兼容 DLL：{names}")
 
     OUT_DIR.mkdir(exist_ok=True)
     out = setup_path(variant)
