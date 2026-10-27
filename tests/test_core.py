@@ -1636,6 +1636,39 @@ class WorklogTests(unittest.TestCase):
         day = worklog.get_day(cfg, self.D.date())
         self.assertEqual((day["in"], day["out"]), (8 * 60 + 59, 9 * 60))
 
+    def test_standby_wake_does_not_count_as_input(self):
+        worklog.reset_wake_watch()
+        t0 = self.at(21, 0, 0)
+        # 睡着前：墙上时间和待机时钟一起走。
+        self.assertEqual(worklog.observe_clock(t0, wall=1000.0, unbiased_100ns=1000 * 10_000_000), "ok")
+        self.assertEqual(worklog.observe_clock(t0, wall=1001.0, unbiased_100ns=1001 * 10_000_000), "ok")
+        # 睡了两小时：墙上时间跳了，待机时钟几乎没动。
+        woke = t0 + timedelta(hours=2)
+        self.assertEqual(worklog.observe_clock(woke, wall=8201.0, unbiased_100ns=1002 * 10_000_000), "wake")
+        state = None
+        start = None
+        for sec in range(3):
+            when = woke + timedelta(seconds=sec + 1)
+            phase = worklog.observe_clock(when, wall=8201.0 + sec + 1, unbiased_100ns=(1003 + sec) * 10_000_000)
+            self.assertEqual(phase, "quiet")
+            # 主循环在 wake / quiet 时丢掉这段，不送进 note_second。
+            if phase != "ok":
+                state = None
+                continue
+            state, start = worklog.note_second(state, when)
+        self.assertIsNone(start)
+        later = woke + timedelta(seconds=worklog.WAKE_QUIET_SEC + 1)
+        self.assertEqual(
+            worklog.observe_clock(later, wall=8201.0 + worklog.WAKE_QUIET_SEC + 1, unbiased_100ns=1018 * 10_000_000),
+            "ok",
+        )
+        # 安静窗口过后，连续 3 秒的真输入仍然记来和走。
+        state = None
+        for extra in (0, 5, 12):
+            state, start = worklog.note_second(state, later + timedelta(seconds=extra))
+        self.assertEqual(start, later)
+        worklog.reset_wake_watch()
+
     def test_a_short_bump_does_not_move_the_span(self):
         cfg = {}
         self.prove(cfg, 18, 10, target=(18, 0))

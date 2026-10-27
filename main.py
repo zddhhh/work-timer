@@ -1106,15 +1106,22 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         if activity.settle(self.cfg, now):
             self._activity_dirty = True
         changed = worklog.touch_target(self.cfg, now.date(), self._off_hm())
-        idle = worklog.idle_seconds()
-        last = now - timedelta(seconds=max(0.0, idle))
         # 只认最后一次键鼠落在哪一秒。打开面板、退出都不算一次操作。
-        if last.date() == now.date():
-            self._burst, start = worklog.note_second(self._burst, last)
-            if start is not None and worklog.mark_span(
-                self.cfg, start, last, target_hm=self._off_hm()
-            ):
-                changed = True
+        # 睡眠醒来时空闲读数会被刷成 0，读失败也是 0；这两种都不算有人在用。
+        phase = worklog.observe_clock(now)
+        if phase != "ok":
+            self._burst = None
+        elif worklog.last_input_tick() is None:
+            pass
+        else:
+            idle = worklog.idle_seconds()
+            last = now - timedelta(seconds=max(0.0, idle))
+            if last.date() == now.date():
+                self._burst, start = worklog.note_second(self._burst, last)
+                if start is not None and worklog.mark_span(
+                    self.cfg, start, last, target_hm=self._off_hm()
+                ):
+                    changed = True
         if changed:
             self._worklog_dirty = True
         if (self._worklog_dirty or self._activity_dirty) and (flush or mono - self._worklog_save_at >= 180):

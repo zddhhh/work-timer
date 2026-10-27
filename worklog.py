@@ -18,6 +18,9 @@ IDLE_LIMIT_SEC = 300
 # 连续这么多秒里，有这么多个不同的秒出现过键鼠，才算一段真实上机。碰一下通常只有 1 秒。
 BURST_WINDOW_SEC = 30
 BURST_NEED = 3
+# 现代待机醒来时，系统会把「最后一次输入」刷成现在，空闲读数变成 0。
+# 醒来后这段时间里不把空闲读数写成来和走。真实键鼠过了这段再记，最多晚一分钟。
+WAKE_QUIET_SEC = 15
 WEEKDAY_CN = "一二三四五六日"
 
 
@@ -598,3 +601,65 @@ def idle_seconds() -> float:
         return ((tick - info.dwTime) & 0xFFFFFFFF) / 1000.0
     except Exception:  # noqa: BLE001
         return 0.0
+
+
+class _WakeWatch:
+    """墙上时钟在走、待机时钟停着，就是刚从睡眠里出来。"""
+
+    def __init__(self) -> None:
+        self.prev_wall: float | None = None
+        self.prev_unbiased: int | None = None
+        self.quiet_until: datetime | None = None
+
+    def reset(self) -> None:
+        self.prev_wall = None
+        self.prev_unbiased = None
+        self.quiet_until = None
+
+    def observe(self, now: datetime, wall: float, unbiased_100ns: int) -> str:
+        gap = False
+        if self.prev_wall is not None and self.prev_unbiased is not None:
+            wall_delta = wall - self.prev_wall
+            unbiased_sec = (unbiased_100ns - self.prev_unbiased) / 10_000_000
+            # 待机时墙上的时间继续走，QueryUnbiasedInterruptTime 停住。
+            gap = wall_delta >= 5 and unbiased_sec >= 0 and wall_delta > unbiased_sec + 2
+        self.prev_wall = wall
+        self.prev_unbiased = unbiased_100ns
+        if gap:
+            self.quiet_until = now + timedelta(seconds=WAKE_QUIET_SEC)
+            return "wake"
+        if self.quiet_until is not None and now < self.quiet_until:
+            return "quiet"
+        return "ok"
+
+
+_wake_watch = _WakeWatch()
+
+
+def reset_wake_watch() -> None:
+    _wake_watch.reset()
+
+
+def _unbiased_100ns() -> int | None:
+    """不含睡眠的中断时间，单位 100 纳秒。Win7 起就有这个接口。"""
+    try:
+        fn = ctypes.windll.kernel32.QueryUnbiasedInterruptTime
+        fn.argtypes = [ctypes.POINTER(ctypes.c_ulonglong)]
+        fn.restype = ctypes.c_int
+        value = ctypes.c_ulonglong()
+        if not fn(ctypes.byref(value)):
+            return None
+        return int(value.value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def observe_clock(now: datetime, *, wall: float | None = None, unbiased_100ns: int | None = None) -> str:
+    """刚醒来返回 wake，安静窗口里返回 quiet，平时返回 ok。读不到待机时钟就当 ok。"""
+    if wall is None:
+        wall = now.timestamp()
+    if unbiased_100ns is None:
+        unbiased_100ns = _unbiased_100ns()
+    if unbiased_100ns is None:
+        return "ok"
+    return _wake_watch.observe(now, wall, unbiased_100ns)
