@@ -2018,11 +2018,15 @@ class WorklogScrollTests(unittest.TestCase):
             def _dialog_near(self):
                 return (40, 40)
 
+            def _sync_declared(self, day):
+                return worklog.sync_declared(self.cfg, day, mode="direct", off=(18, 0))
+
         host = Host()
         ui = host._build_worklog_dialog()
         dlg = ui["dlg"]
         try:
             host._fill_worklog(ui)
+            self.assertEqual(worklog.row(host.cfg, date.today())["note_out"], 18 * 60)
             self.assertIs(ui["month_lbl"].master, ui["sums"])
             self.assertIs(ui["sums"].master, dlg)
             self.assertIs(ui["sheet"].master, ui["scroll"])
@@ -2035,6 +2039,7 @@ class WorklogScrollTests(unittest.TestCase):
             dlg.update_idletasks()
             self.assertTrue(ui["scroll_sb"].winfo_manager())
             self.assertEqual(ui["controls"].winfo_manager(), "pack")
+            self.assertLessEqual(ui["table"].winfo_reqwidth(), ui["pair_w"])
             self.assertLess(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
             self.assertLessEqual(int(dlg.winfo_reqheight()) + 24, 720 - 48 + 8)
             host._fit_worklog_scroll(ui, screen_h=1600)

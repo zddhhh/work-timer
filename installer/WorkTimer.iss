@@ -60,8 +60,9 @@ OutputBaseFilename={#OutputName}
 SetupIconFile=..\assets\app.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName=下班倒计时
-Compression=lzma2/max
-SolidCompression=yes
+; 不做高熵固实压缩：包会稍大，但更接近普通安装程序，减少 360 QVM 一类启发式误报
+Compression=zip
+SolidCompression=no
 WizardStyle=modern
 ShowLanguageDialog=no
 ArchitecturesAllowed=x64compatible
