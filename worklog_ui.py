@@ -91,20 +91,24 @@ class WorklogDialogMixin:
             text = self._worklog_dur_text(r, now)
             if slot["dur"].cget("text") != text:
                 slot["dur"].configure(text=text)
+            came = worklog.fmt_clock(r["in"])
+            left = worklog.fmt_clock(r["out"])
+            if slot["came"].cget("text") != came:
+                slot["came"].configure(text=came)
+                touched = True
+            if slot["left"].cget("text") != left:
+                slot["left"].configure(text=left)
+                touched = True
             diff_text = worklog.fmt_diff(r["diff"])
             if slot["diff"].cget("text") != diff_text:
                 slot["diff"].configure(text=diff_text, fg=self._worklog_diff_fg(r["diff"]))
                 touched = True
-            out_s = worklog.fmt_clock(r["out"])
-            if slot.get("auto_out") == slot["vout"].get() and out_s != slot.get("auto_out"):
-                slot["vout"].set(out_s)
-                slot["auto_out"] = out_s
-                edits = ui["edits"]
-                for i, (ed, vin, vout, old_in, _old_out) in enumerate(edits):
-                    if ed == d:
-                        edits[i] = (ed, vin, vout, old_in, out_s)
-                        break
+            gap_text = worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"])
+            if slot["gap"].cget("text") != gap_text:
+                slot["gap"].configure(text=gap_text, fg=self._note_gap_fg(r["arrive_gap"], r["leave_gap"]))
                 touched = True
+            self._follow_declared(ui, d, slot, "in", worklog.fmt_clock(r["note_in"]))
+            self._follow_declared(ui, d, slot, "out", worklog.fmt_clock(r["note_out"]))
             break
         if not touched:
             self._set_habit(ui, days, today)
@@ -181,6 +185,32 @@ class WorklogDialogMixin:
         self._worklog_ui = ui
         return ui
 
+    def _follow_declared(self, ui: dict, d: date, slot: dict, field: str, text: str) -> None:
+        """默认值后到时填进格子。用户已经改过的那一格不动。"""
+        shown_key = "shown_" + field
+        var = slot["vin" if field == "in" else "vout"]
+        if slot.get(shown_key) != var.get() or text == slot.get(shown_key):
+            return
+        var.set(text)
+        slot[shown_key] = text
+        edits = ui.get("edits") or []
+        for i, (ed, vin, vout, old_in, old_out) in enumerate(edits):
+            if ed != d:
+                continue
+            if field == "in":
+                edits[i] = (ed, vin, vout, text, old_out)
+            else:
+                edits[i] = (ed, vin, vout, old_in, text)
+            break
+
+    def _note_gap_fg(self, arrive: int | None, leave: int | None) -> str:
+        vals = [v for v in (arrive, leave) if isinstance(v, int)]
+        if not vals or all(v == 0 for v in vals):
+            return _CARD_MUTED
+        if any(v > 0 for v in vals):
+            return "#ffc46b"
+        return "#ff8b8b"
+
     def _worklog_diff_fg(self, v: int | None) -> str:
         if v is None or v == 0:
             return _CARD_MUTED
@@ -191,7 +221,7 @@ class WorklogDialogMixin:
         for d, vin, vout, old_in, old_out in ui["edits"]:
             if vin.get().strip() == old_in and vout.get().strip() == old_out:
                 continue
-            msg = worklog.set_manual(self.cfg, d, vin.get(), vout.get())
+            msg = worklog.set_note(self.cfg, d, vin.get(), vout.get())
             if msg:
                 ui["err"].set(msg)
                 return False
@@ -235,10 +265,14 @@ class WorklogDialogMixin:
                 fg=fg,
                 font=("Microsoft YaHei UI", 10, "bold" if d == today else "normal"),
             )
-            out_s = "" if too_old else worklog.fmt_clock(r["out"])
-            slot["auto_out"] = out_s
-            slot["vin"].set("" if too_old else worklog.fmt_clock(r["in"]))
-            slot["vout"].set(out_s)
+            slot["came"].configure(text="" if too_old else worklog.fmt_clock(r["in"]))
+            slot["left"].configure(text="" if too_old else worklog.fmt_clock(r["out"]))
+            note_in = "" if too_old else worklog.fmt_clock(r["note_in"])
+            note_out = "" if too_old else worklog.fmt_clock(r["note_out"])
+            slot["vin"].set(note_in)
+            slot["vout"].set(note_out)
+            slot["shown_in"] = note_in
+            slot["shown_out"] = note_out
             state = "disabled" if d > today or too_old else "normal"
             slot["ein"].configure(state=state)
             slot["eout"].configure(state=state)
@@ -247,13 +281,17 @@ class WorklogDialogMixin:
                 text="" if too_old else worklog.fmt_diff(r["diff"]),
                 fg=self._worklog_diff_fg(None if too_old else r["diff"]),
             )
+            slot["gap"].configure(
+                text="" if too_old else worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"]),
+                fg=_CARD_MUTED if too_old else self._note_gap_fg(r["arrive_gap"], r["leave_gap"]),
+            )
             if d == today:
                 row_bg = "#243044"
             elif i % 2:
                 row_bg = "#1b212d"
             else:
                 row_bg = "#202634"
-            for w in (slot["date"], slot["dur"], slot["diff"]):
+            for w in (slot["date"], slot["came"], slot["left"], slot["dur"], slot["diff"], slot["gap"]):
                 w.configure(bg=row_bg)
             slot["ein"].configure(disabledbackground=row_bg)
             slot["eout"].configure(disabledbackground=row_bg)
@@ -683,12 +721,22 @@ class WorklogDialogMixin:
             font=("Microsoft YaHei UI", 10), pady=22,
         ).pack(fill="x")
 
+        tk.Label(
+            sheet,
+            text="来了、走了不能改。自填默认跟着倒计时：弹性用填写的到岗和推算下班，固定下班用当天首次上机和固定时间。这两格可以自己改。",
+            fg=_CARD_MUTED, bg=_CARD_BG, justify="left", anchor="w",
+            font=("Microsoft YaHei UI", 8), wraplength=pair_w,
+        ).pack(anchor="w", pady=(10, 0))
         head_bg = "#191e28"
         entry_bg = "#2a3344"
         table = tk.Frame(sheet, bg=head_bg, highlightthickness=1, highlightbackground="#2c3444")
-        table.pack(fill="x", pady=(10, 0))
-        for c, (text, wide) in enumerate((("日期", 148), ("来了", 78), ("走了", 78), ("待了多久", 120), ("比该走", 100))):
-            table.columnconfigure(c, minsize=wide, weight=2 if c == 0 else 1)
+        table.pack(fill="x", pady=(6, 0))
+        columns = (
+            ("日期", 128), ("来了", 64), ("走了", 64), ("待了多久", 108),
+            ("比该走", 88), ("自填到岗", 78), ("自填下班", 78), ("和记录差", 168),
+        )
+        for c, (text, wide) in enumerate(columns):
+            table.columnconfigure(c, minsize=wide, weight=2 if c in (0, 7) else 1)
             tk.Label(
                 table, text=text, fg=_CARD_MUTED, bg=head_bg, font=("Microsoft YaHei UI", 9),
             ).grid(row=0, column=c, sticky="w", padx=(14 if c == 0 else 8, 6), pady=(8, 6))
@@ -696,6 +744,14 @@ class WorklogDialogMixin:
         for i in range(1, 8):
             date_lbl = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
             date_lbl.grid(row=i, column=0, sticky="ew", padx=(14, 6), pady=3)
+            came = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Consolas", 11), anchor="w")
+            left = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Consolas", 11), anchor="w")
+            came.grid(row=i, column=1, sticky="ew", padx=8, pady=3)
+            left.grid(row=i, column=2, sticky="ew", padx=8, pady=3)
+            dur = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
+            diff = tk.Label(table, text="", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
+            dur.grid(row=i, column=3, sticky="ew", padx=8)
+            diff.grid(row=i, column=4, sticky="ew", padx=8)
             vin = tk.StringVar()
             vout = tk.StringVar()
             ein = tk.Entry(
@@ -708,14 +764,16 @@ class WorklogDialogMixin:
                 bg=entry_bg, fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
                 highlightthickness=0, disabledbackground="#202634", disabledforeground=_CARD_MUTED,
             )
-            ein.grid(row=i, column=1, sticky="w", padx=8, pady=3, ipady=2)
-            eout.grid(row=i, column=2, sticky="w", padx=8, pady=3, ipady=2)
-            dur = tk.Label(table, text="", fg=_CARD_FG, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
-            diff = tk.Label(table, text="", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 10), anchor="w")
-            dur.grid(row=i, column=3, sticky="ew", padx=8)
-            diff.grid(row=i, column=4, sticky="ew", padx=(8, 14))
-            slots.append({"date": date_lbl, "vin": vin, "vout": vout, "ein": ein, "eout": eout, "dur": dur, "diff": diff})
-        tk.Frame(table, bg=head_bg, height=8).grid(row=8, column=0, columnspan=5, sticky="ew")
+            ein.grid(row=i, column=5, sticky="w", padx=8, pady=3, ipady=2)
+            eout.grid(row=i, column=6, sticky="w", padx=8, pady=3, ipady=2)
+            gap = tk.Label(table, text="", fg=_CARD_MUTED, bg="#202634", font=("Microsoft YaHei UI", 9), anchor="w")
+            gap.grid(row=i, column=7, sticky="ew", padx=(8, 14))
+            slots.append({
+                "date": date_lbl, "came": came, "left": left,
+                "vin": vin, "vout": vout, "ein": ein, "eout": eout,
+                "dur": dur, "diff": diff, "gap": gap,
+            })
+        tk.Frame(table, bg=head_bg, height=8).grid(row=8, column=0, columnspan=8, sticky="ew")
 
         ui = {
             "dlg": dlg,
@@ -823,7 +881,7 @@ class WorklogDialogMixin:
 
         def save() -> None:
             if not worklog.tracking_enabled(self.cfg):
-                err.set("先开启「记录来 / 走时间」才能修改工时。")
+                err.set("先开启「记录来 / 走时间」才能修改自己填的时间。")
                 return
             if self._worklog_apply(ui):
                 self._fill_worklog(ui)

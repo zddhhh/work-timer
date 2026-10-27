@@ -1,8 +1,10 @@
 """工时账本：每天到岗 / 离开时刻，周、月统计与 CSV 导出。
 
-cfg["worklog"] = {"YYYY-MM-DD": {"in": 分钟, "out": 分钟, "target": 分钟, "src": "flex|seen",
-                                 "closed": bool, "manual": bool}}
-分钟 = 当天 0 点起的分钟数。开着记录时，来和走按实际上机：30 秒里凑满 3 个不同的秒才算，含周末。
+cfg["worklog"] = {"YYYY-MM-DD": {"in": 分钟, "out": 分钟, "target": 分钟,
+                                 "note_in": 分钟, "note_out": 分钟, "src": "flex|seen"}}
+分钟 = 当天 0 点起的分钟数。in / out 只由软件按实际上机写入，不能手改。
+note_in / note_out 是用户自己填的到岗和下班，只用来对照。
+开着记录时，来和走按 30 秒里凑满 3 个不同的秒才算，含周末。
 """
 from __future__ import annotations
 
@@ -90,6 +92,24 @@ def fmt_diff(minutes: int | None) -> str:
     return label + fmt_span(abs(int(minutes)))
 
 
+def fmt_note_gap(kind: str, minutes: int | None) -> str:
+    """自填钟点和软件记录的差别。正数是软件更晚。"""
+    if minutes is None:
+        return ""
+    if minutes == 0:
+        return "到岗一致" if kind == "in" else "离开一致"
+    if kind == "in":
+        label = "晚到" if minutes > 0 else "早到"
+    else:
+        label = "晚走" if minutes > 0 else "早走"
+    return label + fmt_span(abs(int(minutes)))
+
+
+def fmt_note_compare(arrive: int | None, leave: int | None) -> str:
+    parts = [fmt_note_gap("in", arrive), fmt_note_gap("out", leave)]
+    return "，".join(part for part in parts if part)
+
+
 def fmt_hms(total_seconds: int) -> str:
     total = max(0, int(total_seconds))
     h, rem = divmod(total, 3600)
@@ -133,17 +153,22 @@ def ensure_fields(cfg: dict, *, today: date | None = None, keep_days: int | None
         except ValueError:
             continue
         item: dict = {}
-        for f in ("in", "out", "target"):
+        for f in ("in", "out", "target", "note_in", "note_out"):
             m = _as_min(v.get(f))
             if m is not None:
                 item[f] = m
-        if not item:
+        # 旧的手改覆盖过软件时间，原记录已经找不回。那些钟点改记成自填，软件从下次真实操作重新记。
+        if v.get("manual"):
+            if "note_in" not in item and "in" in item:
+                item["note_in"] = item.pop("in")
+            if "note_out" not in item and "out" in item:
+                item["note_out"] = item.pop("out")
+            item["note_custom"] = True
+        elif v.get("note_custom") and ("note_in" in item or "note_out" in item):
+            item["note_custom"] = True
+        if not any(f in item for f in ("in", "out", "target", "note_in", "note_out")):
             continue
         item["src"] = "flex" if v.get("src") == "flex" else "seen"
-        if v.get("closed"):
-            item["closed"] = True
-        if v.get("manual"):
-            item["manual"] = True
         cleaned[k] = item
     cfg["worklog"] = cleaned
 
@@ -208,11 +233,11 @@ def note_input(
 
 
 def touch_target(cfg: dict, day: date, target_hm: tuple[int, int] | None) -> bool:
-    """已有的一天跟上应下班。还没记下上机、或手改、已封上的日子不动。"""
+    """已有的一天跟上应下班。还没记下上机的日子不动。自填时间不挡住它。"""
     if target_hm is None:
         return False
     item = get_day(cfg, day)
-    if not isinstance(item, dict) or item.get("manual") or item.get("closed"):
+    if not isinstance(item, dict):
         return False
     target = int(target_hm[0]) * 60 + int(target_hm[1])
     if item.get("target") == target:
@@ -234,8 +259,6 @@ def mark_span(
     book = _days(cfg)
     key = _key(end.date())
     item = book.get(key)
-    if isinstance(item, dict) and (item.get("manual") or item.get("closed")):
-        return False
     in_min = start.hour * 60 + start.minute
     out_min = end.hour * 60 + end.minute
     if not (0 <= in_min < 24 * 60 and 0 <= out_min < 24 * 60) or out_min < in_min:
@@ -271,53 +294,116 @@ def last_active_minute(now: datetime, idle_sec: float) -> int | None:
     return last.hour * 60 + last.minute
 
 
-def set_manual(cfg: dict, d: date, in_text: str, out_text: str) -> str | None:
-    """手改某天。两个都留空 = 删除这天。返回错误文案，成功返回 None。"""
+def set_note(cfg: dict, d: date, in_text: str, out_text: str) -> str | None:
+    """改用户自己填的到岗和下班。两个都留空 = 清掉自填，软件记录保留。"""
     in_text = (in_text or "").strip()
     out_text = (out_text or "").strip()
     book = _days(cfg)
     k = _key(d)
     if not in_text and not out_text:
-        book.pop(k, None)
+        item = book.get(k)
+        if isinstance(item, dict):
+            item.pop("note_in", None)
+            item.pop("note_out", None)
+            item.pop("note_custom", None)
+            item.pop("manual", None)
+            if not any(f in item for f in ("in", "out", "target")):
+                book.pop(k, None)
         return None
     pin = flex_time.parse_clock(in_text) if in_text else None
     pout = flex_time.parse_clock(out_text) if out_text else None
     if in_text and pin is None:
-        return f"{d.month}/{d.day} 到岗时间看不懂：{in_text}"
+        return f"{d.month}/{d.day} 自填到岗看不懂：{in_text}"
     if out_text and pout is None:
-        return f"{d.month}/{d.day} 离开时间看不懂：{out_text}"
+        return f"{d.month}/{d.day} 自填下班看不懂：{out_text}"
     mi = None if pin is None else pin[0] * 60 + pin[1]
     mo = None if pout is None else pout[0] * 60 + pout[1]
     if mi is not None and mo is not None and mo < mi:
-        return f"{d.month}/{d.day} 离开早于到岗"
+        return f"{d.month}/{d.day} 自填下班早于到岗"
     item = book.setdefault(k, {"src": "seen"})
-    for f, v in (("in", mi), ("out", mo)):
+    for f, v in (("note_in", mi), ("note_out", mo)):
         if v is None:
             item.pop(f, None)
         else:
             item[f] = v
-    item["manual"] = True
-    item.pop("closed", None)
+    item["note_custom"] = True
+    item.pop("manual", None)
     return None
+
+
+def _put_note(item: dict, key: str, minutes: int | None) -> bool:
+    if minutes is None:
+        if key not in item:
+            return False
+        item.pop(key, None)
+        return True
+    if item.get(key) == minutes:
+        return False
+    item[key] = minutes
+    return True
+
+
+def sync_declared(
+    cfg: dict,
+    d: date,
+    *,
+    mode: str,
+    start: tuple[int, int] | None = None,
+    off: tuple[int, int] | None = None,
+    force: bool = False,
+) -> bool:
+    """自填默认跟着倒计时。用户改过之后保持原样，除非刚在设置里重填。"""
+    item = get_day(cfg, d)
+    if not force and isinstance(item, dict) and item.get("note_custom"):
+        return False
+    if mode == "flex":
+        if start is None:
+            return False
+        arrived = int(start[0]) * 60 + int(start[1])
+        left_hm = off if off is not None else flex_time.offwork_hm(*start)
+        left = int(left_hm[0]) * 60 + int(left_hm[1])
+    elif mode == "direct":
+        if off is None:
+            return False
+        left = int(off[0]) * 60 + int(off[1])
+        first = _as_min(item.get("in")) if isinstance(item, dict) else None
+        current = _as_min(item.get("note_in")) if isinstance(item, dict) else None
+        arrived = first if first is not None else (None if force else current)
+    else:
+        return False
+    book = _days(cfg)
+    stored = book.setdefault(_key(d), {"src": "seen"})
+    changed = _put_note(stored, "note_in", arrived)
+    changed = _put_note(stored, "note_out", left) or changed
+    if stored.pop("note_custom", None):
+        changed = True
+    stored.pop("manual", None)
+    return changed
 
 
 def row(cfg: dict, d: date, *, today: date | None = None) -> dict:
     item = get_day(cfg, d) or {}
     mi, mo, mt = _as_min(item.get("in")), _as_min(item.get("out")), _as_min(item.get("target"))
+    note_in, note_out = _as_min(item.get("note_in")), _as_min(item.get("note_out"))
     dur = mo - mi if mi is not None and mo is not None else None
     # 还没到应下班就用「离开-应下班」，下午会显示成大段早退。过了应下班再显示差额。
-    live = d == (today or date.today()) and mo is not None and not (item.get("closed") or item.get("manual"))
+    live = d == (today or date.today()) and mo is not None
     show_diff = mo is not None and mt is not None and (not live or mo >= mt)
     diff = (mo - mt) if show_diff else None
+    arrive_gap = mi - note_in if mi is not None and note_in is not None else None
+    leave_gap = mo - note_out if mo is not None and note_out is not None else None
     return {
         "date": d,
         "in": mi,
         "out": mo,
         "target": mt,
+        "note_in": note_in,
+        "note_out": note_out,
         "dur": dur,
         "diff": diff,
+        "arrive_gap": arrive_gap,
+        "leave_gap": leave_gap,
         "src": item.get("src", ""),
-        "manual": bool(item.get("manual")),
         "closed": bool(item.get("closed")),
         "live": live,
     }
@@ -580,12 +666,12 @@ def summary_text(label: str, s: dict) -> str:
 def to_csv(cfg: dict, dates: list[date]) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["日期", "星期", "来了", "走了", "待了多久", "该走", "比该走", "来源"])
+    w.writerow(["日期", "星期", "来了", "走了", "待了多久", "该走", "比该走", "自填到岗", "自填下班", "到岗差", "离开差", "来源"])
     for d in dates:
         r = row(cfg, d)
-        if r["in"] is None and r["out"] is None:
+        if r["in"] is None and r["out"] is None and r["note_in"] is None and r["note_out"] is None:
             continue
-        src = "手改" if r["manual"] else ("弹性打卡" if r["src"] == "flex" else "自动")
+        src = "弹性打卡" if r["src"] == "flex" else "自动"
         w.writerow(
             [
                 _key(d),
@@ -595,6 +681,10 @@ def to_csv(cfg: dict, dates: list[date]) -> str:
                 fmt_span(r["dur"]),
                 fmt_clock(r["target"]),
                 fmt_diff(r["diff"]),
+                fmt_clock(r["note_in"]),
+                fmt_clock(r["note_out"]),
+                fmt_note_gap("in", r["arrive_gap"]),
+                fmt_note_gap("out", r["leave_gap"]),
                 src,
             ]
         )

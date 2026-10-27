@@ -772,9 +772,6 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 snap = worklog.last_input_snapshot()
                 self._last_input_seen = snap[0] if snap is not None else None
             self._note_work_input(now)
-        day = worklog.get_day(self.cfg, now.date())
-        if day and (day.get("closed") or day.get("manual")):
-            return
         if delta is not None and activity.add_travel(self.cfg, delta[0], delta[1], now):
             self._activity_dirty = True
         if kind and activity.note(self.cfg, kind, now):
@@ -1121,18 +1118,29 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.cfg["time_mode"] = mode
         self.cfg["start_date"] = self._today()
         self._clear_session_stale()
+        today = datetime.now().date()
         if mode == "flex":
             self.cfg["start_h"], self.cfg["start_m"] = hm
-            # 弹性只推算倒计时。账本的来和走看实际上机，不采用这里填的钟点。
         else:
             self.cfg["off_h"], self.cfg["off_m"] = hm
             self.cfg["remember_offwork"] = bool(remember)
+        self._sync_declared(today, force=True)
         schedules.ensure_fields(self.cfg)
         schedules.set_pinned(self.cfg, schedules.OFFWORK_ID, True)
         self.cfg["active_pin_id"] = schedules.OFFWORK_ID
         self._worklog_tick(force=True)
         store.save_config(self.cfg)
         self._last_key = ""
+
+    def _sync_declared(self, day: date, *, force: bool = False) -> bool:
+        """自填默认跟着倒计时。弹性用填写的到岗和推算下班；固定下班用首次上机和固定时间。"""
+        if not self._has_target():
+            return False
+        mode = self._time_mode()
+        start = self._start_hm() if mode == "flex" else None
+        return worklog.sync_declared(
+            self.cfg, day, mode=mode, start=start, off=self._off_hm(), force=force,
+        )
 
     def _worklog_tick(self, *, force: bool = False, flush: bool = False) -> None:
         mono = time.monotonic()
@@ -1162,6 +1170,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             )
             if tracking and last is not None and last.date() == now.date():
                 self._note_work_input(last)
+        if self._sync_declared(now.date()):
+            changed = True
         if changed:
             self._worklog_dirty = True
         if (self._worklog_dirty or self._activity_dirty) and (flush or mono - self._worklog_save_at >= 180):

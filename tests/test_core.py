@@ -1585,18 +1585,24 @@ class WorklogTests(unittest.TestCase):
         self.prove(cfg, 20, 30, target=tgt)
         self.assertEqual(worklog.row(cfg, self.D.date())["out"], 20 * 60 + 30)
 
-    def test_manual_edit_wins_and_blank_deletes(self):
+    def test_note_does_not_overwrite_or_stop_software_times(self):
         cfg = {}
         self.prove(cfg, 9, 0, target=(18, 30))
-        self.assertIsNone(worklog.set_manual(cfg, self.D.date(), "8.50", "19:05"))
+        self.assertIsNone(worklog.set_note(cfg, self.D.date(), "8.50", "19:05"))
         self.prove(cfg, 19, 30, target=(18, 30))
         r = worklog.row(cfg, self.D.date())
-        self.assertEqual((r["in"], r["out"]), (530, 1145))
-        self.assertTrue(r["manual"])
-        self.assertIn("早于", worklog.set_manual(cfg, self.D.date(), "19:00", "9:00"))
-        self.assertIn("看不懂", worklog.set_manual(cfg, self.D.date(), "abc", ""))
-        self.assertIsNone(worklog.set_manual(cfg, self.D.date(), "", ""))
-        self.assertIsNone(worklog.get_day(cfg, self.D.date()))
+        self.assertEqual((r["in"], r["out"]), (9 * 60, 19 * 60 + 30))
+        self.assertEqual((r["note_in"], r["note_out"]), (8 * 60 + 50, 19 * 60 + 5))
+        self.assertEqual(r["arrive_gap"], 10)
+        self.assertEqual(r["leave_gap"], 25)
+        self.assertEqual(worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"]), "晚到10分，晚走25分")
+        self.assertIn("早于", worklog.set_note(cfg, self.D.date(), "19:00", "9:00"))
+        self.assertIn("看不懂", worklog.set_note(cfg, self.D.date(), "abc", ""))
+        self.assertIsNone(worklog.set_note(cfg, self.D.date(), "", ""))
+        kept = worklog.get_day(cfg, self.D.date())
+        self.assertEqual((kept["in"], kept["out"]), (9 * 60, 19 * 60 + 30))
+        self.assertNotIn("note_in", kept)
+        self.assertNotIn("manual", kept)
 
     def test_should_track_includes_weekends_and_days_without_a_target(self):
         sat = datetime(2026, 10, 10, 10, 0)
@@ -1606,9 +1612,9 @@ class WorklogTests(unittest.TestCase):
 
     def test_summary_and_csv(self):
         cfg = {}
-        worklog.set_manual(cfg, self.D.date(), "9:00", "18:30")
-        cfg["worklog"]["2026-10-08"]["target"] = 18 * 60
-        worklog.set_manual(cfg, datetime(2026, 10, 9).date(), "8:30", "18:00")
+        worklog.mark_span(cfg, self.at(9, 0), self.at(18, 30), target_hm=(18, 0))
+        worklog.set_note(cfg, self.D.date(), "8:40", "18:10")
+        worklog.mark_span(cfg, datetime(2026, 10, 9, 8, 30), datetime(2026, 10, 9, 18, 0))
         rows = [worklog.row(cfg, d, today=self.LATER) for d in worklog.week_dates(self.D.date())]
         s = worklog.summarize(rows)
         self.assertEqual((s["days"], s["total"], s["avg"], s["diff"]), (2, 1140, 570, 30))
@@ -1621,7 +1627,7 @@ class WorklogTests(unittest.TestCase):
         csv_text = worklog.to_csv(cfg, worklog.month_dates(2026, 10))
         lines = csv_text.strip().splitlines()
         self.assertEqual(len(lines), 3)
-        self.assertIn("2026-10-08,周四,9:00,18:30,9小时30分,18:00,晚走30分,手改", lines[1])
+        self.assertIn("2026-10-08,周四,9:00,18:30,9小时30分,18:00,晚走30分,8:40,18:10,晚到20分,晚走20分,自动", lines[1])
 
     def test_three_seconds_inside_thirty_sets_the_span(self):
         cfg = {}
@@ -1820,8 +1826,47 @@ class WorklogTests(unittest.TestCase):
                 "2026-10-07": "x",
             }
         }
+        cfg["worklog"]["2026-10-06"] = {"in": 8 * 60 + 20, "out": 18 * 60, "manual": True, "src": "seen"}
         worklog.ensure_fields(cfg, today=self.D.date())
-        self.assertEqual(cfg["worklog"], {"2026-10-08": {"in": 540, "src": "flex"}})
+        self.assertEqual(cfg["worklog"]["2026-10-08"], {"in": 540, "src": "flex"})
+        self.assertEqual(
+            cfg["worklog"]["2026-10-06"],
+            {"note_in": 8 * 60 + 20, "note_out": 18 * 60, "src": "seen", "note_custom": True},
+        )
+
+    def test_declared_defaults_follow_flex_or_first_use(self):
+        cfg = {}
+        day = self.D.date()
+        self.assertTrue(worklog.sync_declared(cfg, day, mode="flex", start=(9, 0), off=(18, 30)))
+        seeded = worklog.row(cfg, day)
+        self.assertEqual((seeded["note_in"], seeded["note_out"]), (9 * 60, 18 * 60 + 30))
+        self.prove(cfg, 8, 50, target=(18, 30))
+        self.assertFalse(worklog.sync_declared(cfg, day, mode="flex", start=(9, 0), off=(18, 30)))
+        compared = worklog.row(cfg, day)
+        self.assertEqual(compared["arrive_gap"], -10)
+        self.assertEqual(worklog.fmt_note_gap("in", compared["arrive_gap"]), "早到10分")
+
+        self.assertIsNone(worklog.set_note(cfg, day, "9:10", "18:40"))
+        self.assertFalse(worklog.sync_declared(cfg, day, mode="flex", start=(8, 40), off=(18, 10)))
+        self.assertEqual(worklog.row(cfg, day)["note_in"], 9 * 60 + 10)
+        self.assertTrue(worklog.sync_declared(cfg, day, mode="flex", start=(8, 40), off=(18, 10), force=True))
+        self.assertEqual(
+            (worklog.row(cfg, day)["note_in"], worklog.row(cfg, day)["note_out"]),
+            (8 * 60 + 40, 18 * 60 + 10),
+        )
+
+        fixed = {}
+        self.assertTrue(worklog.sync_declared(fixed, day, mode="direct", off=(18, 0)))
+        self.assertEqual(worklog.row(fixed, day)["note_in"], None)
+        self.assertEqual(worklog.row(fixed, day)["note_out"], 18 * 60)
+        self.prove(fixed, 8, 52, target=(18, 0))
+        self.assertTrue(worklog.sync_declared(fixed, day, mode="direct", off=(18, 0)))
+        arrived = worklog.row(fixed, day)
+        self.assertEqual(arrived["note_in"], 8 * 60 + 52)
+        self.assertEqual(arrived["arrive_gap"], 0)
+        self.assertIsNone(worklog.set_note(fixed, day, "", ""))
+        self.assertTrue(worklog.sync_declared(fixed, day, mode="direct", off=(18, 0)))
+        self.assertEqual(worklog.row(fixed, day)["note_in"], 8 * 60 + 52)
 
     def test_arrival_follows_the_same_keep_as_counts(self):
         import activity
@@ -1997,7 +2042,7 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertEqual(ui["scroll_sb"].winfo_manager(), "")
             self.assertEqual(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
 
-            worklog.set_manual(host.cfg, date.today(), "9:00", "18:00")
+            worklog.set_note(host.cfg, date.today(), "9:00", "18:00")
             worklog.set_tracking_enabled(host.cfg, False)
             host._fill_worklog(ui)
             self.assertEqual(ui["table"].winfo_manager(), "")
