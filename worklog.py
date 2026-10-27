@@ -2,7 +2,7 @@
 
 cfg["worklog"] = {"YYYY-MM-DD": {"in": 分钟, "out": 分钟, "target": 分钟, "src": "flex|seen",
                                  "closed": bool, "manual": bool}}
-分钟 = 当天 0 点起的分钟数。来和走按实际上机：30 秒里凑满 3 个不同的秒才算。每天都记，含周末。
+分钟 = 当天 0 点起的分钟数。开着记录时，来和走按实际上机：30 秒里凑满 3 个不同的秒才算，含周末。
 """
 from __future__ import annotations
 
@@ -22,6 +22,17 @@ BURST_NEED = 3
 # 醒来后这段时间里只屏蔽 LastInput 兜底；真实 Raw Input 仍立即参与来和走。
 WAKE_QUIET_SEC = 15
 WEEKDAY_CN = "一二三四五六日"
+_TRACK_KEY = "worklog_tracking"
+
+
+def tracking_enabled(cfg: dict) -> bool:
+    """旧配置没有开关，升级后保持原来的记录行为。"""
+    return bool(cfg.get(_TRACK_KEY, True))
+
+
+def set_tracking_enabled(cfg: dict, on: bool) -> bool:
+    cfg[_TRACK_KEY] = bool(on)
+    return bool(cfg[_TRACK_KEY])
 
 
 def _key(d: date) -> str:
@@ -186,8 +197,10 @@ def note_input(
     when: datetime,
     *,
     target_hm: tuple[int, int] | None = None,
-) -> tuple[dict, bool]:
+) -> tuple[dict | None, bool]:
     """一条可信输入进入工时账本；次数统计开关不影响这里。"""
+    if not tracking_enabled(cfg):
+        return None, False
     state, start = note_second(state, when)
     if start is None:
         return state, False

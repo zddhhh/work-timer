@@ -741,6 +741,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         return bool(self._esc_hidden)
 
     def _note_work_input(self, when: datetime) -> None:
+        if not worklog.tracking_enabled(self.cfg):
+            self._burst = None
+            return
         second = when.replace(microsecond=0)
         if second == self._work_input_second:
             return
@@ -839,13 +842,21 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         return hydrate.enabled(self.cfg)
 
     def _trail_on(self) -> bool:
-        return bool(self.cfg.get("cursor_trail"))
+        return cursor_trail.enabled(self.cfg)
 
     def _set_trail(self, on: bool) -> None:
-        self.cfg["cursor_trail"] = bool(on)
+        cursor_trail.set_enabled(self.cfg, on)
         store.save_config(self.cfg)
         if not on and self._trail is not None:
             self._trail.hide()
+
+    def _set_worklog_tracking(self, on: bool) -> None:
+        worklog.set_tracking_enabled(self.cfg, on)
+        self._burst = None
+        self._work_input_second = None
+        snap = worklog.last_input_snapshot()
+        self._last_input_seen = snap[0] if snap is not None else None
+        store.save_config(self.cfg)
 
     def _set_hydrate(self, on: bool) -> None:
         hydrate.set_enabled(self.cfg, on)
@@ -1131,7 +1142,10 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         now = datetime.now()
         if activity.settle(self.cfg, now):
             self._activity_dirty = True
-        changed = worklog.touch_target(self.cfg, now.date(), self._off_hm())
+        tracking = worklog.tracking_enabled(self.cfg)
+        changed = tracking and worklog.touch_target(self.cfg, now.date(), self._off_hm())
+        if not tracking:
+            self._burst = None
         # Raw Input 是主证据；LastInput 只在事件 tick 真变过时补触摸、笔和远程输入。
         snapshot = worklog.last_input_snapshot()
         phase = worklog.observe_clock(now)
@@ -1146,7 +1160,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_input_seen, last = worklog.fallback_input(
                 self._last_input_seen, snapshot, now
             )
-            if last is not None and last.date() == now.date():
+            if tracking and last is not None and last.date() == now.date():
                 self._note_work_input(last)
         if changed:
             self._worklog_dirty = True
@@ -1593,6 +1607,104 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         _reveal_card(dlg, min_w=440, min_h=360, near=self._dialog_near())
         _run_card_modal(dlg, self.win)
 
+    def _open_trail_settings_dialog(self) -> None:
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=440, height=430)
+        bar = tk.Frame(dlg, bg=_CARD_BG)
+        bar.pack(side="bottom", fill="x", pady=(8, 16))
+        body = tk.Frame(dlg, bg=_CARD_BG)
+        body.pack(side="top", fill="both", expand=True, padx=18)
+        tk.Label(
+            body, text="光标尾巴", fg=_CARD_FG, bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 13, "bold"),
+        ).pack(pady=(16, 2), anchor="w")
+        tk.Label(
+            body, text="只改变视觉效果，不记录光标位置。", fg=_CARD_MUTED, bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 9),
+        ).pack(anchor="w", pady=(0, 10))
+
+        enabled_var = tk.BooleanVar(value=self._trail_on())
+        tk.Checkbutton(
+            body, text="启用光标尾巴", variable=enabled_var,
+            fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733",
+            activebackground=_CARD_BG, activeforeground=_CARD_FG,
+            highlightthickness=0, font=("Microsoft YaHei UI", 10),
+        ).pack(anchor="w", pady=(0, 8))
+
+        panel = tk.Frame(body, bg="#1e2430", highlightthickness=1, highlightbackground="#2a3140")
+        panel.pack(fill="x")
+        inner = tk.Frame(panel, bg="#1e2430")
+        inner.pack(fill="x", padx=12, pady=12)
+        tk.Label(
+            inner, text="尾巴颜色", fg=_CARD_FG, bg="#1e2430",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            inner, text="「随时间」会从早上的冰蓝逐渐变成下班前的暖橙。",
+            fg=_CARD_MUTED, bg="#1e2430", font=("Microsoft YaHei UI", 8),
+        ).pack(anchor="w", pady=(2, 8))
+
+        preview = tk.Canvas(inner, height=66, bg="#171c25", highlightthickness=0)
+        preview.pack(fill="x", pady=(0, 10))
+        selected = {"id": cursor_trail.color_id(self.cfg)}
+        tiles: dict[str, tk.Frame] = {}
+
+        def draw_preview() -> None:
+            preview.delete("all")
+            rgb = cursor_trail.resolved_color(selected["id"], 4 * 3600)
+            color = "#%02x%02x%02x" % rgb
+            width = max(260, int(preview.winfo_width() or 360))
+            pts = [(24, 44), (74, 37), (126, 42), (182, 25), (244, 31), (width - 26, 18)]
+            preview.create_line(*sum(([x, y] for x, y in pts), []), fill=color, width=9, smooth=True)
+            preview.create_line(*sum(([x, y] for x, y in pts), []), fill="#fffaf2", width=3, smooth=True)
+            x, y = pts[-1]
+            preview.create_oval(x - 6, y - 6, x + 6, y + 6, fill="#fffaf2", outline=color, width=3)
+
+        def choose(value: str) -> None:
+            selected["id"] = value
+            for key, tile in tiles.items():
+                tile.configure(
+                    bg=_CARD_ACCENT if key == value else "#222733",
+                    highlightbackground=_CARD_ACCENT if key == value else "#30394a",
+                )
+                for child in tile.winfo_children():
+                    if isinstance(child, tk.Label):
+                        child.configure(bg=_CARD_ACCENT if key == value else "#222733")
+            draw_preview()
+
+        choices = tk.Frame(inner, bg="#1e2430")
+        choices.pack(fill="x")
+        for index, (key, label, rgb) in enumerate(cursor_trail.COLOR_PRESETS):
+            tile = tk.Frame(
+                choices, bg="#222733", highlightthickness=1, highlightbackground="#30394a",
+                cursor="hand2", width=112, height=38,
+            )
+            tile.grid(row=index // 3, column=index % 3, padx=(0, 8), pady=(0, 8), sticky="ew")
+            tile.grid_propagate(False)
+            choices.columnconfigure(index % 3, weight=1)
+            shown = cursor_trail.resolved_color(key, 4 * 3600) if rgb is None else rgb
+            dot = tk.Canvas(tile, width=18, height=18, bg="#222733", highlightthickness=0, cursor="hand2")
+            dot.create_oval(2, 2, 16, 16, fill="#%02x%02x%02x" % shown, outline="")
+            dot.pack(side="left", padx=(9, 3), pady=9)
+            lbl = tk.Label(
+                tile, text=label, fg=_CARD_FG, bg="#222733",
+                font=("Microsoft YaHei UI", 9), cursor="hand2",
+            )
+            lbl.pack(side="left")
+            for widget in (tile, dot, lbl):
+                widget.bind("<Button-1>", lambda _e, value=key: choose(value))
+            tiles[key] = tile
+        dlg.after_idle(lambda: choose(selected["id"]))
+
+        def save() -> None:
+            cursor_trail.set_color(self.cfg, selected["id"])
+            self._set_trail(bool(enabled_var.get()))
+            dlg.destroy()
+
+        _card_btn(bar, "保存", save, accent=True).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
+        _reveal_card(dlg, min_w=440, min_h=410, near=self._dialog_near())
+        _run_card_modal(dlg, self.win)
+
     def _prewarm_ui(self) -> None:
         """建控件、首次映射加起来两三百毫秒。启动后先建好并在屏幕外画一遍，右键打开就不再顿住。"""
         fg = layered_win.user32.GetForegroundWindow()
@@ -1675,6 +1787,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._set_hydrate(not self._hydrate_on())
         elif op == "toggle_trail":
             self._set_trail(not self._trail_on())
+        elif op == "trail_settings":
+            self._open_trail_settings_dialog()
         elif op == "hydrate_settings":
             self._open_hydrate_dialog()
         elif op == "toggle_auto_start":
@@ -1717,7 +1831,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             # 菜单自己转消息循环。这时再抬卡片或尾巴，菜单会被压住或直接关掉。
             popup = bool(self.win._popup_open)
             below = 0 if self._esc_hidden or popup else int(self.win.hwnd or 0)
-            self._trail.tick(remain, visible=visible, below=below, raise_windows=not popup)
+            self._trail.tick(
+                remain,
+                visible=visible,
+                color=cursor_trail.color_id(self.cfg),
+                below=below,
+                raise_windows=not popup,
+            )
         except Exception as e:  # noqa: BLE001
             self._trail_failed = True
             store.log_exception("trail", e)

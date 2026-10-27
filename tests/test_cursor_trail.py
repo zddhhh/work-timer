@@ -12,6 +12,30 @@ import cursor_trail as trail  # noqa: E402
 
 
 class TrailMathTests(unittest.TestCase):
+    def test_legacy_switch_migrates_and_keeps_its_state(self):
+        cfg = {"cursor_trail": True}
+        self.assertTrue(trail.enabled(cfg))
+        self.assertEqual(cfg["cursor_trail"], {"enabled": True, "color": "auto"})
+        trail.set_enabled(cfg, False)
+        trail.set_color(cfg, "mint")
+        self.assertFalse(trail.enabled(cfg))
+        self.assertEqual(trail.color_id(cfg), "mint")
+        self.assertEqual(cfg["cursor_trail"], {"enabled": False, "color": "mint"})
+
+    def test_color_presets_resolve_to_visible_distinct_colors(self):
+        fixed = []
+        for key, label, rgb in trail.COLOR_PRESETS:
+            self.assertTrue(label)
+            resolved = trail.resolved_color(key, 4 * 3600)
+            self.assertEqual(len(resolved), 3)
+            self.assertTrue(all(0 <= channel <= 255 for channel in resolved))
+            if rgb is not None:
+                self.assertEqual(resolved, rgb)
+                fixed.append(resolved)
+        self.assertEqual(len(fixed), len(set(fixed)))
+        cfg = {"cursor_trail": {"enabled": True, "color": "not-a-color"}}
+        self.assertEqual(trail.color_id(cfg), "auto")
+
     def test_length_shrinks_toward_the_end_of_the_day(self):
         morning = trail.trail_length(8 * 3600)
         afternoon = trail.trail_length(2 * 3600)

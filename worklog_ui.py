@@ -120,6 +120,11 @@ class WorklogDialogMixin:
     def _set_habit(self, ui: dict, days: list, today: date) -> None:
         if ui.get("habit_sum") is None:
             return
+        if not worklog.tracking_enabled(self.cfg):
+            lbl = ui.get("habit_lbl")
+            if lbl is not None and lbl.winfo_manager():
+                lbl.pack_forget()
+            return
         this_week = days[0] <= today <= days[-1]
         text = worklog.habit_text(self.cfg, days, today, this_week=this_week)
         ui["habit_sum"].set(text)
@@ -132,6 +137,37 @@ class WorklogDialogMixin:
             lbl.pack(anchor="w", pady=(2, 0), before=month)
         elif not text and shown:
             lbl.pack_forget()
+
+    def _sync_worklog_privacy(self, ui: dict) -> None:
+        """关闭工时记录时隐藏历史，但不删除本地数据。"""
+        on = worklog.tracking_enabled(self.cfg)
+        var = ui.get("track_on")
+        if var is not None:
+            var.set(on)
+        week_lbl = ui.get("week_sum_lbl")
+        month_lbl = ui.get("month_lbl")
+        habit_lbl = ui.get("habit_lbl")
+        table = ui.get("table")
+        notice = ui.get("history_notice")
+        if on:
+            if week_lbl is not None and not week_lbl.winfo_manager():
+                week_lbl.pack(anchor="w", pady=(8, 0))
+            if month_lbl is not None and not month_lbl.winfo_manager():
+                month_lbl.pack(anchor="w", pady=(2, 4))
+            if notice is not None and notice.winfo_manager():
+                notice.pack_forget()
+            if table is not None and not table.winfo_manager():
+                table.pack(fill="x", pady=(10, 0))
+        else:
+            for widget in (week_lbl, habit_lbl, month_lbl, table):
+                if widget is not None and widget.winfo_manager():
+                    widget.pack_forget()
+            if notice is not None and not notice.winfo_manager():
+                notice.pack(fill="x", pady=(10, 0))
+        for key in ("save_btn", "export_btn"):
+            btn = ui.get(key)
+            if btn is not None:
+                btn.configure(state="normal" if on else "disabled")
 
     def _ensure_worklog_ui(self) -> dict:
         ui = self._worklog_ui
@@ -167,6 +203,7 @@ class WorklogDialogMixin:
         return True
 
     def _fill_worklog(self, ui: dict) -> None:
+        self._sync_worklog_privacy(ui)
         today = date.today()
         earliest = today - timedelta(days=activity.keep_days(self.cfg))
         week = worklog.week_dates(ui["anchor"])
@@ -231,6 +268,7 @@ class WorklogDialogMixin:
             ui["act_on"].set(activity.enabled(self.cfg))
         if ui.get("card_on") is not None:
             ui["card_on"].set(activity.show_on_card(self.cfg))
+        self._sync_worklog_privacy(ui)
         self._paint_activity_chart(ui)
 
     def _paint_activity_chart(self, ui: dict | None = None) -> None:
@@ -358,10 +396,11 @@ class WorklogDialogMixin:
         week_sum = tk.StringVar()
         habit_sum = tk.StringVar()
         month_sum = tk.StringVar()
-        tk.Label(
+        week_sum_lbl = tk.Label(
             sums, textvariable=week_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
             wraplength=pair_w, justify="left",
-        ).pack(anchor="w", pady=(8, 0))
+        )
+        week_sum_lbl.pack(anchor="w", pady=(8, 0))
         habit_lbl = tk.Label(
             sums, textvariable=habit_sum, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 10),
             wraplength=pair_w, justify="left",
@@ -396,9 +435,17 @@ class WorklogDialogMixin:
         scroll.pack(side="left", fill="y", expand=True)
         sheet = tk.Frame(scroll, bg=_CARD_BG)
         scroll_win = scroll.create_window((0, 0), window=sheet, anchor="nw", width=pair_w)
+        track_on = tk.BooleanVar(value=worklog.tracking_enabled(self.cfg))
         act_on = tk.BooleanVar(value=activity.enabled(self.cfg))
 
         card_on = tk.BooleanVar(value=activity.show_on_card(self.cfg))
+
+        def toggle_track() -> None:
+            self._set_worklog_tracking(bool(track_on.get()))
+            self._fill_worklog(ui)
+            ui["err"].set(
+                "" if track_on.get() else "已停止记录并隐藏工时历史；重新开启后会恢复显示。"
+            )
 
         def toggle_act() -> None:
             on = bool(act_on.get())
@@ -516,22 +563,41 @@ class WorklogDialogMixin:
                 ui["chart_day"] = today if today >= earliest else earliest
             self._fill_worklog(ui)
 
-        tool = tk.Frame(sheet, bg=_CARD_BG)
-        tool.pack(fill="x", pady=(8, 0))
+        controls = tk.Frame(body, bg=_CARD_BG)
+        controls.pack(fill="x", pady=(0, 8), before=scroll_host)
+
+        privacy = tk.Frame(
+            controls, bg="#1e2430", highlightthickness=1, highlightbackground="#2c3444",
+        )
+        privacy.pack(fill="x", pady=(0, 8))
+        privacy_inner = tk.Frame(privacy, bg="#1e2430")
+        privacy_inner.pack(fill="x", padx=12, pady=9)
+        privacy_head = tk.Frame(privacy_inner, bg="#1e2430")
+        privacy_head.pack(fill="x")
+        tk.Label(
+            privacy_head, text="隐私与记录", fg=_CARD_FG, bg="#1e2430",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(side="left")
+        tk.Label(
+            privacy_head, text="数据仅保存在本机", fg=_CARD_MUTED, bg="#1e2430",
+            font=("Microsoft YaHei UI", 8),
+        ).pack(side="left", padx=(10, 0))
+        checks = tk.Frame(privacy_inner, bg="#1e2430")
+        checks.pack(fill="x", pady=(5, 0))
         tk.Checkbutton(
-            tool, text="记录键盘、鼠标次数和位移", variable=act_on, command=toggle_act,
-            fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+            checks, text="记录来 / 走时间", variable=track_on, command=toggle_track,
+            fg=_CARD_FG, bg="#1e2430", selectcolor="#222733", activebackground="#1e2430",
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left")
         tk.Checkbutton(
-            tool, text="在计时器顶部显示", variable=card_on, command=toggle_card,
-            fg=_CARD_FG, bg=_CARD_BG, selectcolor="#222733", activebackground=_CARD_BG,
+            checks, text="记录键盘、鼠标次数和位移", variable=act_on, command=toggle_act,
+            fg=_CARD_FG, bg="#1e2430", selectcolor="#222733", activebackground="#1e2430",
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
-        ).pack(side="left", padx=(12, 0))
-        picks = tk.Frame(tool, bg=_CARD_BG)
+        ).pack(side="left", padx=(18, 0))
+        picks = tk.Frame(checks, bg="#1e2430")
         picks.pack(side="right")
         tk.Label(
-            picks, text="留多久", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            picks, text="保留", fg=_CARD_MUTED, bg="#1e2430", font=("Microsoft YaHei UI", 9),
         ).pack(side="left", padx=(0, 8))
         for days_n in activity.KEEP_PRESETS:
             btn = tk.Label(
@@ -543,18 +609,37 @@ class WorklogDialogMixin:
             keep_btns[days_n] = btn
         _style_keep()
 
-        slot_row = tk.Frame(sheet, bg=_CARD_BG)
-        slot_row.pack(fill="x", pady=(6, 0))
+        top_panel = tk.Frame(
+            controls, bg="#1e2430", highlightthickness=1, highlightbackground="#2c3444",
+        )
+        top_panel.pack(fill="x")
+        top_inner = tk.Frame(top_panel, bg="#1e2430")
+        top_inner.pack(fill="x", padx=12, pady=9)
+        top_head = tk.Frame(top_inner, bg="#1e2430")
+        top_head.pack(fill="x")
         tk.Label(
-            slot_row, text="顶部三项", fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            top_head, text="计时器顶栏", fg=_CARD_FG, bg="#1e2430",
+            font=("Microsoft YaHei UI", 10, "bold"),
         ).pack(side="left")
+        tk.Label(
+            top_head, text="选择主计时器上方显示的三个指标", fg=_CARD_MUTED, bg="#1e2430",
+            font=("Microsoft YaHei UI", 8),
+        ).pack(side="left", padx=(10, 0))
+        tk.Checkbutton(
+            top_head, text="显示", variable=card_on, command=toggle_card,
+            fg=_CARD_FG, bg="#1e2430", selectcolor="#222733", activebackground="#1e2430",
+            activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
+        ).pack(side="right")
+        slot_row = tk.Frame(top_inner, bg="#1e2430")
+        slot_row.pack(fill="x", pady=(7, 0))
         slot_vars: list[tk.StringVar] = []
+        slot_buttons: list[tk.Menubutton] = []
         slot_labels = [label for _key, label in activity.CARD_CHOICES]
 
-        def pick_slot(index: int, _value: str | None = None) -> None:
-            updated = activity.set_card_slot(self.cfg, index, activity.card_id(slot_vars[index].get()))
+        def pick_slot(index: int, value: str) -> None:
+            updated = activity.set_card_slot(self.cfg, index, activity.card_id(value))
             for j, slot in enumerate(updated):
-                slot_vars[j].set(activity.card_label(slot))
+                slot_vars[j].set(activity.card_label(slot) + "    ▼")
             store.save_config(self.cfg)
             self._tally_at = 0.0
             self._tally_speed_at = 0.0
@@ -563,15 +648,40 @@ class WorklogDialogMixin:
 
         chosen = activity.card_slots(self.cfg)
         for index in range(3):
-            var = tk.StringVar(value=activity.card_label(chosen[index]))
+            cell = tk.Frame(slot_row, bg="#1e2430")
+            cell.pack(side="left", fill="x", expand=True, padx=(0, 10 if index < 2 else 0))
+            tk.Label(
+                cell, text=f"第 {index + 1} 项", fg=_CARD_MUTED, bg="#1e2430",
+                font=("Microsoft YaHei UI", 8),
+            ).pack(anchor="w", pady=(0, 2))
+            var = tk.StringVar(value=activity.card_label(chosen[index]) + "    ▼")
             slot_vars.append(var)
-            menu = tk.OptionMenu(slot_row, var, *slot_labels, command=lambda _v, i=index: pick_slot(i))
-            menu.configure(
+            picker = tk.Menubutton(
+                cell, textvariable=var, anchor="w", cursor="hand2", indicatoron=False,
                 bg="#222733", fg=_CARD_FG, activebackground="#2a3344", activeforeground=_CARD_FG,
-                highlightthickness=0, relief="flat", font=("Microsoft YaHei UI", 9),
+                highlightthickness=1, highlightbackground="#3a465c", highlightcolor=_CARD_ACCENT,
+                relief="flat", bd=0, font=("Microsoft YaHei UI", 9, "bold"), padx=10, pady=5,
             )
-            menu["menu"].configure(bg="#222733", fg=_CARD_FG, font=("Microsoft YaHei UI", 9))
-            menu.pack(side="left", padx=(8, 0))
+            menu = tk.Menu(
+                picker, tearoff=False, bg="#222733", fg=_CARD_FG,
+                activebackground=_CARD_ACCENT, activeforeground="white",
+                font=("Microsoft YaHei UI", 9),
+            )
+            for label in slot_labels:
+                menu.add_command(label=label, command=lambda v=label, i=index: pick_slot(i, v))
+            picker.configure(menu=menu)
+            picker.pack(fill="x")
+            slot_buttons.append(picker)
+
+        history_notice = tk.Frame(
+            sheet, bg="#1e2430", highlightthickness=1, highlightbackground="#2c3444",
+        )
+        tk.Label(
+            history_notice,
+            text="来 / 走记录已关闭\n历史数据仍保存在本机，重新开启后会恢复显示。",
+            fg=_CARD_MUTED, bg="#1e2430", justify="center",
+            font=("Microsoft YaHei UI", 10), pady=22,
+        ).pack(fill="x")
 
         head_bg = "#191e28"
         entry_bg = "#2a3344"
@@ -620,14 +730,22 @@ class WorklogDialogMixin:
             "habit_lbl": habit_lbl,
             "month_lbl": month_lbl,
             "month_sum": month_sum,
+            "week_sum_lbl": week_sum_lbl,
             "sums": sums,
             "sheet": sheet,
             "scroll": scroll,
             "scroll_sb": scroll_sb,
             "scroll_win": scroll_win,
             "pair_w": pair_w,
+            "track_on": track_on,
             "act_on": act_on,
             "card_on": card_on,
+            "table": table,
+            "history_notice": history_notice,
+            "controls": controls,
+            "privacy_panel": privacy,
+            "top_panel": top_panel,
+            "slot_buttons": slot_buttons,
             "today_lbl": today_lbl,
             "week_lbl": week_lbl,
             "day_var": day_var,
@@ -638,6 +756,8 @@ class WorklogDialogMixin:
             "chart_sig": None,
             "chart_btns": chart_btns,
             "view_btns": view_btns,
+            "save_btn": None,
+            "export_btn": None,
         }
         for key, btn in chart_btns.items():
             btn.bind("<Button-1>", lambda _e, s=key: self._set_chart_style(ui, s))
@@ -702,6 +822,9 @@ class WorklogDialogMixin:
             _park_card(dlg, ui.get("fg", 0))
 
         def save() -> None:
+            if not worklog.tracking_enabled(self.cfg):
+                err.set("先开启「记录来 / 走时间」才能修改工时。")
+                return
             if self._worklog_apply(ui):
                 self._fill_worklog(ui)
                 err.set("已保存")
@@ -727,6 +850,9 @@ class WorklogDialogMixin:
             self._fill_worklog(ui)
 
         def export() -> None:
+            if not worklog.tracking_enabled(self.cfg):
+                err.set("工时历史当前已隐藏，重新开启后才能导出。")
+                return
             if not self._worklog_apply(ui):
                 return
             self._fill_worklog(ui)
@@ -773,8 +899,12 @@ class WorklogDialogMixin:
         home.bind("<Button-1>", lambda _e: shift(0))
         home.pack(side="left", padx=(12, 0))
         ui["week_home"] = home
-        _card_btn(bar, "保存修改", save, accent=True).pack(side="left", padx=(18, 6))
-        _card_btn(bar, "导出本月 CSV…", export).pack(side="left", padx=6)
+        save_btn = _card_btn(bar, "保存修改", save, accent=True)
+        save_btn.pack(side="left", padx=(18, 6))
+        export_btn = _card_btn(bar, "导出本月 CSV…", export)
+        export_btn.pack(side="left", padx=6)
+        ui["save_btn"] = save_btn
+        ui["export_btn"] = export_btn
         _card_btn(bar, "关闭", close).pack(side="left", padx=6)
         dlg.bind("<Return>", lambda _e: save())
         dlg.bind("<Escape>", lambda _e: close())
@@ -793,7 +923,8 @@ class WorklogDialogMixin:
             height = max(1, int(sheet.winfo_reqheight()))
             scroll.configure(scrollregion=(0, 0, pair_w, height))
             scroll.itemconfigure(scroll_win, width=pair_w)
-            view = int(scroll.winfo_height())
+            # winfo_height 在窗口重排前还是上一档高度，会把刚收起的滚动条又装回来。
+            view = int(scroll.cget("height"))
             if view <= 1:
                 return
             shown = bool(scroll_sb.winfo_manager())
@@ -805,6 +936,7 @@ class WorklogDialogMixin:
         sheet.bind("<Configure>", _sync_scroll, add="+")
         scroll.bind("<Configure>", _sync_scroll, add="+")
         _bind_wheel(scroll_host)
+        self._sync_worklog_privacy(ui)
         return ui
 
     def _fit_worklog_scroll(self, ui: dict, *, screen_h: int | None = None) -> None:
@@ -827,6 +959,7 @@ class WorklogDialogMixin:
         view, scroll = scroll_view(sheet_h, natural, raw)
         canvas.configure(height=view, scrollregion=(0, 0, pair_w, sheet_h))
         canvas.yview_moveto(0)
+        dlg.update_idletasks()
         if sb is None:
             return
         if scroll and not sb.winfo_manager():

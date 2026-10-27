@@ -1655,6 +1655,42 @@ class WorklogTests(unittest.TestCase):
         self.assertFalse(activity.enabled(cfg))
         self.assertEqual(activity.totals(cfg, self.D.date()), (0, 0, 0))
 
+    def test_worklog_privacy_switch_stops_writes_but_keeps_history(self):
+        cfg = {}
+        state = None
+        first = self.at(9, 3, 1)
+        for extra in (0, 4, 12):
+            state, _changed = worklog.note_input(cfg, state, first + timedelta(seconds=extra))
+        before = dict(worklog.get_day(cfg, self.D.date()))
+        self.assertTrue(worklog.tracking_enabled(cfg))
+
+        worklog.set_tracking_enabled(cfg, False)
+        for extra in (60, 65, 70):
+            state, changed = worklog.note_input(cfg, state, first + timedelta(seconds=extra))
+            self.assertIsNone(state)
+            self.assertFalse(changed)
+        self.assertEqual(worklog.get_day(cfg, self.D.date()), before)
+
+        worklog.set_tracking_enabled(cfg, True)
+        state = None
+        for extra in (120, 125, 130):
+            state, changed = worklog.note_input(cfg, state, first + timedelta(seconds=extra))
+        self.assertTrue(changed)
+        self.assertGreater(worklog.get_day(cfg, self.D.date())["out"], before["out"])
+
+    def test_worklog_and_activity_privacy_switches_are_independent(self):
+        import activity
+
+        cfg = {}
+        worklog.set_tracking_enabled(cfg, False)
+        activity.set_enabled(cfg, True)
+        self.assertFalse(worklog.tracking_enabled(cfg))
+        self.assertTrue(activity.enabled(cfg))
+        activity.set_enabled(cfg, False)
+        worklog.set_tracking_enabled(cfg, True)
+        self.assertTrue(worklog.tracking_enabled(cfg))
+        self.assertFalse(activity.enabled(cfg))
+
     def test_last_input_fallback_only_uses_changed_ticks(self):
         now = self.at(10, 0, 10)
         tick, when = worklog.fallback_input(None, (1000, 0.2), now)
@@ -1945,15 +1981,33 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertIs(ui["month_lbl"].master, ui["sums"])
             self.assertIs(ui["sums"].master, dlg)
             self.assertIs(ui["sheet"].master, ui["scroll"])
+            self.assertIsNot(ui["controls"].master, ui["sheet"])
+            self.assertEqual(ui["controls"].winfo_manager(), "pack")
+            self.assertEqual(len(ui["slot_buttons"]), 3)
+            self.assertTrue(all(isinstance(btn, tk.Menubutton) for btn in ui["slot_buttons"]))
+            self.assertTrue(all(str(btn.cget("textvariable")) for btn in ui["slot_buttons"]))
             host._fit_worklog_scroll(ui, screen_h=720)
             dlg.update_idletasks()
             self.assertTrue(ui["scroll_sb"].winfo_manager())
+            self.assertEqual(ui["controls"].winfo_manager(), "pack")
             self.assertLess(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
             self.assertLessEqual(int(dlg.winfo_reqheight()) + 24, 720 - 48 + 8)
             host._fit_worklog_scroll(ui, screen_h=1600)
             dlg.update_idletasks()
             self.assertEqual(ui["scroll_sb"].winfo_manager(), "")
             self.assertEqual(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
+
+            worklog.set_manual(host.cfg, date.today(), "9:00", "18:00")
+            worklog.set_tracking_enabled(host.cfg, False)
+            host._fill_worklog(ui)
+            self.assertEqual(ui["table"].winfo_manager(), "")
+            self.assertEqual(ui["history_notice"].winfo_manager(), "pack")
+            self.assertEqual(ui["week_sum_lbl"].winfo_manager(), "")
+            self.assertIsNotNone(worklog.get_day(host.cfg, date.today()))
+            worklog.set_tracking_enabled(host.cfg, True)
+            host._fill_worklog(ui)
+            self.assertEqual(ui["table"].winfo_manager(), "pack")
+            self.assertEqual(ui["history_notice"].winfo_manager(), "")
         finally:
             dlg.destroy()
             root.destroy()

@@ -20,6 +20,16 @@ MIN_PX = 11.0
 HEAD_GAP = 28.0
 SIZE = 640
 _HALF = SIZE // 2
+COLOR_PRESETS = (
+    ("auto", "随时间", None),
+    ("ice", "冰蓝", (96, 186, 255)),
+    ("mint", "薄荷", (82, 214, 174)),
+    ("gold", "金橙", (255, 176, 72)),
+    ("pink", "樱粉", (255, 116, 166)),
+    ("violet", "紫罗兰", (166, 124, 255)),
+)
+_COLOR_RGB = {key: rgb for key, _label, rgb in COLOR_PRESETS}
+_COLOR_LABEL = {key: label for key, label, _rgb in COLOR_PRESETS}
 
 MA_NOACTIVATE = 3
 SWP_NOSIZE = 0x0001
@@ -41,6 +51,54 @@ def color_for(remain_s: float) -> tuple[int, int, int]:
     if t > 0.35:
         return _lerp((255, 176, 96), (96, 186, 255), (t - 0.35) / 0.65)
     return _lerp((255, 96, 64), (255, 176, 96), t / 0.35)
+
+
+def settings(cfg: dict) -> dict:
+    """兼容旧版 cursor_trail: bool，统一返回并写回新结构。"""
+    raw = cfg.get("cursor_trail")
+    if isinstance(raw, dict):
+        on = bool(raw.get("enabled"))
+        color = str(raw.get("color") or "auto")
+    else:
+        on = bool(raw)
+        color = "auto"
+    if color not in _COLOR_RGB:
+        color = "auto"
+    out = {"enabled": on, "color": color}
+    if raw != out:
+        cfg["cursor_trail"] = out
+    return out
+
+
+def enabled(cfg: dict) -> bool:
+    return bool(settings(cfg)["enabled"])
+
+
+def set_enabled(cfg: dict, on: bool) -> bool:
+    trail = settings(cfg)
+    trail["enabled"] = bool(on)
+    cfg["cursor_trail"] = trail
+    return trail["enabled"]
+
+
+def color_id(cfg: dict) -> str:
+    return str(settings(cfg)["color"])
+
+
+def set_color(cfg: dict, value: str) -> str:
+    trail = settings(cfg)
+    trail["color"] = value if value in _COLOR_RGB else "auto"
+    cfg["cursor_trail"] = trail
+    return str(trail["color"])
+
+
+def color_label(value: str) -> str:
+    return _COLOR_LABEL.get(str(value), _COLOR_LABEL["auto"])
+
+
+def resolved_color(value: str, remain_s: float) -> tuple[int, int, int]:
+    rgb = _COLOR_RGB.get(str(value))
+    return color_for(remain_s) if rgb is None else rgb
 
 
 def trim_trail(points: Sequence[tuple[float, float]], length: float) -> list[tuple[float, float]]:
@@ -211,7 +269,15 @@ class Trail:
         self._present(blank, -32000, -32000, 0)
         self._hide()
 
-    def tick(self, remain_s: float, *, visible: bool, below: int = 0, raise_windows: bool = True) -> None:
+    def tick(
+        self,
+        remain_s: float,
+        *,
+        visible: bool,
+        color: str = "auto",
+        below: int = 0,
+        raise_windows: bool = True,
+    ) -> None:
         self._pump()
         if not visible:
             self.hot = False
@@ -235,14 +301,15 @@ class Trail:
         self._pts = trim_trail(self._pts, length + 24)
         gain = 0.82 if now - self._moved_at > 0.42 else 1.0
         self._gain = gain
-        key = (int(x), int(y), int(length), int(gain * 20))
+        rgb = resolved_color(color, remain_s)
+        key = (int(x), int(y), int(length), int(gain * 20), rgb)
         self.hot = moved
         if key == self._key and self._shown:
             return
         self._key = key
         # 整段都从热点后面开始。只挪最后一个点的话，前一个点仍在箭头上，窗口还是盖住点击。
         pts = _pull_head(self._pts, HEAD_GAP)
-        img, left, top = frame_for(pts, color_for(remain_s), gain)
+        img, left, top = frame_for(pts, rgb, gain)
         self._present(img, left, top, below, raise_windows=raise_windows, cursor=(x, y))
 
     def hide(self) -> None:

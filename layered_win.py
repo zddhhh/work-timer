@@ -111,6 +111,7 @@ ID_UNINSTALL = 17
 ID_WORKLOG = 18
 ID_HYDRATE = 19
 ID_TRAIL = 1100
+ID_TRAIL_SETTINGS = 1101
 ID_GAMES = 100
 ID_SHARE = 1000
 ID_HYDRATE_SETTINGS = 9
@@ -1179,6 +1180,7 @@ class LayeredPetWindow:
             ID_TRAIL,
             "光标尾巴",
         )
+        user32.AppendMenuW(hset, MF_STRING, ID_TRAIL_SETTINGS, "设置光标尾巴…")
         user32.AppendMenuW(
             hset,
             MF_STRING | (MF_CHECKED if auto_start else 0),
@@ -1256,6 +1258,8 @@ class LayeredPetWindow:
             return "toggle_hydrate"
         if cmd == ID_TRAIL:
             return "toggle_trail"
+        if cmd == ID_TRAIL_SETTINGS:
+            return "trail_settings"
         if cmd == ID_HYDRATE_SETTINGS:
             return "hydrate_settings"
         if cmd == ID_AUTO_START:
