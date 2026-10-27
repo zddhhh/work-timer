@@ -50,7 +50,11 @@ _OPEN: dict[int, dict] = {}
 _KEY = "activity"
 # 64 位头 24 字节，32 位头 16 字节。RAWMOUSE 里 usFlags 后面对齐到 4，位移在其后 12、16 字节。
 _HDR = 16 if sys.maxsize <= 2**32 else 24
+_DEVICE_AT = 8
+_DEVICE_SIZE = 4 if sys.maxsize <= 2**32 else 8
 _FLAG_AT = _HDR
+_KEY_FLAGS_AT = _HDR + 2
+_BUTTON_FLAGS_AT = _HDR + 4
 _DX_AT = _HDR + 12
 _DY_AT = _HDR + 16
 _MOUSE_ABS = 0x01
@@ -576,22 +580,42 @@ def counts(cfg: dict, d: date) -> dict:
 
 def parse_raw(buf: bytes) -> str | None:
     """从 WM_INPUT 的原始缓冲里认出是键盘按下、鼠标点还是滚轮。不读键码。"""
-    if len(buf) < 32:
+    if len(buf) < _HDR + 8:
         return None
     dw_type = int.from_bytes(buf[0:4], "little")
     if dw_type == 1:
-        flags = int.from_bytes(buf[26:28], "little")
+        flags = int.from_bytes(buf[_KEY_FLAGS_AT:_KEY_FLAGS_AT + 2], "little")
         if flags & 1:
             return None
         return "key"
     if dw_type == 0:
-        buttons = int.from_bytes(buf[28:30], "little")
+        buttons = int.from_bytes(buf[_BUTTON_FLAGS_AT:_BUTTON_FLAGS_AT + 2], "little")
         if buttons & 0x0C00:
             return "wheel"
         if buttons & 0x0155:
             return "click"
         return None
     return None
+
+
+def physical_input(buf: bytes) -> str | None:
+    """认出一次有意义的硬件输入；不读键码，也不把 SendInput 当成人在操作。"""
+    if len(buf) < _DEVICE_AT + _DEVICE_SIZE:
+        return None
+    # RAWINPUTHEADER.hDevice 为 0 时没有可确认的硬件来源，常见于 SendInput 注入。
+    device = int.from_bytes(buf[_DEVICE_AT:_DEVICE_AT + _DEVICE_SIZE], "little")
+    if device == 0:
+        return None
+    kind = parse_raw(buf)
+    if kind is not None:
+        return kind
+    if int.from_bytes(buf[0:4], "little") != 0 or len(buf) < _DY_AT + 4:
+        return None
+    dx = int.from_bytes(buf[_DX_AT:_DX_AT + 4], "little", signed=True)
+    dy = int.from_bytes(buf[_DY_AT:_DY_AT + 4], "little", signed=True)
+    # 相对鼠标的 0,0 包是噪声。绝对坐标设备（部分触控板）只有坐标变化才会发包；
+    # 0,0 无法和空包可靠区分，交给 LastInput 变化兜底。
+    return "move" if dx != 0 or dy != 0 else None
 
 
 def mouse_delta(buf: bytes) -> tuple[int, int] | None:

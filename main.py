@@ -212,6 +212,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._worklog_dirty = False
         self._worklog_save_at = 0.0
         self._burst: dict | None = None
+        self._work_input_second: datetime | None = None
+        self._last_input_seen = worklog.last_input_tick()
         self._activity_dirty = False
         self._ui_prewarmed = False
         self._worklog_ui: dict | None = None
@@ -253,7 +255,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.win.dialog_hidden = self._games_hide_state
         self.win.set_live_timer(self._on_live_timer)
         self.win.set_raw_input_handler(self._on_raw_input)
-        self.win.listen_raw_input(activity.enabled(self.cfg))
+        # 来和走始终看真实输入；次数统计开关只决定是否保存次数。
+        self.win.listen_raw_input(True)
         self._font_kinetic = self._font_big
         self._surface = "dark"
         self._force_surface_sample = True
@@ -737,12 +740,35 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._poll_key_hide()
         return bool(self._esc_hidden)
 
+    def _note_work_input(self, when: datetime) -> None:
+        second = when.replace(microsecond=0)
+        if second == self._work_input_second:
+            return
+        self._work_input_second = second
+        self._burst, changed = worklog.note_input(
+            self.cfg, self._burst, when, target_hm=self._off_hm()
+        )
+        if changed:
+            self._worklog_dirty = True
+
     def _on_raw_input(self, buf: bytes) -> None:
         delta = activity.mouse_delta(buf)
         kind = activity.parse_raw(buf)
-        if delta is None and kind is None:
+        evidence = activity.physical_input(buf)
+        if delta is None and kind is None and evidence is None:
             return
         now = datetime.now()
+        if evidence is not None:
+            # 第一条真实输入可能正是唤醒电脑的动作。先清掉睡前候选，再立即记它，
+            # 不让待机后的安静窗口拖慢真实到岗时间。
+            phase = "ok"
+            if time.monotonic() - self._worklog_at >= 1:
+                phase = worklog.observe_clock(now)
+            if phase == "wake":
+                self._burst = None
+                snap = worklog.last_input_snapshot()
+                self._last_input_seen = snap[0] if snap is not None else None
+            self._note_work_input(now)
         day = worklog.get_day(self.cfg, now.date())
         if day and (day.get("closed") or day.get("manual")):
             return
@@ -1106,22 +1132,22 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         if activity.settle(self.cfg, now):
             self._activity_dirty = True
         changed = worklog.touch_target(self.cfg, now.date(), self._off_hm())
-        # 只认最后一次键鼠落在哪一秒。打开面板、退出都不算一次操作。
-        # 睡眠醒来时空闲读数会被刷成 0，读失败也是 0；这两种都不算有人在用。
+        # Raw Input 是主证据；LastInput 只在事件 tick 真变过时补触摸、笔和远程输入。
+        snapshot = worklog.last_input_snapshot()
         phase = worklog.observe_clock(now)
-        if phase != "ok":
+        if phase == "wake":
             self._burst = None
-        elif worklog.last_input_tick() is None:
-            pass
+            self._last_input_seen = snapshot[0] if snapshot is not None else None
+        elif phase == "quiet":
+            # 安静窗口只屏蔽低可信兜底。Raw Input 仍会直接进入 _note_work_input。
+            if snapshot is not None:
+                self._last_input_seen = snapshot[0]
         else:
-            idle = worklog.idle_seconds()
-            last = now - timedelta(seconds=max(0.0, idle))
-            if last.date() == now.date():
-                self._burst, start = worklog.note_second(self._burst, last)
-                if start is not None and worklog.mark_span(
-                    self.cfg, start, last, target_hm=self._off_hm()
-                ):
-                    changed = True
+            self._last_input_seen, last = worklog.fallback_input(
+                self._last_input_seen, snapshot, now
+            )
+            if last is not None and last.date() == now.date():
+                self._note_work_input(last)
         if changed:
             self._worklog_dirty = True
         if (self._worklog_dirty or self._activity_dirty) and (flush or mono - self._worklog_save_at >= 180):

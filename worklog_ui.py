@@ -405,7 +405,7 @@ class WorklogDialogMixin:
             activity.set_enabled(self.cfg, on)
             if not on:
                 card_on.set(False)
-            self.win.listen_raw_input(activity.enabled(self.cfg))
+            self.win.listen_raw_input(True)
             self._tally_at = 0.0
             store.save_config(self.cfg)
             self._paint_activity_chart(ui)
@@ -413,7 +413,7 @@ class WorklogDialogMixin:
         def toggle_card() -> None:
             activity.set_show_on_card(self.cfg, bool(card_on.get()))
             act_on.set(activity.enabled(self.cfg))
-            self.win.listen_raw_input(activity.enabled(self.cfg))
+            self.win.listen_raw_input(True)
             self._tally_at = 0.0
             store.save_config(self.cfg)
             self._paint_activity_chart(ui)

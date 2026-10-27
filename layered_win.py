@@ -969,6 +969,10 @@ class LayeredPetWindow:
                             fn(bytes(buf))
                         except Exception:
                             pass
+            # 前台收到的 RIM_INPUT 必须交给 DefWindowProc 做系统清理；
+            # 后台 RIM_INPUTSINK 已由 GetRawInputData 消费。
+            if int(wparam) == 0:
+                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
             return 0
         if msg == WM_TIMER and int(wparam) == _LIVE_TIMER:
             tick = self._live_tick

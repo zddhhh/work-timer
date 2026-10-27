@@ -1636,6 +1636,75 @@ class WorklogTests(unittest.TestCase):
         day = worklog.get_day(cfg, self.D.date())
         self.assertEqual((day["in"], day["out"]), (8 * 60 + 59, 9 * 60))
 
+    def test_note_input_works_when_activity_counts_are_off(self):
+        import activity
+
+        cfg = {}
+        state = None
+        changed = False
+        first = self.at(9, 3, 1)
+        for extra in (0, 4, 12):
+            state, changed = worklog.note_input(
+                cfg, state, first + timedelta(seconds=extra), target_hm=(18, 0)
+            )
+        self.assertTrue(changed)
+        self.assertEqual(
+            (worklog.get_day(cfg, self.D.date())["in"], worklog.get_day(cfg, self.D.date())["out"]),
+            (9 * 60 + 3, 9 * 60 + 3),
+        )
+        self.assertFalse(activity.enabled(cfg))
+        self.assertEqual(activity.totals(cfg, self.D.date()), (0, 0, 0))
+
+    def test_last_input_fallback_only_uses_changed_ticks(self):
+        now = self.at(10, 0, 10)
+        tick, when = worklog.fallback_input(None, (1000, 0.2), now)
+        self.assertEqual(tick, 1000)
+        self.assertIsNone(when)  # 启动时只建基线，不把启动前的输入算进来
+        tick, when = worklog.fallback_input(tick, (1000, 0.0), now + timedelta(seconds=1))
+        self.assertEqual(tick, 1000)
+        self.assertIsNone(when)  # 空闲一直报 0，但 tick 没变，仍然不是新输入
+        tick, when = worklog.fallback_input(tick, None, now + timedelta(seconds=2))
+        self.assertEqual(tick, 1000)
+        self.assertIsNone(when)  # API 失败也不是新输入
+        tick, when = worklog.fallback_input(tick, (1008, 0.25), now + timedelta(seconds=3))
+        self.assertEqual(tick, 1008)
+        self.assertEqual(when, now + timedelta(seconds=2.75))
+        # 官方说明 tick 不保证递增，所以只看“是否改变”，不比较大小。
+        tick, when = worklog.fallback_input(tick, (998, 0.1), now + timedelta(seconds=4))
+        self.assertEqual(tick, 998)
+        self.assertEqual(when, now + timedelta(seconds=3.9))
+
+    def test_three_changed_fallback_ticks_can_set_the_span(self):
+        cfg = {}
+        state = None
+        tick = 100
+        first = self.at(10, 12, 0)
+        for index, extra in enumerate((0, 6, 18), start=1):
+            now = first + timedelta(seconds=extra, milliseconds=200)
+            tick, when = worklog.fallback_input(tick, (100 + index, 0.2), now)
+            self.assertIsNotNone(when)
+            state, changed = worklog.note_input(cfg, state, when)
+        self.assertTrue(changed)
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["in"], 10 * 60 + 12)
+
+    def test_real_input_is_allowed_immediately_after_wake(self):
+        worklog.reset_wake_watch()
+        before = self.at(7, 0, 0)
+        worklog.observe_clock(before, wall=1000.0, unbiased_100ns=1000 * 10_000_000)
+        woke = before + timedelta(hours=2)
+        self.assertEqual(
+            worklog.observe_clock(woke, wall=8200.0, unbiased_100ns=1001 * 10_000_000),
+            "wake",
+        )
+        cfg = {}
+        state = None
+        # quiet 只挡 LastInput 兜底；可信 Raw Input 仍直接送进 note_input。
+        for extra in (0, 4, 11):
+            state, changed = worklog.note_input(cfg, state, woke + timedelta(seconds=extra))
+        self.assertTrue(changed)
+        self.assertEqual(worklog.get_day(cfg, woke.date())["in"], 9 * 60)
+        worklog.reset_wake_watch()
+
     def test_standby_wake_does_not_count_as_input(self):
         worklog.reset_wake_watch()
         t0 = self.at(21, 0, 0)
@@ -2317,18 +2386,47 @@ class ActivityTests(unittest.TestCase):
     def test_parse_raw_ignores_key_up(self):
         import activity
 
-        key_down = bytearray(40)
+        key_down = bytearray(activity._HDR + 24)
         key_down[0] = 1
         self.assertEqual(activity.parse_raw(bytes(key_down)), "key")
         key_up = bytearray(key_down)
-        key_up[26] = 1
+        key_up[activity._KEY_FLAGS_AT] = 1
         self.assertIsNone(activity.parse_raw(bytes(key_up)))
-        mouse = bytearray(40)
-        mouse[28] = 0x01
+        mouse = bytearray(activity._HDR + 24)
+        mouse[activity._BUTTON_FLAGS_AT] = 0x01
         self.assertEqual(activity.parse_raw(bytes(mouse)), "click")
-        wheel = bytearray(40)
-        wheel[29] = 0x04
+        wheel = bytearray(activity._HDR + 24)
+        wheel[activity._BUTTON_FLAGS_AT + 1] = 0x04
         self.assertEqual(activity.parse_raw(bytes(wheel)), "wheel")
+
+    def test_physical_input_rejects_injected_and_empty_packets(self):
+        import activity
+
+        def hardware(kind: int) -> bytearray:
+            buf = bytearray(activity._HDR + 24)
+            buf[0:4] = kind.to_bytes(4, "little")
+            buf[activity._DEVICE_AT:activity._DEVICE_AT + activity._DEVICE_SIZE] = (
+                1234
+            ).to_bytes(activity._DEVICE_SIZE, "little")
+            return buf
+
+        key = hardware(1)
+        self.assertEqual(activity.physical_input(bytes(key)), "key")
+        key[activity._KEY_FLAGS_AT] = 1
+        self.assertIsNone(activity.physical_input(bytes(key)))  # 松键
+
+        mouse = hardware(0)
+        self.assertIsNone(activity.physical_input(bytes(mouse)))  # 0,0 空包
+        mouse[activity._DX_AT:activity._DX_AT + 4] = (3).to_bytes(4, "little", signed=True)
+        self.assertEqual(activity.physical_input(bytes(mouse)), "move")
+        mouse[activity._BUTTON_FLAGS_AT] = 0x01
+        self.assertEqual(activity.physical_input(bytes(mouse)), "click")
+
+        injected = bytearray(mouse)
+        injected[activity._DEVICE_AT:activity._DEVICE_AT + activity._DEVICE_SIZE] = bytes(
+            activity._DEVICE_SIZE
+        )
+        self.assertIsNone(activity.physical_input(bytes(injected)))
 
 
 class MinesTests(unittest.TestCase):

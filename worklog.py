@@ -19,7 +19,7 @@ IDLE_LIMIT_SEC = 300
 BURST_WINDOW_SEC = 30
 BURST_NEED = 3
 # 现代待机醒来时，系统会把「最后一次输入」刷成现在，空闲读数变成 0。
-# 醒来后这段时间里不把空闲读数写成来和走。真实键鼠过了这段再记，最多晚一分钟。
+# 醒来后这段时间里只屏蔽 LastInput 兜底；真实 Raw Input 仍立即参与来和走。
 WAKE_QUIET_SEC = 15
 WEEKDAY_CN = "一二三四五六日"
 
@@ -178,6 +178,20 @@ def note_second(state: dict | None, when: datetime) -> tuple[dict, datetime | No
         return state, None
     start = datetime.combine(when.date(), datetime.min.time()) + timedelta(seconds=secs[0])
     return state, start
+
+
+def note_input(
+    cfg: dict,
+    state: dict | None,
+    when: datetime,
+    *,
+    target_hm: tuple[int, int] | None = None,
+) -> tuple[dict, bool]:
+    """一条可信输入进入工时账本；次数统计开关不影响这里。"""
+    state, start = note_second(state, when)
+    if start is None:
+        return state, False
+    return state, mark_span(cfg, start, when, target_hm=target_hm)
 
 
 def touch_target(cfg: dict, day: date, target_hm: tuple[int, int] | None) -> bool:
@@ -578,29 +592,45 @@ class _LASTINPUTINFO(ctypes.Structure):
     _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
 
-def last_input_tick() -> int | None:
-    """最后一次键鼠输入的系统 tick（GetTickCount 口径）；拿不到时 None。"""
+def last_input_snapshot() -> tuple[int, float] | None:
+    """同一次调用取得最后输入 tick 和空闲秒数；失败时不伪装成一次新输入。"""
     try:
         info = _LASTINPUTINFO()
         info.cbSize = ctypes.sizeof(info)
         if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
             return None
-        return int(info.dwTime)
+        tick = ctypes.windll.kernel32.GetTickCount() & 0xFFFFFFFF
+        return int(info.dwTime), ((tick - info.dwTime) & 0xFFFFFFFF) / 1000.0
     except Exception:  # noqa: BLE001
         return None
 
 
+def last_input_tick() -> int | None:
+    """最后一次键鼠输入的系统 tick（GetTickCount 口径）；拿不到时 None。"""
+    got = last_input_snapshot()
+    return got[0] if got is not None else None
+
+
 def idle_seconds() -> float:
     """距最后一次键鼠输入的秒数；拿不到时当作正在用。"""
-    try:
-        info = _LASTINPUTINFO()
-        info.cbSize = ctypes.sizeof(info)
-        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
-            return 0.0
-        tick = ctypes.windll.kernel32.GetTickCount() & 0xFFFFFFFF
-        return ((tick - info.dwTime) & 0xFFFFFFFF) / 1000.0
-    except Exception:  # noqa: BLE001
-        return 0.0
+    got = last_input_snapshot()
+    return got[1] if got is not None else 0.0
+
+
+def fallback_input(
+    previous_tick: int | None,
+    snapshot: tuple[int, float] | None,
+    now: datetime,
+) -> tuple[int | None, datetime | None]:
+    """LastInput 仅在事件 tick 改变时补一条；相同值和失败都不算操作。"""
+    if snapshot is None:
+        return previous_tick, None
+    tick, idle = snapshot
+    if previous_tick is None:
+        return tick, None
+    if tick == previous_tick:
+        return tick, None
+    return tick, now - timedelta(seconds=max(0.0, idle))
 
 
 class _WakeWatch:
