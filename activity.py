@@ -14,6 +14,8 @@ TRAVEL_CPI = 1600
 # 连续操作的间隔。超过就换一段。不足最短时长的零星一下不进速度。
 _KEY_GAP_S = 2.0
 _KEY_MIN_S = 1.0
+_CLICK_GAP_S = 2.0
+_CLICK_MIN_S = 1.0
 _WHEEL_GAP_S = 1.0
 _WHEEL_MIN_S = 1.0
 _MOVE_GAP_S = 0.3
@@ -22,12 +24,19 @@ _MOVE_MIN_S = 0.05
 _INST_WINDOW_S = 1.0
 _INST_GAP_S = _INST_WINDOW_S
 _INST_CAP = 20000
-_PACE_KEYS = ("keys_pace", "wheels_pace", "travel_pace", "keys_ms", "wheels_ms", "travel_ms")
-_LAST_KEYS = ("keys_last", "wheels_last", "travel_last", "keys_last_ms", "wheels_last_ms", "travel_last_ms")
-_INST_FIELDS = ("inst_key", "inst_wheel", "inst_move")
-# 曲线采样、小时平均、最近一段，三种操作各走同一行。
+_PACE_KEYS = (
+    "keys_pace", "clicks_pace", "wheels_pace", "travel_pace",
+    "keys_ms", "clicks_ms", "wheels_ms", "travel_ms",
+)
+_LAST_KEYS = (
+    "keys_last", "clicks_last", "wheels_last", "travel_last",
+    "keys_last_ms", "clicks_last_ms", "wheels_last_ms", "travel_last_ms",
+)
+_INST_FIELDS = ("inst_key", "inst_click", "inst_wheel", "inst_move")
+# 曲线采样、小时平均、最近一段，四种操作各走同一行。
 _SPEED_KINDS = (
     ("key", _KEY_GAP_S, _KEY_MIN_S, "keys_pace", "keys_ms", "keys_last", "keys_last_ms", "inst_key"),
+    ("click", _CLICK_GAP_S, _CLICK_MIN_S, "clicks_pace", "clicks_ms", "clicks_last", "clicks_last_ms", "inst_click"),
     ("wheel", _WHEEL_GAP_S, _WHEEL_MIN_S, "wheels_pace", "wheels_ms", "wheels_last", "wheels_last_ms", "inst_wheel"),
     ("move", _MOVE_GAP_S, _MOVE_MIN_S, "travel_pace", "travel_ms", "travel_last", "travel_last_ms", "inst_move"),
 )
@@ -36,10 +45,12 @@ CARD_CHOICES = (
     ("clicks", "点击次数"),
     ("wheels", "滚轮次数"),
     ("key_now", "打字瞬时"),
-    ("move_now", "鼠标瞬时"),
+    ("click_now", "点击瞬时"),
+    ("move_now", "移动瞬时"),
     ("wheel_now", "滚轮瞬时"),
     ("key_hour", "打字均速"),
-    ("move_hour", "鼠标均速"),
+    ("click_hour", "点击均速"),
+    ("move_hour", "移动均速"),
     ("wheel_hour", "滚轮均速"),
 )
 _CARD_LABEL = dict(CARD_CHOICES)
@@ -184,9 +195,11 @@ def _clean_day(v: dict) -> dict:
         "travel": _n(v.get("travel")),
         "travel_h": _hours24(v.get("travel_h")),
         "keys_pace": _hours24(v.get("keys_pace")),
+        "clicks_pace": _hours24(v.get("clicks_pace")),
         "wheels_pace": _hours24(v.get("wheels_pace")),
         "travel_pace": _hours24(v.get("travel_pace")),
         "keys_ms": _hours24(v.get("keys_ms")),
+        "clicks_ms": _hours24(v.get("clicks_ms")),
         "wheels_ms": _hours24(v.get("wheels_ms")),
         "travel_ms": _hours24(v.get("travel_ms")),
     }
@@ -231,7 +244,7 @@ def _day(cfg: dict, d: date) -> dict:
 def _slot(cfg: dict) -> dict:
     found = _OPEN.get(id(cfg))
     if found is None:
-        found = {"key": None, "wheel": None, "move": None}
+        found = {"key": None, "click": None, "wheel": None, "move": None}
         _OPEN[id(cfg)] = found
     return found
 
@@ -337,7 +350,7 @@ def _remember_last(cfg: dict, burst: dict, *, min_s: float, n_key: str, ms_key: 
 
 
 def _sample_inst(cfg: dict, burst: dict, *, min_s: float, inst_key: str, force: bool) -> bool:
-    """同一段里大约每 5 秒留一个点。段结束时把最后一个点改成这段的最终累计。"""
+    """同一段里大约每秒留一个点。段结束时把最后一个点改成这段的最终累计。"""
     if (burst["t1"] - burst["t0"]).total_seconds() < min_s:
         return False
     sec, n, ms = _burst_point(burst)
@@ -397,6 +410,7 @@ def _pending(cfg: dict, day: date, now: datetime) -> dict:
     slot = _OPEN.get(id(cfg)) or {}
     specs = (
         ("key", _KEY_MIN_S, "keys_pace", "keys_ms"),
+        ("click", _CLICK_MIN_S, "clicks_pace", "clicks_ms"),
         ("wheel", _WHEEL_MIN_S, "wheels_pace", "wheels_ms"),
         ("move", _MOVE_MIN_S, "travel_pace", "travel_ms"),
     )
@@ -469,7 +483,9 @@ def speed_snapshot(cfg: dict, now: datetime | None = None) -> dict:
     extra = _pending(cfg, now.date(), now)
     hour = now.hour if 0 <= now.hour < 24 else 0
 
-    count_of = {"key": "keys_h", "wheel": "wheels_h", "move": "travel_h"}
+    count_of = {
+        "key": "keys_h", "click": "clicks_h", "wheel": "wheels_h", "move": "travel_h",
+    }
     out = {}
     for kind, _gap, _min_s, _pace, ms_key, _last_n, _last_ms, _inst in _SPEED_KINDS:
         out[kind] = _live_pair(cfg, kind, now)
@@ -484,6 +500,12 @@ def fmt_key_rate(count: int, ms: int) -> str:
     if ms < int(_KEY_MIN_S * 1000) or count <= 0:
         return "—"
     return f"{round(count * 60000 / ms)}下/分"
+
+
+def fmt_click_rate(count: int, ms: int) -> str:
+    if ms < int(_CLICK_MIN_S * 1000) or count <= 0:
+        return "—"
+    return f"{round(count * 60000 / ms)}次/分"
 
 
 def fmt_wheel_rate(count: int, ms: int) -> str:
@@ -504,7 +526,7 @@ def fmt_move_rate(steps: int, ms: int) -> str:
 
 
 def rate_value(kind: str, n: int, ms: int) -> int:
-    """画图用的整数。打字、滚轮是每分钟多少下，鼠标是大约多少厘米每秒。"""
+    """画图用的整数。打字/点击/滚轮是每分钟次数，移动是大约厘米每秒。"""
     if ms <= 0 or n <= 0:
         return 0
     if kind == "move":
@@ -517,11 +539,15 @@ def fmt_instant(kind: str, n: int, ms: int) -> str:
     if n <= 0 or ms <= 0:
         if kind == "move":
             return "0"
+        if kind == "click":
+            return "0次/分"
         if kind == "wheel":
             return "0格/分"
         return "0下/分"
     if kind == "move":
         return fmt_move_rate(n, ms)
+    if kind == "click":
+        return fmt_click_rate(n, ms)
     if kind == "wheel":
         return fmt_wheel_rate(n, ms)
     return fmt_key_rate(n, ms)
@@ -529,9 +555,15 @@ def fmt_instant(kind: str, n: int, ms: int) -> str:
 
 def fmt_card_speed(kind: str, n: int, ms: int, *, avg: bool = False) -> str:
     if not avg:
-        return fmt_instant(kind, n, ms).replace("下", "").replace("格", "").replace("约 ", "").replace(" ", "")
+        return (
+            fmt_instant(kind, n, ms)
+            .replace("下", "").replace("次", "").replace("格", "")
+            .replace("约 ", "").replace(" ", "")
+        )
     if kind == "key":
         text = fmt_key_rate(n, ms).replace("下", "")
+    elif kind == "click":
+        text = fmt_click_rate(n, ms).replace("次", "")
     elif kind == "wheel":
         text = fmt_wheel_rate(n, ms).replace("格", "")
     else:
@@ -539,10 +571,20 @@ def fmt_card_speed(kind: str, n: int, ms: int, *, avg: bool = False) -> str:
     return "均—" if text == "—" else f"均{text}"
 
 
-def fmt_speed_line(keys: int, key_ms: int, travel: int, travel_ms: int, wheels: int, wheel_ms: int) -> str:
+def fmt_speed_line(
+    keys: int,
+    key_ms: int,
+    travel: int,
+    travel_ms: int,
+    wheels: int,
+    wheel_ms: int,
+    clicks: int = 0,
+    click_ms: int = 0,
+) -> str:
     return (
         f"打字 {fmt_key_rate(keys, key_ms)}"
-        f"    鼠标 {fmt_move_rate(travel, travel_ms)}"
+        f"    点击 {fmt_click_rate(clicks, click_ms)}"
+        f"    移动 {fmt_move_rate(travel, travel_ms)}"
         f"    滚轮 {fmt_wheel_rate(wheels, wheel_ms)}"
     )
 
@@ -565,6 +607,11 @@ def note(cfg: dict, kind: str, now: datetime | None = None) -> bool:
             _touch(cfg, "key", now, 1, gap=_KEY_GAP_S, min_s=_KEY_MIN_S, pace_key="keys_pace", ms_key="keys_ms")
         elif kind == "click":
             item["clicks_h"][h] = _n(item["clicks_h"][h]) + 1
+            _touch(
+                cfg, "click", now, 1,
+                gap=_CLICK_GAP_S, min_s=_CLICK_MIN_S,
+                pace_key="clicks_pace", ms_key="clicks_ms",
+            )
         elif kind == "wheel":
             item["wheels_h"][h] = _n(item["wheels_h"][h]) + 1
             _touch(cfg, "wheel", now, 1, gap=_WHEEL_GAP_S, min_s=_WHEEL_MIN_S, pace_key="wheels_pace", ms_key="wheels_ms")
@@ -721,13 +768,18 @@ def card_parts(cfg: dict, now: datetime | None = None, speed: dict | None = None
     }
     speed_spec = {
         "key_now": ("key", "key", False),
+        "click_now": ("mouse", "click", False),
         "move_now": ("mouse", "move", False),
         "wheel_now": ("wheel", "wheel", False),
         "key_hour": ("key", "key_hour", True),
+        "click_hour": ("mouse", "click_hour", True),
         "move_hour": ("mouse", "move_hour", True),
         "wheel_hour": ("wheel", "wheel_hour", True),
     }
-    kind_of = {"key": "key", "move": "move", "wheel": "wheel", "key_hour": "key", "move_hour": "move", "wheel_hour": "wheel"}
+    kind_of = {
+        "key": "key", "click": "click", "move": "move", "wheel": "wheel",
+        "key_hour": "key", "click_hour": "click", "move_hour": "move", "wheel_hour": "wheel",
+    }
     parts = []
     for slot in card_slots(cfg):
         if slot in count_text:

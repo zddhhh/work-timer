@@ -2085,6 +2085,43 @@ class ActivityTests(unittest.TestCase):
         parts = activity.card_parts(cfg, stopped, speed=idle)
         self.assertTrue(any(text == "0/分" for _icon, text in parts))
 
+    def test_click_speed_tracks_average_instant_and_idle(self):
+        import activity
+
+        cfg = {}
+        activity.set_enabled(cfg, True)
+        t0 = datetime(2026, 10, 26, 10, 20, 0)
+        activity.note(cfg, "click", t0)  # 零星一下进总次数，不进活跃时长
+        activity.settle(cfg, t0 + timedelta(seconds=3))
+        self.assertEqual(sum(activity.counts(cfg, t0.date())["clicks_ms"]), 0)
+
+        start = t0 + timedelta(seconds=10)
+        for sec in (0, 0.4, 0.8, 1.2):
+            activity.note(cfg, "click", start + timedelta(seconds=sec))
+        live_at = start + timedelta(seconds=1.2)
+        snap = activity.speed_snapshot(cfg, live_at)
+        self.assertEqual(activity.rate_value("click", *snap["click"]), 180)
+        self.assertEqual(activity.fmt_instant("click", *snap["click"]), "180次/分")
+        self.assertEqual(activity.speed_snapshot(cfg, live_at + timedelta(seconds=1.2))["click"], (0, 0))
+        self.assertEqual(activity.fmt_instant("click", 0, 0), "0次/分")
+
+        activity.settle(cfg, start + timedelta(seconds=4))
+        counted = activity.counts(cfg, t0.date())
+        self.assertEqual(counted["clicks"], 5)
+        self.assertEqual(sum(counted["clicks_pace"]), 4)
+        self.assertEqual(sum(counted["clicks_ms"]), 1200)
+        rate = activity.rate_value("click", counted["clicks"], sum(counted["clicks_ms"]))
+        self.assertEqual(rate, 250)
+        self.assertAlmostEqual(counted["clicks"] * 60000 / rate, 1200, delta=12)
+
+        slots = activity.set_card_slot(cfg, 0, "click_now")
+        self.assertEqual(slots[0], "click_now")
+        parts = activity.card_parts(
+            cfg, live_at + timedelta(seconds=1.2),
+            speed=activity.speed_snapshot(cfg, live_at + timedelta(seconds=1.2)),
+        )
+        self.assertEqual(parts[0], ("mouse", "0/分"))
+
     def test_speed_charts_draw_average_and_curve(self):
         import activity_chart
 
@@ -2094,18 +2131,21 @@ class ActivityTests(unittest.TestCase):
         ms[10] = 1200
         today = {
             "mode": "split",
-            "keys": 4, "clicks": 0, "wheels": 0,
-            "keys_h": pace[:], "clicks_h": [0] * 24, "wheels_h": [0] * 24, "hours": [0] * 24,
+            "keys": 4, "clicks": 4, "wheels": 0,
+            "keys_h": pace[:], "clicks_h": pace[:], "wheels_h": [0] * 24, "hours": [0] * 24,
             "travel": 0, "travel_h": [0] * 24,
             "keys_pace": pace, "keys_ms": ms,
+            "clicks_pace": pace, "clicks_ms": ms,
             "wheels_pace": [0] * 24, "wheels_ms": [0] * 24,
             "travel_pace": [0] * 24, "travel_ms": [0] * 24,
             "inst_key": [[10 * 3600, 4, 1200], [10 * 3600 + 30, 8, 2400]],
+            "inst_click": [[10 * 3600, 4, 1200], [10 * 3600 + 30, 8, 2400]],
             "inst_wheel": [],
             "inst_move": [[10 * 3600 + 300, 3200, 200]],
         }
         _im, hits = activity_chart.render(today, [], enabled=True, this_week=True, mode="avg")
         self.assertTrue(any(h["text"] == "10点" and "200下/分" in h["speed"] for h in hits))
+        self.assertTrue(any(h["text"] == "10点" and "点击 200次/分" in h["speed"] for h in hits))
         _curve, curve_hits = activity_chart.render(today, [], enabled=True, this_week=True, mode="inst")
         self.assertTrue(any(h["text"] == "10点" and "200下/分" in h["speed"] for h in curve_hits))
         self.assertTrue(any("25 厘米/秒" in h["speed"] for h in curve_hits))
@@ -2408,7 +2448,7 @@ class ActivityTests(unittest.TestCase):
         week_im, week_hits = activity_chart.render(pack, split_days, enabled=True, this_week=True, view="week")
         self.assertEqual(week_im.size, (activity_chart.W, activity_chart.H))
         self.assertEqual(len(week_hits), 7)
-        self.assertTrue(any("键盘" in h["text"] and "鼠标" in h["text"] for h in week_hits))
+        self.assertTrue(any("键盘" in h["text"] and "点击" in h["text"] for h in week_hits))
         self.assertEqual(
             activity_chart.week_totals(
                 [{"mode": "split", "keys": 1, "clicks": 2, "wheels": 3}, {"mode": "combined", "keys": 9, "clicks": 9, "wheels": 0}],
@@ -2427,7 +2467,7 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(im.size, (activity_chart.W, activity_chart.H))
         sampled = {im.getpixel((x, y)) for x in range(0, im.width, 12) for y in range(0, im.height, 12)}
         self.assertGreater(len(sampled), 8)
-        self.assertTrue(any("鼠标" in h["text"] and "滚轮" in h["text"] for h in hits))
+        self.assertTrue(any("点击" in h["text"] and "滚轮" in h["text"] for h in hits))
         held = {"today_ptr": (hits[0]["x0"] + 1, hits[0]["y0"] + 1), "week_ptr": None}
         x, y = activity_chart.remembered_hover(held, "today")
         self.assertEqual(activity_chart.hover_text(hits, x, y), hits[0]["text"])
