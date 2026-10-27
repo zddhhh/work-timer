@@ -44,6 +44,7 @@ CARD_CHOICES = (
     ("keys", "键盘次数"),
     ("clicks", "点击次数"),
     ("wheels", "滚轮次数"),
+    ("travel", "移动距离"),
     ("key_now", "打字瞬时"),
     ("click_now", "点击瞬时"),
     ("move_now", "移动瞬时"),
@@ -104,6 +105,14 @@ def totals(cfg: dict, d: date) -> tuple[int, int, int]:
     if not isinstance(item, dict):
         return 0, 0, 0
     return _n(item.get("keys")), _n(item.get("clicks")), _n(item.get("wheels"))
+
+
+def total_travel(cfg: dict, d: date) -> int:
+    """只取移动总计，不整理每小时数组，供主卡高频刷新。"""
+    raw = cfg.get(_KEY)
+    days = raw.get("days") if isinstance(raw, dict) else None
+    item = days.get(d.strftime("%Y-%m-%d")) if isinstance(days, dict) else None
+    return _n(item.get("travel")) if isinstance(item, dict) else 0
 
 
 def _book(cfg: dict) -> dict:
@@ -765,6 +774,7 @@ def card_parts(cfg: dict, now: datetime | None = None, speed: dict | None = None
         "keys": ("key", fmt_count(counted[0])),
         "clicks": ("mouse", fmt_count(counted[1])),
         "wheels": ("wheel", fmt_count(counted[2])),
+        "travel": ("mouse", fmt_travel(total_travel(cfg, now.date()))),
     }
     speed_spec = {
         "key_now": ("key", "key", False),

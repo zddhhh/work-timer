@@ -2062,6 +2062,7 @@ class ActivityTests(unittest.TestCase):
         activity.settle(cfg, move + timedelta(seconds=1))
         moved = activity.counts(cfg, t0.date())
         self.assertEqual(sum(moved["travel_pace"]), 3200)
+        self.assertEqual(activity.total_travel(cfg, t0.date()), 3200)
         self.assertEqual(activity.fmt_move_rate(3200, 200), "约 25 厘米/秒")
         spin = t0.replace(minute=8)
         for sec in (0, 0.4, 0.8, 1.2):
@@ -2079,11 +2080,14 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(len(set(swapped)), 3)
         again = activity.set_card_slot(cfg, 1, "key_now")
         self.assertEqual(again.count("key_now"), 1)
+        distance = activity.set_card_slot(cfg, 2, "travel")
+        self.assertEqual(activity.card_label(distance[2]), "移动距离")
         stopped = t0.replace(minute=30)
         idle = activity.speed_snapshot(cfg, stopped)
         self.assertEqual(idle["key"], (0, 0))
         parts = activity.card_parts(cfg, stopped, speed=idle)
         self.assertTrue(any(text == "0/分" for _icon, text in parts))
+        self.assertEqual(parts[2], ("mouse", "约 5.1 厘米"))
 
     def test_click_speed_tracks_average_instant_and_idle(self):
         import activity
