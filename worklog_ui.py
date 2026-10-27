@@ -46,6 +46,14 @@ def scroll_view(
     return view, view < sheet_h
 
 
+def wheel_pixels(delta: int) -> int:
+    """滚轮按像素走。Windows 一格大约 120，折成约 40 像素，触控板的小增量也跟着走。"""
+    step = int(-int(delta) / 3)
+    if step == 0:
+        return -1 if int(delta) > 0 else 1
+    return step
+
+
 class WorklogDialogMixin:
     """WorkTimer 的一部分，方法里的 self 就是 WorkTimer。"""
 
@@ -77,6 +85,9 @@ class WorklogDialogMixin:
             return
         sec = int(time.monotonic())
         if ui.get("live_sec") == sec:
+            return
+        # 手指还在滑时改字、换图，会把正在移动的卡片撕开。
+        if time.monotonic() < float(ui.get("scroll_until") or 0):
             return
         ui["live_sec"] = sec
         today = date.today()
@@ -479,7 +490,15 @@ class WorklogDialogMixin:
             bg="#3a4254", activebackground="#5a6478", troughcolor=_CARD_BG,
             relief="flat", bd=0, highlightthickness=0,
         )
-        scroll.configure(yscrollcommand=scroll_sb.set)
+        def _on_scroll(*args) -> None:
+            ui["scroll_until"] = time.monotonic() + 0.25
+            if len(args) == 3 and args[0] == "scroll":
+                scroll.yview_scroll(int(args[1]) * 28, "units")
+                return
+            scroll.yview(*args)
+
+        scroll.configure(yscrollcommand=scroll_sb.set, yscrollincrement=1)
+        scroll_sb.configure(command=_on_scroll)
         scroll.pack(side="left", fill="y", expand=True)
         sheet = tk.Frame(scroll, bg=_CARD_BG)
         scroll_win = scroll.create_window((0, 0), window=sheet, anchor="nw", width=pair_w)
@@ -1011,10 +1030,21 @@ class WorklogDialogMixin:
         dlg.bind("<Return>", lambda _e: save())
         dlg.bind("<Escape>", lambda _e: close())
 
-        def _wheel(event) -> None:
+        def _flush_wheel() -> None:
+            ui["wheel_job"] = None
+            step = int(ui.pop("wheel_acc", 0) or 0)
+            if not step:
+                return
             if int(sheet.winfo_reqheight()) <= int(scroll.winfo_height()) + 1:
                 return
-            scroll.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            scroll.yview_scroll(step, "units")
+
+        def _wheel(event) -> None:
+            # 一串滚轮先累加，空闲时一次挪完，键鼠图只贴一次。
+            ui["scroll_until"] = time.monotonic() + 0.25
+            ui["wheel_acc"] = int(ui.get("wheel_acc") or 0) + wheel_pixels(int(event.delta))
+            if ui.get("wheel_job") is None:
+                ui["wheel_job"] = scroll.after_idle(_flush_wheel)
 
         def _bind_wheel(widget) -> None:
             widget.bind("<MouseWheel>", _wheel, add="+")
@@ -1023,12 +1053,23 @@ class WorklogDialogMixin:
 
         def _sync_scroll(_event=None) -> None:
             height = max(1, int(sheet.winfo_reqheight()))
-            scroll.configure(scrollregion=(0, 0, pair_w, height))
-            scroll.itemconfigure(scroll_win, width=pair_w)
             # winfo_height 在窗口重排前还是上一档高度，会把刚收起的滚动条又装回来。
             view = int(scroll.cget("height"))
+            width = int(scroll.winfo_width())
             if view <= 1:
                 return
+            # 滚动时嵌进去的卡片会反复发 Configure。尺寸没变就别重设滚动区域，否则画面会撕开、位置乱跳。
+            if (
+                ui.get("scroll_h") == height
+                and ui.get("scroll_view") == view
+                and ui.get("scroll_w") == width
+            ):
+                return
+            ui["scroll_h"] = height
+            ui["scroll_view"] = view
+            ui["scroll_w"] = width
+            scroll.configure(scrollregion=(0, 0, pair_w, height))
+            scroll.itemconfigure(scroll_win, width=pair_w)
             shown = bool(scroll_sb.winfo_manager())
             if height > view + 4 and not shown:
                 scroll_sb.pack(side="right", fill="y")

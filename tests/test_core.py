@@ -1993,6 +1993,9 @@ class WorklogScrollTests(unittest.TestCase):
 
         view, scroll = worklog_ui.scroll_view(640, 860, 1080)
         self.assertEqual((view, scroll), (640, False))
+        self.assertEqual(worklog_ui.wheel_pixels(120), -40)
+        self.assertEqual(worklog_ui.wheel_pixels(-120), 40)
+        self.assertEqual(worklog_ui.wheel_pixels(1), -1)
 
     def test_short_screen_only_shrinks_the_middle(self):
         import worklog_ui
@@ -2049,6 +2052,19 @@ class WorklogScrollTests(unittest.TestCase):
             dlg.update_idletasks()
             self.assertEqual(ui["scroll_sb"].winfo_manager(), "")
             self.assertEqual(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
+            host._fit_worklog_scroll(ui, screen_h=720)
+            dlg.update_idletasks()
+            ui["scroll"].yview_moveto(0.35)
+            dlg.update_idletasks()
+            held = float(ui["scroll"].yview()[0])
+            ui["sheet"].event_generate("<Configure>")
+            ui["scroll"].event_generate("<Configure>")
+            dlg.update_idletasks()
+            self.assertAlmostEqual(float(ui["scroll"].yview()[0]), held, places=2)
+            ui["scroll"].yview_moveto(0)
+            ui["scroll"].event_generate("<MouseWheel>", delta=-120)
+            dlg.update_idletasks()
+            self.assertGreater(float(ui["scroll"].yview()[0]), 0.0)
 
             worklog.set_note(host.cfg, date.today(), "9:00", "18:00")
             worklog.set_tracking_enabled(host.cfg, False)
