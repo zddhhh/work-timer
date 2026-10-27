@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import itertools
 import math
 import os
+import threading
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -43,7 +46,8 @@ _TODAY = (240, 243, 248, 255)
 
 
 def _font(size: float, *, bold: bool = False) -> ImageFont.ImageFont:
-    key = (round(float(size) * 4.0) / 4.0, bold)
+    # 后台画图线程和主线程各用各的字体对象，FreeType 不能两个线程同时用一个。
+    key = (round(float(size) * 4.0) / 4.0, bold, threading.get_ident())
     got = _FONT.get(key)
     if got is not None:
         return got
@@ -116,8 +120,9 @@ def _speed_line_from(src: dict, hour: int | None = None) -> str:
 
 def today_pack(cfg: dict, d: date, now: datetime | None = None) -> dict:
     now = now or datetime.now()
+    activity.settle(cfg, now)
     c = activity.counts(cfg, d)
-    pace = activity.pace_of(cfg, d, now)
+    pace = activity.pace_of(cfg, d, now, c=c)
     mode, keys_h, clicks_h, wheels_h = hourly_series(c)
     live = activity.speed_snapshot(cfg, now) if now.date() == d else {
         "key": (0, 0), "click": (0, 0), "move": (0, 0), "wheel": (0, 0),
@@ -144,15 +149,17 @@ def today_pack(cfg: dict, d: date, now: datetime | None = None) -> dict:
         "travel_ms": pace["travel_ms"],
         "inst_live": live,
         "now_sec": now.hour * 3600 + now.minute * 60 + now.second if now.date() == d else None,
-        **activity.inst_rows(cfg, d, now),
+        **activity.inst_rows(cfg, d, now, c=c),
     }
 
 
 def week_pack(cfg: dict, days: list[date], today: date, now: datetime | None = None) -> list[dict]:
+    now = now or datetime.now()
+    activity.settle(cfg, now)
     out = []
     for d in days:
         c = activity.counts(cfg, d)
-        pace = activity.pace_of(cfg, d, now)
+        pace = activity.pace_of(cfg, d, now, c=c)
         mode, _, _, _ = hourly_series(c)
         out.append(
             {
@@ -171,7 +178,7 @@ def week_pack(cfg: dict, days: list[date], today: date, now: datetime | None = N
                 "wheels_ms": sum(pace["wheels_ms"]),
                 "travel_pace": sum(pace["travel_pace"]),
                 "travel_ms": sum(pace["travel_ms"]),
-                **activity.inst_rows(cfg, d, now),
+                **activity.inst_rows(cfg, d, now, c=c),
                 "today": d == today,
                 "weekend": d.weekday() >= 5,
                 "future": d > today,
@@ -386,6 +393,22 @@ def _busiest_caption(days: list[dict]) -> str:
     return f"最勤 周{_WD[d.weekday()]}"
 
 
+_FADE: dict[tuple, Image.Image] = {}
+
+
+def _fade(w: int, h: int, alpha: int) -> Image.Image:
+    """面积的上下渐隐。只跟高度有关，同一张图上每条线都一样，算一次留着。"""
+    key = (w, h, alpha)
+    got = _FADE.get(key)
+    if got is None:
+        if len(_FADE) > 16:
+            _FADE.clear()
+        col = Image.linear_gradient("L").resize((1, h)).point(lambda v: (255 - v) * alpha // 255)
+        got = col.resize((w, h), Image.NEAREST)
+        _FADE[key] = got
+    return got
+
+
 class _Ink:
     """曲线和面积画在 3 倍大的透明层上再缩回来，斜线边缘才不发毛。"""
 
@@ -412,7 +435,9 @@ class _Ink:
         mask = Image.new("L", (bw, bh), 0)
         poly = [(x - x0, y - y0) for x, y in self._up([(pts[0][0], base), *pts, (pts[-1][0], base)])]
         ImageDraw.Draw(mask).polygon(poly, fill=255)
-        fade = Image.linear_gradient("L").resize((bw, bh)).point(lambda v: (255 - v) * alpha // 255)
+        fade = _fade(self.im.size[0], bh, alpha)
+        if fade.size[0] != bw:
+            fade = fade.crop((0, 0, bw, bh))
         layer = Image.new("RGBA", (bw, bh), tuple(color[:3]) + (0,))
         layer.putalpha(ImageChops.multiply(mask, fade))
         self.im.alpha_composite(layer, (x0, y0))
@@ -495,27 +520,29 @@ def _runs(xs: list[float], vals: list[int], *, skip_zero: bool) -> list[list[tup
     return runs
 
 
-def _inst_runs(pts: list[tuple[int, int]], x_of, gap: int) -> list[list[tuple[float, float]]]:
-    """瞬时点按 2 像素一格取平均，再和相邻一格揉一下。
+def _inst_runs(pts: list[tuple], x_of, gap: int) -> list[list[tuple[float, float]]]:
+    """瞬时点按 2 像素一格取平均，再和相邻一格揉一下。点可以带第三项权重。
 
     停得比 gap 秒久、并且在图上隔开超过 8 像素才断开；一周的图一像素就是几十分钟，不能按 5 分钟断。
     """
-    raw: list[list[tuple[float, int]]] = []
+    raw: list[list[tuple[float, float, int]]] = []
     prev = None
-    for sec, rate in pts:
+    for pt in pts:
+        sec, rate = pt[0], pt[1]
+        w = pt[2] if len(pt) > 2 else 1
         x = x_of(sec)
         if prev is None or (sec - prev[0] > gap and x - prev[1] > 8):
             raw.append([])
-        raw[-1].append((x, rate))
+        raw[-1].append((x, rate, w))
         prev = (sec, x)
     out = []
     for run in raw:
         cells: dict[int, list[float]] = {}
-        for x, v in run:
+        for x, v, w in run:
             acc = cells.setdefault(int(x // 2), [0.0, 0.0, 0])
-            acc[0] += x
-            acc[1] += v
-            acc[2] += 1
+            acc[0] += x * w
+            acc[1] += v * w
+            acc[2] += w
         keys = sorted(cells)
         xs = [cells[k][0] / cells[k][2] for k in keys]
         vs = [cells[k][1] / cells[k][2] for k in keys]
@@ -791,20 +818,11 @@ def _hour_rates(ns, mss, kind: str) -> list[int]:
     return [activity.rate_value(kind, int(n or 0), int(ms or 0)) for n, ms in zip(ns, mss)]
 
 
-def _same_stretch(prev: tuple[int, int, int], sec: int, ms: int) -> bool:
-    """上一个点的时长还在往上加，才是同一段。新的一段时长会重新变小。"""
-    psec, _pn, pms = prev
-    if sec < psec:
-        return False
-    expected = pms + (sec - psec) * 1000
-    return ms + 1500 >= pms and ms >= expected * 0.5
+_same_stretch = activity.same_stretch
 
 
-def _interval_points(rows, kind: str, *, tail_sec: int | None = None) -> list[tuple[int, int]]:
-    """每个采样点是这一小段的速度。一段结束就落到 0，停着的时候右端也是 0。"""
-    out = []
-    prev: tuple[int, int, int] | None = None
-    for row in rows or []:
+def _interval_feed(rows, kind: str, prev, emit):
+    for row in rows:
         if not isinstance(row, (list, tuple)) or len(row) < 3:
             continue
         sec, n, ms = int(row[0]), int(row[1]), int(row[2])
@@ -816,14 +834,87 @@ def _interval_points(rows, kind: str, *, tail_sec: int | None = None) -> list[tu
                 dn, dms = n, ms
         else:
             if prev is not None and sec > prev[0]:
-                out.append((prev[0] + 1, 0))
+                emit((prev[0] + 1, 0))
             dn, dms = n, ms
         rate = activity.rate_value(kind, dn, dms)
         if rate > 0:
-            out.append((sec, rate))
+            emit((sec, rate))
         prev = (sec, n, ms)
+    return prev
+
+
+def _interval_points(rows, kind: str, *, tail_sec: int | None = None) -> list[tuple[int, int]]:
+    """每个采样点是这一小段的速度。一段结束就落到 0，停着的时候右端也是 0。"""
+    out: list[tuple[int, int]] = []
+    _interval_feed(rows or [], kind, None, out.append)
     if tail_sec is not None and out and out[-1][1] > 0 and tail_sec > out[-1][0]:
         out.append((tail_sec, 0))
+    return out
+
+
+# 采样只在末尾长，最后两行可能被换掉。记住算到哪一行，下次只算新来的。
+_MEMO: dict[tuple, dict] = {}
+_MEMO_CAP = 96
+
+
+def _memo(tag: tuple, rows: list, fresh) -> tuple[dict, int]:
+    stable = max(0, len(rows) - 2)
+    key = tag + (id(rows[0]),)
+    m = _MEMO.get(key)
+    k = m["k"] if m else 0
+    if m is None or m["first"] is not rows[0] or k > stable or (k and rows[k - 1] is not m["anchor"]):
+        if len(_MEMO) >= _MEMO_CAP:
+            _MEMO.clear()
+        m = fresh()
+        m.update(first=rows[0], k=0, anchor=None)
+        _MEMO[key] = m
+    return m, stable
+
+
+def _bucket_emit(state: dict, size: int):
+    """同一格里的速度先合起来。落到 0 的点单独留着，线才会真的落下去。"""
+    cells = state["b"]
+
+    def emit(pt) -> None:
+        sec, rate = pt
+        state["last"] = pt
+        if rate <= 0:
+            cells.append([sec, 0, 1, -1])
+            return
+        cell = sec // size
+        top = cells[-1] if cells else None
+        if top is not None and top[3] == cell:
+            top[0] += sec
+            top[1] += rate
+            top[2] += 1
+        else:
+            cells.append([sec, rate, 1, cell])
+
+    return emit
+
+
+def _inst_points(rows, kind: str, size: int, *, tail_sec: int | None = None) -> list[tuple[float, float, int]]:
+    """_interval_points 按 size 秒合格，带权重。曲线和它画出来一样，点少得多。"""
+    if not rows:
+        return []
+    m, stable = _memo(("pts", kind, size), rows, lambda: {"b": [], "last": None, "prev": None})
+    if m["k"] < stable:
+        m["prev"] = _interval_feed(rows[m["k"]:stable], kind, m["prev"], _bucket_emit(m, size))
+        m["k"], m["anchor"] = stable, rows[stable - 1]
+    tail = {"b": [list(m["b"][-1])] if m["b"] else [], "last": m["last"]}
+    _interval_feed(rows[stable:], kind, m["prev"], _bucket_emit(tail, size))
+    cells = m["b"][:-1] + tail["b"]
+    if not cells:
+        return []
+    out = [(s / w, r / w, w) for s, r, w, _c in cells]
+    last = tail["last"]
+    s, r, w, _c = cells[-1]
+    if w > 1 and last is not None and last[1] > 0:
+        rest = w - 1
+        out[-1] = ((s - last[0]) / rest, (r - last[1]) / rest, rest)
+        out.append((last[0], last[1], 1))
+    if tail_sec is not None and last is not None and last[1] > 0 and tail_sec > last[0]:
+        out.append((tail_sec, 0, 1))
     return out
 
 
@@ -852,28 +943,60 @@ def _recent_pair(rows) -> tuple[int, int]:
     return n, ms
 
 
-def _inst_line_at(src: dict, hour: int | None) -> str:
-    def take(key: str) -> tuple[int, int]:
-        found = (0, 0)
-        prev = None
-        for row in src.get(key) or []:
-            if not isinstance(row, (list, tuple)) or len(row) < 3:
-                continue
-            sec, n, ms = int(row[0]), int(row[1]), int(row[2])
-            if hour is None or sec // 3600 == hour:
-                if prev is not None and _same_stretch(prev, sec, ms):
-                    dn, dms = n - prev[1], ms - prev[2]
-                    found = (dn, dms) if dn > 0 and dms > 0 else (n, ms)
-                else:
-                    found = (n, ms)
-            prev = (sec, n, ms)
-        return found
+def _pairs_feed(rows, state: dict) -> None:
+    by_hour = state["by_hour"]
+    last, prev = state["last"], state["prev"]
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) < 3:
+            continue
+        sec, n, ms = int(row[0]), int(row[1]), int(row[2])
+        if prev is not None and _same_stretch(prev, sec, ms):
+            dn, dms = n - prev[1], ms - prev[2]
+            last = (dn, dms) if dn > 0 and dms > 0 else (n, ms)
+        else:
+            last = (n, ms)
+        by_hour[sec // 3600] = last
+        prev = (sec, n, ms)
+    state["last"], state["prev"] = last, prev
 
-    k, km = take("inst_key")
-    c, cm = take("inst_click")
-    v, vm = take("inst_move")
-    w, wm = take("inst_wheel")
-    return activity.fmt_speed_line(k, km, v, vm, w, wm, c, cm)
+
+def _inst_pairs(rows) -> tuple[dict[int, tuple[int, int]], tuple[int, int]]:
+    """每小时最后一小段的次数和时长，和全天最后一小段。"""
+    if not rows:
+        return {}, (0, 0)
+    m, stable = _memo(("pairs",), rows, lambda: {"by_hour": {}, "last": (0, 0), "prev": None})
+    if m["k"] < stable:
+        _pairs_feed(rows[m["k"]:stable], m)
+        m["k"], m["anchor"] = stable, rows[stable - 1]
+    tail = {"by_hour": dict(m["by_hour"]), "last": m["last"], "prev": m["prev"]}
+    _pairs_feed(rows[stable:], tail)
+    return tail["by_hour"], tail["last"]
+
+
+def _inst_lines(src: dict) -> tuple[dict[int, str], str]:
+    """悬停读数：每小时一行，加上全天一行。"""
+    got = {key: _inst_pairs(src.get(key)) for key in ("inst_key", "inst_click", "inst_move", "inst_wheel")}
+
+    def line(pick) -> str:
+        (k, km), (c, cm), (v, vm), (w, wm) = (
+            pick(got[key]) for key in ("inst_key", "inst_click", "inst_move", "inst_wheel")
+        )
+        return activity.fmt_speed_line(k, km, v, vm, w, wm, c, cm)
+
+    hours = set()
+    for by_hour, _last in got.values():
+        hours.update(by_hour)
+    return (
+        {hour: line(lambda g, h=hour: g[0].get(h, (0, 0))) for hour in hours},
+        line(lambda g: g[1]),
+    )
+
+
+def _inst_line_at(src: dict, hour: int | None) -> str:
+    lines, whole = _inst_lines(src)
+    if hour is None:
+        return whole
+    return lines.get(hour) or activity.fmt_speed_line(0, 0, 0, 0, 0, 0, 0, 0)
 
 
 def _render_speed(
@@ -977,10 +1100,10 @@ def _render_speed(
                     ("inst_move", "move"), ("inst_wheel", "wheel"),
                 ):
                     gathered[kind].extend(
-                        (i * 86400 + sec, rate)
-                        for sec, rate in _interval_points(
-                            row.get(key), kind,
-                            tail_sec=(i * 86400 + _live_tail(today, kind)) if row.get("today") and _live_tail(today, kind) is not None else None,
+                        (i * 86400 + sec, rate, w)
+                        for sec, rate, w in _inst_points(
+                            row.get(key), kind, 60,
+                            tail_sec=_live_tail(today, kind) if row.get("today") else None,
                         )
                     )
 
@@ -990,7 +1113,7 @@ def _render_speed(
             _paint_series(
                 im,
                 [
-                    (_inst_runs(gathered[kind], x_of, 300), color, _headroom((r for _s, r in gathered[kind]), robust=True))
+                    (_inst_runs(gathered[kind], x_of, 300), color, _headroom((p[1] for p in gathered[kind]), robust=True))
                     for kind, color in (
                         ("key", _KEY), ("click", _CLICK), ("move", _TRAVEL), ("wheel", _WHEEL),
                     )
@@ -1070,16 +1193,17 @@ def _render_speed(
             })
         return im, hits
 
-    pieces = (
-        (_interval_points(today.get("inst_key"), "key", tail_sec=_live_tail(today, "key")), _KEY),
-        (_interval_points(today.get("inst_click"), "click", tail_sec=_live_tail(today, "click")), _CLICK),
-        (_interval_points(today.get("inst_move"), "move", tail_sec=_live_tail(today, "move")), _TRAVEL),
-        (_interval_points(today.get("inst_wheel"), "wheel", tail_sec=_live_tail(today, "wheel")), _WHEEL),
+    pieces = tuple(
+        (_inst_points(today.get(key), kind, 5, tail_sec=_live_tail(today, kind)), color)
+        for key, kind, color in (
+            ("inst_key", "key", _KEY), ("inst_click", "click", _CLICK),
+            ("inst_move", "move", _TRAVEL), ("inst_wheel", "wheel", _WHEEL),
+        )
     )
     marks = [0] * 24
     for pts, _color in pieces:
-        for sec, _rate in pts:
-            hour = sec // 3600
+        for pt in pts:
+            hour = int(pt[0]) // 3600
             if 0 <= hour < 24:
                 marks[hour] = 1
     lo, hi = visible_span(marks)
@@ -1091,12 +1215,14 @@ def _render_speed(
     _paint_series(
         im,
         [
-            (_inst_runs(pts, x_of, 300), color, _headroom((r for _s, r in pts), robust=True))
+            (_inst_runs(pts, x_of, 300), color, _headroom((p[1] for p in pts), robust=True))
             for pts, color in pieces
         ],
         rows_top, base, smooth=False,
     )
     slot = (plot_r - plot_l) / span_h
+    lines, _whole = _inst_lines(today)
+    quiet = activity.fmt_speed_line(0, 0, 0, 0, 0, 0, 0, 0)
     for hour in range(lo, hi + 1):
         cx = plot_l + (hour - lo + 0.5) * slot
         if hour % 2 == 0:
@@ -1106,7 +1232,7 @@ def _render_speed(
             "y0": rows_top, "y1": base + 16,
             "band": (cx - slot / 2, rows_top - 4, cx + slot / 2, base),
             "text": f"{hour}点",
-            "speed": _inst_line_at(today, hour),
+            "speed": lines.get(hour) or quiet,
         })
     return im, hits
 
@@ -1239,8 +1365,12 @@ def paint_into(
     focus: date | None = None,
     style: str = "line",
     mode: str = "counts",
+    background: bool = False,
 ) -> None:
-    """左边看 focus 这一天，右边看这一周。尺寸相同。数据没变就跳过。"""
+    """左边看 focus 这一天，右边看这一周。尺寸相同。数据没变就跳过。
+
+    background：交给后台线程画，画好由 collect 换上。手点的切换不用它，要当场就对。
+    """
     now = datetime.now()
     pack = today_pack(cfg, focus or today, now)
     week = week_pack(cfg, days, today, now)
@@ -1268,13 +1398,39 @@ def paint_into(
         )
     sig = signature(pack, week, enabled=enabled, this_week=this_week, view="both", style=style, mode=mode)
     if ui.get("chart_sig") == sig and ui.get("today_base") is not None and ui.get("week_base") is not None:
+        if ui.get("chart_want") != sig:
+            # 又切回了手上这张：还在画的那张作废。
+            ui["chart_want"] = sig
+            ui["chart_seq"] = next(_SEQ)
         return
-    today_im, today_hits = render(
-        pack, week, enabled=enabled, this_week=this_week, view="today", style=style, mode=mode,
-    )
-    week_im, week_hits = render(
-        pack, week, enabled=enabled, this_week=this_week, view="week", style=style, mode=mode,
-    )
+    args = (pack, week, enabled, this_week, style, mode)
+    seq = next(_SEQ)
+    if background:
+        if ui.get("chart_want") == sig:
+            return
+        ui["chart_want"] = sig
+        job = {"seq": seq, "sig": sig, "args": args}
+        ui.setdefault("chart_jobs", []).append(job)
+        _PAINTER.submit(job)
+        return
+    ui["chart_want"] = sig
+    _show(ui, seq, sig, _render_pair(*args))
+
+
+def _render_pair(pack, week, enabled, this_week, style, mode) -> tuple:
+    with _RENDER_LOCK:
+        today_im, today_hits = render(
+            pack, week, enabled=enabled, this_week=this_week, view="today", style=style, mode=mode,
+        )
+        week_im, week_hits = render(
+            pack, week, enabled=enabled, this_week=this_week, view="week", style=style, mode=mode,
+        )
+    return today_im, today_hits, week_im, week_hits
+
+
+def _show(ui: dict, seq: int, sig: tuple, out: tuple) -> None:
+    today_im, today_hits, week_im, week_hits = out
+    ui["chart_seq"] = seq
     ui["today_base"] = today_im
     ui["today_hits"] = today_hits
     ui["week_base"] = week_im
@@ -1283,6 +1439,80 @@ def paint_into(
     for panel in ("today", "week"):
         ui[f"{panel}_hover"] = None
         apply_hover(ui, panel, *remembered_hover(ui, panel))
+
+
+def wait(ui: dict, timeout: float) -> bool:
+    """等后台这张画完再换上，最多等 timeout 秒。打开账本时和建窗口同时画。"""
+    end = time.monotonic() + timeout
+    while True:
+        jobs = ui.get("chart_jobs") or []
+        if not any("out" not in job and not job.get("skip") for job in jobs):
+            break
+        if time.monotonic() >= end:
+            break
+        time.sleep(0.005)
+    return collect(ui)
+
+
+def blank() -> Image.Image:
+    """图还没画好时占位，尺寸和成图一样，版面不跳。"""
+    im = Image.new("RGBA", (W, H), _PAGE)
+    _round(ImageDraw.Draw(im), (0, 0, W - 1, H - 1), _PANEL, radius=12)
+    return im
+
+
+def collect(ui: dict) -> bool:
+    """主线程取后台画好的图。比手上这张旧的就扔掉。"""
+    jobs = ui.get("chart_jobs")
+    if not jobs:
+        return False
+    done = [job for job in jobs if "out" in job]
+    if any(job.get("failed") for job in jobs):
+        ui["chart_want"] = None
+    jobs[:] = [job for job in jobs if "out" not in job and not job.get("skip")]
+    if not done:
+        return False
+    job = max(done, key=lambda j: j["seq"])
+    if job["seq"] <= int(ui.get("chart_seq") or 0):
+        return False
+    _show(ui, job["seq"], job["sig"], job["out"])
+    return True
+
+
+class _Painter:
+    """一个后台线程画图。排队的只留最新一张，正在画的那张画完照样交。"""
+
+    def __init__(self) -> None:
+        self._cv = threading.Condition()
+        self._next: dict | None = None
+        self._thread: threading.Thread | None = None
+
+    def submit(self, job: dict) -> None:
+        with self._cv:
+            if self._next is not None:
+                self._next["skip"] = True
+            self._next = job
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="chart-painter", daemon=True)
+                self._thread.start()
+            self._cv.notify()
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                while self._next is None:
+                    self._cv.wait()
+                job, self._next = self._next, None
+            try:
+                job["out"] = _render_pair(*job["args"])
+            except Exception:  # noqa: BLE001
+                job["failed"] = True
+                job["skip"] = True
+
+
+_SEQ = itertools.count(1)
+_RENDER_LOCK = threading.Lock()
+_PAINTER = _Painter()
 
 
 def remembered_hover(ui: dict, panel: str) -> tuple[int, int]:

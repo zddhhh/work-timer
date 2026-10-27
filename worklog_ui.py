@@ -1,17 +1,18 @@
 """工时账本窗口：一周的来了、走了，键鼠次数图，保留天数。"""
 from __future__ import annotations
 
-import ctypes
-import sys
 import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog
 
+from PIL import ImageTk
+
 import activity
 import activity_chart
 import layered_win
+import power_save
 import store
 import worklog
 from card_ui import (
@@ -56,41 +57,12 @@ def wheel_pixels(delta: int) -> int:
     return step
 
 
-def _present_once(widget: tk.Misc, move) -> None:
-    """挪动前先停画，挪完再整块刷新。节电时子控件抢着画，会在半帧上撕开。"""
-    if sys.platform != "win32":
-        move()
-        return
-    try:
-        hwnd = int(widget.winfo_id())
-    except (tk.TclError, ValueError, OSError):
-        move()
-        return
-    try:
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.SendMessageW.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p,
-        ]
-        user32.SendMessageW.restype = ctypes.c_ssize_t
-        user32.RedrawWindow.argtypes = [
-            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
-        ]
-        user32.RedrawWindow.restype = ctypes.c_bool
-        user32.SendMessageW(hwnd, 11, 0, 0)  # WM_SETREDRAW
-        try:
-            move()
-        finally:
-            user32.SendMessageW(hwnd, 11, 1, 0)
-            user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0080)
-    except (AttributeError, OSError, ValueError):
-        move()
-
-
 class _ClipScroll(tk.Frame):
     """固定视口，整页用 place 挪。
 
     画布滚动会先抄一层像素再挪子窗口，键鼠图在 Windows 上会撕开。
-    子窗口超出视口的部分由系统裁掉，一次只挪整页。
+    整页是一个子窗口，系统挪它时把看得见的像素直接搬走，只补画新露出来的一条。
+    不要在这里强制整页重画：一百多个控件一起重画，降频时就是花屏。
     """
 
     def __init__(self, master: tk.Misc, **kwargs) -> None:
@@ -98,10 +70,12 @@ class _ClipScroll(tk.Frame):
         self.pack_propagate(False)
         self._sheet: tk.Frame | None = None
         self._offset = 0
+        self._placed = 0
         self._yscrollcommand = None
 
     def attach(self, sheet: tk.Frame) -> None:
         self._sheet = sheet
+        self._placed = 0
         sheet.place(x=0, y=0, relwidth=1.0)
 
     def set_yscrollcommand(self, command) -> None:
@@ -124,18 +98,13 @@ class _ClipScroll(tk.Frame):
         first = self._offset / total
         return (first, min(1.0, (self._offset + view) / total))
 
-    def refresh(self, *, paint_once: bool = False) -> None:
+    def refresh(self) -> None:
         total = self._content_h()
         view = self._view_h()
         self._offset = max(0, min(self._offset, max(0, total - view)))
-        if self._sheet is not None:
-            def move() -> None:
-                self._sheet.place(x=0, y=-self._offset, relwidth=1.0)
-
-            if paint_once:
-                _present_once(self, move)
-            else:
-                move()
+        if self._sheet is not None and self._placed != self._offset:
+            self._placed = self._offset
+            self._sheet.place(x=0, y=-self._offset, relwidth=1.0)
         if self._yscrollcommand is not None:
             first, last = self._span()
             self._yscrollcommand(first, last)
@@ -145,13 +114,13 @@ class _ClipScroll(tk.Frame):
             return self._span()
         if args[0] == "moveto" and len(args) >= 2:
             self._offset = int(float(args[1]) * self._content_h())
-            self.refresh(paint_once=True)
+            self.refresh()
         elif args[0] == "scroll" and len(args) >= 2:
             count = int(float(args[1]))
             what = str(args[2]) if len(args) > 2 else "units"
             step = self._view_h() if what == "pages" else 1
             self._offset += count * step
-            self.refresh(paint_once=True)
+            self.refresh()
         return None
 
     def yview_moveto(self, fraction: float) -> None:
@@ -190,16 +159,22 @@ class WorklogDialogMixin:
                 return
         except tk.TclError:
             return
-        sec = int(time.monotonic())
-        if ui.get("live_sec") == sec:
-            return
         # 手指还在滑时改字、换图，会把正在移动的卡片撕开。
-        if time.monotonic() < float(ui.get("scroll_until") or 0):
+        mono = time.monotonic()
+        if mono < float(ui.get("scroll_until") or 0):
+            return
+        activity_chart.collect(ui)
+        sec = int(mono)
+        if ui.get("live_sec") == sec:
             return
         ui["live_sec"] = sec
         today = date.today()
         now = datetime.now()
-        self._paint_activity_chart(ui)
+        # 图在后台画；节电时少画几张，读数照样每秒走。
+        gap = 3.0 if power_save.saving() else 1.0
+        if mono - float(ui.get("chart_live_at") or 0) >= gap:
+            ui["chart_live_at"] = mono
+            self._paint_activity_chart(ui)
         days = worklog.week_dates(ui["anchor"])
         touched = False
         for d, slot in zip(days, ui["slots"]):
@@ -437,7 +412,8 @@ class WorklogDialogMixin:
         self._sync_worklog_privacy(ui)
         self._paint_activity_chart(ui)
 
-    def _paint_activity_chart(self, ui: dict | None = None) -> None:
+    def _paint_activity_chart(self, ui: dict | None = None, *, background: bool = True) -> None:
+        """图交给后台线程画，主线程不等。画好由 _refresh_worklog_live 里的 collect 换上。"""
         ui = ui if ui is not None else self._worklog_ui
         if ui is None or ui.get("today_lbl") is None:
             return
@@ -480,6 +456,7 @@ class WorklogDialogMixin:
             focus=focus,
             style=activity.chart_style(self.cfg),
             mode=activity.chart_view(self.cfg),
+            background=background,
         )
         self._style_chart_buttons(ui)
 
@@ -708,6 +685,9 @@ class WorklogDialogMixin:
             chart_btns[key] = btn
         week_lbl = tk.Label(week_card, bg=_CARD_BG, bd=0, highlightthickness=0)
         week_lbl.pack(anchor="w")
+        placeholder = ImageTk.PhotoImage(activity_chart.blank())
+        today_lbl.configure(image=placeholder)
+        week_lbl.configure(image=placeholder)
 
         keep_var = tk.IntVar(value=activity.keep_days(self.cfg))
 
@@ -976,6 +956,7 @@ class WorklogDialogMixin:
             "slot_buttons": slot_buttons,
             "today_lbl": today_lbl,
             "week_lbl": week_lbl,
+            "chart_placeholder": placeholder,
             "day_var": day_var,
             "chart_day": date.today(),
             "day_prev": day_nav.get("prev"),
@@ -1226,4 +1207,6 @@ class WorklogDialogMixin:
         self._fill_worklog(ui)
         self._fit_worklog_scroll(ui)
         _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=420, near=self._dialog_near())
+        # 建窗口时 Tk 不占 Python，图已经在后台画了一大半；剩下的等一下，别先露出空板。
+        activity_chart.wait(ui, 0.4)
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])

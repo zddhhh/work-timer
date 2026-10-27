@@ -17,7 +17,9 @@ def app_dir() -> Path:
 
 
 def user_data_dir() -> Path:
-    base = Path.home() / "AppData" / "Roaming" / "WorkTimer"
+    # 测试和调试脚本必须设这个，不然会把用户真实的配置覆盖掉。
+    override = os.environ.get("WORKTIMER_DATA_DIR", "").strip()
+    base = Path(override) if override else Path.home() / "AppData" / "Roaming" / "WorkTimer"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -137,7 +139,8 @@ def _write_config(cfg: dict) -> None:
     out.pop("subscribe_url", None)
     path = config_path()
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 不缩进：缩进会退回纯 Python 编码，键鼠采样多了一次要写好几秒。
+    tmp.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     os.replace(tmp, path)
     _last_write = time.monotonic()
 

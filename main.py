@@ -562,7 +562,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._force_surface_sample = False
             self._surface_hot_until = now + 0.45
         hot = now < self._surface_hot_until
-        if force or hot or now - self._last_surface_sample >= 0.08:
+        # 节电时平常一秒采四次就够；刚挪过窗、换过前台（hot）照样连采。
+        gap = 0.25 if power_save.saving() else 0.08
+        if force or hot or now - self._last_surface_sample >= gap:
             self._last_surface_sample = now
             self._sampler.request(self.win.x, self.win.y, self._win_w, self._win_h)
         got = self._sampler.take()

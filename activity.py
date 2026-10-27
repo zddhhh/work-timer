@@ -24,6 +24,8 @@ _MOVE_MIN_S = 0.05
 _INST_WINDOW_S = 1.0
 _INST_GAP_S = _INST_WINDOW_S
 _INST_CAP = 20000
+# 过了当天的瞬时点，同一段里大约这么多秒留一个。图上一格两像素就是几分钟，看不出差别。
+_THIN_STEP_S = 20
 _PACE_KEYS = (
     "keys_pace", "clicks_pace", "wheels_pace", "travel_pace",
     "keys_ms", "clicks_ms", "wheels_ms", "travel_ms",
@@ -162,37 +164,115 @@ def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
             continue
         if d < cutoff:
             continue
-        cleaned[k] = _clean_day(v)
+        item = _clean_day(v)
+        if d < (today or date.today()):
+            _thin_day(item)
+        cleaned[k] = item
     book["days"] = cleaned
     book["on"] = bool(book.get("on"))
     book["on_card"] = bool(book.get("on")) and bool(book.get("on_card"))
 
 
 def _hours24(v) -> list[int]:
-    if not isinstance(v, list) or len(v) != 24:
+    if type(v) is not list or len(v) != 24:
         return [0] * 24
-    return [max(0, int(x)) if isinstance(x, int) and not isinstance(x, bool) else 0 for x in v]
+    return [x if type(x) is int and x > 0 else 0 for x in v]
 
 
 def _clean_inst(v) -> list:
     if not isinstance(v, list):
         return []
     out: list[list[int]] = []
+    last = 0
+    # 启动时整本过一遍，几万行。type(...) is int 顺带排除了 bool。
     for row in v[-_INST_CAP:]:
-        if not isinstance(row, (list, tuple)) or len(row) != 3:
+        kind = type(row)
+        if (kind is not list and kind is not tuple) or len(row) != 3:
             continue
         sec, n, ms = row
-        if not all(isinstance(x, int) and not isinstance(x, bool) for x in (sec, n, ms)):
+        if type(sec) is not int or type(n) is not int or type(ms) is not int:
             continue
-        if sec < 0 or sec > 86399 or n <= 0 or ms <= 0:
+        if sec < last or sec > 86399 or n <= 0 or ms <= 0:
             continue
-        if out and sec < out[-1][0]:
-            continue
-        out.append([sec, n, ms])
+        out.append(row if kind is list else [sec, n, ms])
+        last = sec
     return out
 
 
-def _clean_day(v: dict) -> dict:
+def same_stretch(prev, sec: int, ms: int) -> bool:
+    """上一个点的时长还在往上加，才是同一段。新的一段时长会重新变小。"""
+    psec, _pn, pms = prev[0], prev[1], prev[2]
+    if sec < psec:
+        return False
+    expected = pms + (sec - psec) * 1000
+    return ms + 1500 >= pms and ms >= expected * 0.5
+
+
+def thin_inst(rows: list, step: int = _THIN_STEP_S) -> list:
+    """同一段里隔 step 秒左右留一个点。段头段尾都留着，读的人按原样分段。"""
+    if len(rows) <= 2:
+        return rows
+    out = [rows[0]]
+    kept = rows[0]
+    prev = rows[0]
+    cand = None
+    for row in rows[1:]:
+        if not same_stretch(prev, row[0], row[2]):
+            if cand is not None:
+                out.append(cand)
+            out.append(row)
+            kept, cand = row, None
+        else:
+            if cand is not None and (row[0] - kept[0] > step or not same_stretch(kept, row[0], row[2])):
+                out.append(cand)
+                kept = cand
+            cand = row
+        prev = row
+    if cand is not None:
+        out.append(cand)
+    return out
+
+
+def _thin_day(item: dict) -> bool:
+    if item.get("inst_thin"):
+        return False
+    for key in _INST_FIELDS:
+        item[key] = thin_inst(item.get(key) or [])
+    item["inst_thin"] = True
+    return True
+
+
+_THINNED: dict[int, date] = {}
+
+
+def thin_past(cfg: dict, today: date) -> bool:
+    """跨天后把前几天的瞬时点压稀一次。配置文件不会越攒越大。"""
+    if _THINNED.get(id(cfg)) == today:
+        return False
+    _THINNED[id(cfg)] = today
+    wrote = False
+    for k, item in (_book(cfg).get("days") or {}).items():
+        if not isinstance(item, dict) or item.get("inst_thin"):
+            continue
+        try:
+            d = datetime.strptime(k, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if d < today and _thin_day(item):
+            wrote = True
+    return wrote
+
+
+def _view_day(v: dict) -> dict:
+    """读用。小时数组照样整理，瞬时点直接给原列表，调用方不许改。"""
+    item = _clean_day(v, inst=False)
+    for key in _INST_FIELDS:
+        rows = v.get(key)
+        item[key] = rows if isinstance(rows, list) else []
+    return item
+
+
+def _clean_day(v: dict, *, inst: bool = True) -> dict:
     item = {
         "keys": _n(v.get("keys")),
         "clicks": _n(v.get("clicks")),
@@ -214,8 +294,11 @@ def _clean_day(v: dict) -> dict:
     }
     for key in _LAST_KEYS:
         item[key] = _hours24(v.get(key))
-    for key in _INST_FIELDS:
-        item[key] = _clean_inst(v.get(key))
+    if inst:
+        for key in _INST_FIELDS:
+            item[key] = _clean_inst(v.get(key))
+        if v.get("inst_thin"):
+            item["inst_thin"] = True
     return item
 
 
@@ -384,17 +467,18 @@ def _sample_inst(cfg: dict, burst: dict, *, min_s: float, inst_key: str, force: 
         return False
     rows.append([sec, n, ms])
     if len(rows) > _INST_CAP:
-        del rows[: len(rows) - _INST_CAP]
+        # 一次多砍一截：开头一变，图表的增量缓存就得从头算。
+        del rows[: len(rows) - _INST_CAP + 500]
     return True
 
 
 def settle(cfg: dict, now: datetime | None = None) -> bool:
     """停手超过间隔的那一段，写进平均速度。够长的段同时留下瞬时曲线的点。"""
+    now = now or datetime.now()
+    wrote = thin_past(cfg, now.date())
     slot = _OPEN.get(id(cfg))
     if not slot:
-        return False
-    now = now or datetime.now()
-    wrote = False
+        return wrote
     for kind, gap, min_s, pace_key, ms_key, last_n, last_ms, inst_key in _SPEED_KINDS:
         burst = slot.get(kind)
         if burst is None:
@@ -439,11 +523,15 @@ def _pending(cfg: dict, day: date, now: datetime) -> dict:
     return extra
 
 
-def pace_of(cfg: dict, d: date, now: datetime | None = None) -> dict:
-    """这一天各小时的速度材料，含还没写盘的当前这一段。"""
+def pace_of(cfg: dict, d: date, now: datetime | None = None, *, c: dict | None = None) -> dict:
+    """这一天各小时的速度材料，含还没写盘的当前这一段。
+
+    传了 c（counts 的结果）就当调用方已经 settle 过，不再重取。
+    """
     now = now or datetime.now()
-    settle(cfg, now)
-    c = counts(cfg, d)
+    if c is None:
+        settle(cfg, now)
+        c = counts(cfg, d)
     extra = _pending(cfg, d, now)
     out = {}
     for key in _PACE_KEYS:
@@ -451,13 +539,15 @@ def pace_of(cfg: dict, d: date, now: datetime | None = None) -> dict:
     return out
 
 
-def inst_rows(cfg: dict, d: date, now: datetime | None = None) -> dict:
+def inst_rows(cfg: dict, d: date, now: datetime | None = None, *, c: dict | None = None) -> dict:
     """这一天的瞬时采样。正在进行、已经够长的那段补在最后，不写盘。"""
     now = now or datetime.now()
-    c = counts(cfg, d)
-    out = {key: [list(row) for row in (c.get(key) or [])] for key in _INST_FIELDS}
+    if c is None:
+        c = counts(cfg, d)
     if now.date() != d:
-        return out
+        return {key: c[key] for key in _INST_FIELDS}
+    # 只复制列表外壳：下面补的点不能写回账里。
+    out = {key: list(c[key]) for key in _INST_FIELDS}
     slot = _OPEN.get(id(cfg)) or {}
     for kind, _gap, min_s, _pace, _ms, _ln, _lm, inst_key in _SPEED_KINDS:
         burst = slot.get(kind)
@@ -631,7 +721,7 @@ def counts(cfg: dict, d: date) -> dict:
     item = _book(cfg).get("days", {}).get(d.strftime("%Y-%m-%d"))
     if not isinstance(item, dict):
         return _clean_day({})
-    return _clean_day(item)
+    return _view_day(item)
 
 
 def parse_raw(buf: bytes) -> str | None:

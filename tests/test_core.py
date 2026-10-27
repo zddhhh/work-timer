@@ -12,6 +12,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+# 有些界面测试会走到 save_config。不先改目录，就会写进用户正在用的 config.json。
+_DATA_DIR = tempfile.TemporaryDirectory(prefix="worktimer-test-")
+os.environ["WORKTIMER_DATA_DIR"] = _DATA_DIR.name
 
 import attachments  # noqa: E402
 import feedback  # noqa: E402
@@ -27,6 +30,14 @@ import themes  # noqa: E402
 import updater  # noqa: E402
 import worklog  # noqa: E402
 from PIL import Image  # noqa: E402
+
+
+class UserDataIsolationTests(unittest.TestCase):
+    def test_tests_never_touch_real_user_data(self):
+        real = Path.home() / "AppData" / "Roaming" / "WorkTimer"
+        here = store.user_data_dir().resolve()
+        self.assertNotEqual(here, real.resolve())
+        self.assertEqual(here, Path(_DATA_DIR.name).resolve())
 
 
 class VersionTests(unittest.TestCase):
@@ -1995,6 +2006,167 @@ class PowerSaveTests(unittest.TestCase):
         self.assertEqual(power_save.cap_hz(12, True), 12)
         self.assertEqual(power_save.cap_hz(60, False), 60)
         self.assertEqual(power_save.cap_hz(0, True), 0)
+
+
+def _stretches(n_stretch: int = 30, length: int = 90, start: int = 9 * 3600) -> list:
+    rows, sec = [], start
+    for i in range(n_stretch):
+        sec += 40 + i
+        n = ms = 0
+        for k in range(length):
+            sec += 1
+            n += 2 + (k % 5)
+            ms += 800 + (k % 3) * 60
+            rows.append([sec, n, ms])
+    return rows
+
+
+class ActivityPerfTests(unittest.TestCase):
+    """几万个瞬时点时，读、画、存都不能整本重来。"""
+
+    def _cfg(self, d: date, rows: list) -> dict:
+        import activity
+
+        cfg = {"activity": {"on": True, "days": {d.strftime("%Y-%m-%d"): {"keys": 1, "inst_key": rows}}}}
+        activity.ensure_fields(cfg, today=d)
+        return cfg
+
+    def test_thinning_keeps_every_stretch_and_shrinks_the_rest(self):
+        import activity
+        import activity_chart
+
+        rows = _stretches()
+        thin = activity.thin_inst(rows)
+        self.assertLess(len(thin), len(rows) / 5)
+
+        def drops(pts):
+            return [sec for sec, rate in pts if rate == 0]
+
+        before = activity_chart._interval_points(rows, "key")
+        after = activity_chart._interval_points(thin, "key")
+        self.assertEqual(drops(before), drops(after))
+        self.assertEqual(thin[-1], rows[-1])
+
+    def test_past_days_are_thinned_once_today_stays_raw(self):
+        import activity
+
+        today = date(2026, 10, 27)
+        cfg = {"activity": {"on": True, "days": {
+            "2026-10-26": {"inst_key": _stretches()},
+            "2026-10-27": {"inst_key": _stretches()},
+        }}}
+        activity.ensure_fields(cfg, today=today)
+        days = cfg["activity"]["days"]
+        self.assertTrue(days["2026-10-26"]["inst_thin"])
+        self.assertLess(len(days["2026-10-26"]["inst_key"]), 600)
+        self.assertEqual(len(days["2026-10-27"]["inst_key"]), 30 * 90)
+        self.assertTrue(activity.thin_past(cfg, date(2026, 10, 28)))
+        self.assertLess(len(days["2026-10-27"]["inst_key"]), 600)
+        self.assertFalse(activity.thin_past(cfg, date(2026, 10, 28)))
+
+    def test_reading_does_not_copy_or_change_the_book(self):
+        import activity
+
+        d = date(2026, 10, 27)
+        cfg = self._cfg(d, _stretches(2, 10))
+        stored = cfg["activity"]["days"]["2026-10-27"]["inst_key"]
+        self.assertIs(activity.counts(cfg, d)["inst_key"], stored)
+        size = len(stored)
+        got = activity.inst_rows(cfg, d, datetime(2026, 10, 27, 23, 0))
+        got["inst_key"].append([86000, 1, 1])
+        self.assertEqual(len(stored), size)
+
+    def test_incremental_points_match_a_fresh_pass(self):
+        import activity_chart
+
+        rows = _stretches(6, 40)
+        activity_chart._inst_points(list(rows), "key", 5)
+        rows.append([rows[-1][0] + 1, rows[-1][1] + 3, rows[-1][2] + 900])
+        rows[-2] = [rows[-2][0], rows[-2][1] + 1, rows[-2][2]]
+        rows.append([rows[-1][0] + 1, rows[-1][1] + 3, rows[-1][2] + 900])
+        warm = activity_chart._inst_points(list(rows), "key", 5, tail_sec=rows[-1][0] + 30)
+        activity_chart._MEMO.clear()
+        cold = activity_chart._inst_points([list(r) for r in rows], "key", 5, tail_sec=rows[-1][0] + 30)
+        self.assertEqual(warm, cold)
+        raw = activity_chart._interval_points(rows, "key", tail_sec=rows[-1][0] + 30)
+        self.assertEqual(sum(p[2] for p in warm), len(raw))
+        self.assertEqual(warm[-1], (raw[-1][0], raw[-1][1], 1))
+        self.assertEqual(warm[-2][:2], raw[-2])
+
+    def test_hour_readouts_match_the_slow_scan(self):
+        import activity_chart
+
+        import activity
+
+        def slow(src, hour):
+            def take(key):
+                found, prev = (0, 0), None
+                for sec, n, ms in src.get(key) or []:
+                    if hour is None or sec // 3600 == hour:
+                        if prev is not None and activity.same_stretch(prev, sec, ms):
+                            dn, dms = n - prev[1], ms - prev[2]
+                            found = (dn, dms) if dn > 0 and dms > 0 else (n, ms)
+                        else:
+                            found = (n, ms)
+                    prev = (sec, n, ms)
+                return found
+
+            k, c, v, w = (take(x) for x in ("inst_key", "inst_click", "inst_move", "inst_wheel"))
+            return activity.fmt_speed_line(*k, *v, *w, *c)
+
+        src = {"inst_key": _stretches(40, 60, 8 * 3600), "inst_click": _stretches(5, 20, 10 * 3600)}
+        for hour in (7, 8, 9, 10, 11, 12, None):
+            self.assertEqual(activity_chart._inst_line_at(src, hour), slow(src, hour))
+
+    def test_week_tail_is_not_pushed_onto_a_later_day(self):
+        import activity_chart
+
+        week = [date(2026, 10, 26) + timedelta(days=i) for i in range(7)]
+        days = [{"date": d, "keys": 0, "clicks": 0, "wheels": 0, "today": d == week[1], "mode": "split",
+                 "inst_key": _stretches(3, 20) if d == week[1] else []} for d in week]
+        today = {"inst_live": {}, "now_sec": 15 * 3600, "keys_h": [0] * 24, "clicks_h": [0] * 24,
+                 "wheels_h": [0] * 24, "hours": [0] * 24, "mode": "split", "keys": 0, "clicks": 0, "wheels": 0}
+        im, hits = activity_chart.render(today, days, enabled=True, this_week=True, view="week", style="line", mode="inst")
+        band = im.crop((int(hits[2]["x0"]) + 2, activity_chart._TOP, int(hits[6]["x1"]), activity_chart.H - 80))
+        colors = set(band.convert("RGB").getdata())
+        key_rgb = activity_chart._KEY[:3]
+        self.assertNotIn(key_rgb, colors)
+
+    def test_background_paint_lands_in_order(self):
+        import tkinter as tk
+
+        import activity_chart
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            lbl_a, lbl_b = tk.Label(root), tk.Label(root)
+            d = date.today()
+            cfg = self._cfg(d, _stretches(3, 30))
+            ui = {"today_lbl": lbl_a, "week_lbl": lbl_b}
+            week = worklog.week_dates(d)
+            for mode in ("inst", "counts", "inst"):
+                activity_chart.paint_into(ui, cfg, today=d, days=week, enabled=True, this_week=True,
+                                          mode=mode, background=True)
+            activity_chart.wait(ui, 10)
+            self.assertIsNotNone(ui.get("today_base"))
+            self.assertEqual(ui["chart_sig"][4], "inst")
+            activity_chart.paint_into(ui, cfg, today=d, days=week, enabled=True, this_week=True,
+                                      mode="counts", background=True)
+            activity_chart.paint_into(ui, cfg, today=d, days=week, enabled=True, this_week=True,
+                                      mode="inst", background=True)
+            activity_chart.wait(ui, 10)
+            self.assertEqual(ui["chart_sig"][4], "inst")
+        finally:
+            root.destroy()
+
+    def test_config_is_written_compact(self):
+        cfg = {"a": [[1, 2, 3]] * 3, "名字": "x"}
+        store._write_config(cfg)
+        text = store.config_path().read_text(encoding="utf-8")
+        self.assertNotIn("\n", text)
+        self.assertIn("名字", text)
+        self.assertEqual(store.load_config()["a"], [[1, 2, 3]] * 3)
 
 
 class WorklogScrollTests(unittest.TestCase):
