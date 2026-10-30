@@ -5,6 +5,8 @@ cfg["worklog"] = {"YYYY-MM-DD": {"in": 分钟, "out": 分钟, "target": 分钟,
 分钟 = 当天 0 点起的分钟数。in / out 只由软件按实际上机写入，不能手改。
 note_in / note_out 是用户自己填的到岗和下班，只用来对照。
 开着记录时，来和走按 30 秒里凑满 3 个不同的秒才算，含周末。
+和上一段隔了半小时、只有鼠标或滚轮、自己不到两分钟的那一下，先不改走了。
+停手也满半小时，才在卡片上标出来，等用户决定算不算。
 """
 from __future__ import annotations
 
@@ -20,6 +22,11 @@ IDLE_LIMIT_SEC = 300
 # 连续这么多秒里，有这么多个不同的秒出现过键鼠，才算一段真实上机。碰一下通常只有 1 秒。
 BURST_WINDOW_SEC = 30
 BURST_NEED = 3
+# 离开上一段至少这么久，才可能是另起的一下，而不是还在连续操作。
+DOUBT_GAP_MIN = 30
+# 这一下自己要短过这么久，并且里面没有按键、没有点击，才标成存疑。
+DOUBT_SPAN_SEC = 120
+DOUBT_IDLE_SEC = 30 * 60
 # 现代待机醒来时，系统会把「最后一次输入」刷成现在，空闲读数变成 0。
 # 醒来后这段时间里只屏蔽 LastInput 兜底；真实 Raw Input 仍立即参与来和走。
 WAKE_QUIET_SEC = 15
@@ -110,6 +117,72 @@ def fmt_note_compare(arrive: int | None, leave: int | None) -> str:
     return "，".join(part for part in parts if part)
 
 
+def company_span(note_in: int | None, note_out: int | None) -> str:
+    """公司正常上下班这一段有多长。缺一边或下班早于到岗就不写。"""
+    if note_in is None or note_out is None or note_out < note_in:
+        return ""
+    return fmt_span(note_out - note_in)
+
+
+def _longest_quiet(active: list[int]) -> tuple[int, int] | None:
+    """两段操作中间最长的空档，返回空着的起止小时（含）。不足两小时不算。"""
+    if len(active) < 2:
+        return None
+    best = None
+    best_n = 1
+    for left, right in zip(active, active[1:]):
+        n = right - left - 1
+        if n > best_n:
+            best_n = n
+            best = (left + 1, right - 1)
+    return best
+
+
+def _pace_line(cfg: dict, d: date) -> str:
+    """这一天一句。中间空了两小时以上就说空档，否则说最忙的那一截。"""
+    if not activity.enabled(cfg):
+        return ""
+    c = activity.counts(cfg, d)
+    keys, clicks, wheels = c.get("keys_h") or [], c.get("clicks_h") or [], c.get("wheels_h") or []
+    if len(keys) == 24 and len(clicks) == 24 and len(wheels) == 24:
+        series = [int(a) + int(b) + int(w) for a, b, w in zip(keys, clicks, wheels)]
+    else:
+        series = []
+    if not any(series):
+        hours = c.get("hours") or []
+        series = [int(v) for v in hours] if len(hours) == 24 else []
+    if not any(series):
+        return ""
+    quiet = _longest_quiet([i for i, v in enumerate(series) if v > 0])
+    if quiet is not None:
+        a, b = quiet
+        return f"{a}点空着" if a == b else f"{a}点到{b}点空着"
+    peak = activity.peak_hours(series)
+    if peak is None:
+        return ""
+    a, b = peak
+    if b - a <= 1:
+        return f"{a}点最忙"
+    return f"{a}点到{b}点最忙"
+
+
+def day_summary(cfg: dict, d: date, r: dict) -> str:
+    """两段。第一段是和公司时间差多少，第二段是这一天哪里忙、哪里空。"""
+    lines = []
+    arrive, leave = r.get("arrive_gap"), r.get("leave_gap")
+    if arrive is not None or leave is not None:
+        if arrive == 0 and leave == 0:
+            lines.append("和公司时间一致")
+        else:
+            text = fmt_note_compare(arrive, leave)
+            if text:
+                lines.append(text)
+    pace = _pace_line(cfg, d)
+    if pace:
+        lines.append(pace)
+    return "\n".join(lines)
+
+
 def fmt_hms(total_seconds: int) -> str:
     total = max(0, int(total_seconds))
     h, rem = divmod(total, 3600)
@@ -119,7 +192,7 @@ def fmt_hms(total_seconds: int) -> str:
 
 def live_elapsed(r: dict, now: datetime, idle_sec: float) -> str | None:
     """进行中的时长，精确到秒。已经封账或不是今天则返回 None。"""
-    if not r.get("live") or r.get("in") is None:
+    if r.get("held") or not r.get("live") or r.get("in") is None:
         return None
     start = datetime.combine(r["date"], datetime.min.time()) + timedelta(minutes=int(r["in"]))
     if idle_sec < IDLE_LIMIT_SEC:
@@ -168,6 +241,9 @@ def ensure_fields(cfg: dict, *, today: date | None = None, keep_days: int | None
             item["note_custom"] = True
         if not any(f in item for f in ("in", "out", "target", "note_in", "note_out")):
             continue
+        hold = _clean_hold(v.get("hold"))
+        if hold and ("in" in item or "out" in item):
+            item["hold"] = hold
         item["src"] = "flex" if v.get("src") == "flex" else "seen"
         cleaned[k] = item
     cfg["worklog"] = cleaned
@@ -216,20 +292,45 @@ def note_second(state: dict | None, when: datetime) -> tuple[dict, datetime | No
     return state, start
 
 
+def _remember_hot(state: dict, when: datetime, kind: str | None) -> None:
+    """这一秒里有过按键、点击，或分不清种类的输入。纯移动和滚轮不记。"""
+    sec = _sod(when)
+    hot = [
+        s for s in state.get("hot") or []
+        if isinstance(s, int) and 0 <= sec - s <= BURST_WINDOW_SEC
+    ]
+    if kind not in ("move", "wheel") and sec not in hot:
+        hot.append(sec)
+    state["hot"] = hot
+
+
+def _burst_hot(state: dict, start: datetime, end: datetime) -> bool:
+    a, b = _sod(start), _sod(end)
+    return any(isinstance(s, int) and a <= s <= b for s in state.get("hot") or [])
+
+
 def note_input(
     cfg: dict,
     state: dict | None,
     when: datetime,
     *,
     target_hm: tuple[int, int] | None = None,
+    kind: str | None = None,
 ) -> tuple[dict | None, bool]:
-    """一条可信输入进入工时账本；次数统计开关不影响这里。"""
+    """一条可信输入进入工时账本；次数统计开关不影响这里。
+
+    kind 是 key / click / wheel / move。不传表示分不清种类，按动手算，不标存疑。
+    """
     if not tracking_enabled(cfg):
         return None, False
     state, start = note_second(state, when)
+    if state is not None:
+        _remember_hot(state, when, kind)
     if start is None:
         return state, False
-    return state, mark_span(cfg, start, when, target_hm=target_hm)
+    return state, _take_burst(
+        cfg, start, when, hot=_burst_hot(state, start, when), target_hm=target_hm,
+    )
 
 
 def touch_target(cfg: dict, day: date, target_hm: tuple[int, int] | None) -> bool:
@@ -282,6 +383,151 @@ def mark_span(
             item["target"] = target
             changed = True
     return changed
+
+
+def _clean_hold(v) -> dict | None:
+    if not isinstance(v, dict):
+        return None
+    start, end = v.get("start"), v.get("end")
+    if isinstance(start, bool) or isinstance(end, bool):
+        return None
+    if not isinstance(start, int) or not isinstance(end, int):
+        return None
+    if not (0 <= start <= end <= 86399):
+        return None
+    return {
+        "start": start,
+        "end": end,
+        "active": bool(v.get("active")),
+        "asked": bool(v.get("asked")),
+        "drop": bool(v.get("drop")),
+    }
+
+
+def _park(item: dict, hold: dict) -> None:
+    item["hold"] = _clean_hold(hold)
+
+
+def _commit_hold(
+    cfg: dict,
+    day: date,
+    hold: dict,
+    *,
+    target_hm: tuple[int, int] | None = None,
+) -> None:
+    base = datetime.combine(day, datetime.min.time())
+    mark_span(
+        cfg,
+        base + timedelta(seconds=int(hold["start"])),
+        base + timedelta(seconds=int(hold["end"])),
+        target_hm=target_hm,
+    )
+
+
+def _take_burst(
+    cfg: dict,
+    start: datetime,
+    end: datetime,
+    *,
+    hot: bool,
+    target_hm: tuple[int, int] | None,
+) -> bool:
+    """凑满的一段。紧挨着上一段就直接改走了；隔得远的短移动先挂着。"""
+    if start.date() != end.date():
+        return False
+    item = get_day(cfg, end.date())
+    out = _as_min(item.get("out")) if item else None
+    start_min = start.hour * 60 + start.minute
+    if out is None or start_min - out < DOUBT_GAP_MIN:
+        if item and "hold" in item:
+            item.pop("hold", None)
+        return mark_span(cfg, start, end, target_hm=target_hm)
+    hold = _clean_hold(item.get("hold"))
+    end_sec = _sod(end)
+    if hold and start_min - hold["end"] // 60 < DOUBT_GAP_MIN:
+        hold["end"] = max(hold["end"], end_sec)
+        hold["active"] = bool(hold["active"] or hot)
+    else:
+        hold = {
+            "start": _sod(start),
+            "end": end_sec,
+            "active": bool(hot),
+            "asked": False,
+            "drop": False,
+        }
+    if hold["active"] or hold["end"] - hold["start"] >= DOUBT_SPAN_SEC:
+        _commit_hold(cfg, end.date(), hold, target_hm=target_hm)
+        got = get_day(cfg, end.date())
+        if got is not None:
+            got.pop("hold", None)
+        return True
+    hold["asked"] = False
+    _park(item, hold)
+    return True
+
+
+def note_kind(cfg: dict, when: datetime, kind: str | None) -> bool:
+    """同一秒里后到的按键或点击。这段就不再是纯移动，直接记进走了。"""
+    if not tracking_enabled(cfg) or kind in ("move", "wheel", None):
+        return False
+    item = get_day(cfg, when.date())
+    hold = _clean_hold(item.get("hold")) if item else None
+    if hold is None:
+        return False
+    sec = _sod(when)
+    if sec < hold["start"] or sec - hold["end"] > DOUBT_GAP_MIN * 60:
+        return False
+    hold["active"] = True
+    hold["end"] = max(hold["end"], sec)
+    _commit_hold(cfg, when.date(), hold)
+    got = get_day(cfg, when.date())
+    if got is not None:
+        got.pop("hold", None)
+    return True
+
+
+def settle_doubt(cfg: dict, now: datetime, idle_sec: float) -> bool:
+    """停手够久，短的纯移动才变成卡片上的那一行。昨天没来得及问的也补上。"""
+    if idle_sec < DOUBT_IDLE_SEC:
+        return False
+    changed = False
+    for day in (now.date() - timedelta(days=1), now.date()):
+        item = get_day(cfg, day)
+        hold = _clean_hold(item.get("hold")) if item else None
+        if hold is None or hold["drop"] or hold["asked"]:
+            continue
+        if hold["active"] or hold["end"] - hold["start"] >= DOUBT_SPAN_SEC:
+            _commit_hold(cfg, day, hold)
+            item.pop("hold", None)
+        else:
+            hold["asked"] = True
+            _park(item, hold)
+        changed = True
+    return changed
+
+
+def doubt_line(prev: int | None, at: int | None) -> str:
+    if prev is None or at is None or at <= prev:
+        return ""
+    return f"{fmt_clock(prev)} 之后只有 {fmt_clock(at)} 这一下"
+
+
+def decide_doubt(cfg: dict, day: date, *, keep: bool) -> bool:
+    """算上就把走了改到这一下；不算就留着原来的走了，同一次不再问。"""
+    item = get_day(cfg, day)
+    hold = _clean_hold(item.get("hold")) if item else None
+    if hold is None or not hold["asked"] or hold["drop"]:
+        return False
+    if keep:
+        _commit_hold(cfg, day, hold)
+        got = get_day(cfg, day)
+        if got is not None:
+            got.pop("hold", None)
+        return True
+    hold["drop"] = True
+    hold["asked"] = False
+    _park(item, hold)
+    return True
 
 
 def last_active_minute(now: datetime, idle_sec: float) -> int | None:
@@ -385,6 +631,8 @@ def row(cfg: dict, d: date, *, today: date | None = None) -> dict:
     item = get_day(cfg, d) or {}
     mi, mo, mt = _as_min(item.get("in")), _as_min(item.get("out")), _as_min(item.get("target"))
     note_in, note_out = _as_min(item.get("note_in")), _as_min(item.get("note_out"))
+    hold = _clean_hold(item.get("hold"))
+    doubt_at = hold["end"] // 60 if hold and hold["asked"] and not hold["drop"] else None
     dur = mo - mi if mi is not None and mo is not None else None
     # 还没到应下班就用「离开-应下班」，下午会显示成大段早退。过了应下班再显示差额。
     live = d == (today or date.today()) and mo is not None
@@ -407,6 +655,8 @@ def row(cfg: dict, d: date, *, today: date | None = None) -> dict:
         "src": item.get("src", ""),
         "closed": bool(item.get("closed")),
         "live": live,
+        "held": hold is not None,
+        "doubt": doubt_line(mo, doubt_at),
     }
 
 

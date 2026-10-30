@@ -743,16 +743,18 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._poll_key_hide()
         return bool(self._esc_hidden)
 
-    def _note_work_input(self, when: datetime) -> None:
+    def _note_work_input(self, when: datetime, kind: str | None = None) -> None:
         if not worklog.tracking_enabled(self.cfg):
             self._burst = None
             return
         second = when.replace(microsecond=0)
         if second == self._work_input_second:
+            if worklog.note_kind(self.cfg, when, kind):
+                self._worklog_dirty = True
             return
         self._work_input_second = second
         self._burst, changed = worklog.note_input(
-            self.cfg, self._burst, when, target_hm=self._off_hm()
+            self.cfg, self._burst, when, target_hm=self._off_hm(), kind=kind,
         )
         if changed:
             self._worklog_dirty = True
@@ -774,7 +776,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._burst = None
                 snap = worklog.last_input_snapshot()
                 self._last_input_seen = snap[0] if snap is not None else None
-            self._note_work_input(now)
+            self._note_work_input(now, evidence)
         if delta is not None and activity.add_travel(self.cfg, delta[0], delta[1], now):
             self._activity_dirty = True
         if kind and activity.note(self.cfg, kind, now):
@@ -1173,6 +1175,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             )
             if tracking and last is not None and last.date() == now.date():
                 self._note_work_input(last)
+        idle = snapshot[1] if snapshot is not None else 0.0
+        if tracking and worklog.settle_doubt(self.cfg, now, idle):
+            changed = True
         if self._sync_declared(now.date()):
             changed = True
         if changed:

@@ -34,7 +34,7 @@ def public_download_url(repo: str, version: str, asset: str) -> str:
 
 
 def share_text(version: str, url: str) -> str:
-    return f"弹性下班计时器 {version}\n点这个安装，不用登录：\n{url}"
+    return f"下班倒计时 {version}\n点这个安装，不用登录：\n{url}"
 
 
 def cache_path(asset: str, root: Path | None = None) -> Path:

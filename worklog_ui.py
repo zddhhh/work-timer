@@ -29,6 +29,11 @@ from card_ui import (
     _run_card_modal,
 )
 
+# 七天的说明框用同一尺寸。框里固定两行：上一行对公司时间，下一行说忙闲。
+_SUMMARY_W = 252
+_SUMMARY_H = 58
+_SUMMARY_WRAP = 228
+
 
 def scroll_view(
     sheet_h: int,
@@ -47,6 +52,64 @@ def scroll_view(
         return sheet_h, False
     view = min(sheet_h, max(int(floor), sheet_h - overflow))
     return view, view < sheet_h
+
+
+class _SlimBar(tk.Canvas):
+    """深色细条。系统滚动条在这块深底上会画成一条白杠，还带着上下箭头。"""
+
+    def __init__(self, master: tk.Misc, command) -> None:
+        super().__init__(master, width=12, height=10, bg=_CARD_BG, highlightthickness=0, bd=0)
+        self._command = command
+        self._first = 0.0
+        self._last = 1.0
+        self._grab: tuple[int, float] | None = None
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<Button-1>", self._press)
+        self.bind("<B1-Motion>", self._motion)
+        self.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_grab", None))
+
+    def set(self, first, last) -> None:
+        self._first = max(0.0, min(1.0, float(first)))
+        self._last = max(self._first, min(1.0, float(last)))
+        self._draw()
+
+    def _geom(self) -> tuple[int, int, int]:
+        height = max(1, int(self.winfo_height() or 1))
+        if self._last - self._first >= 0.999:
+            return 0, height, height
+        top = int(self._first * height)
+        bot = int(self._last * height)
+        if bot - top < 36:
+            bot = top + 36
+        if bot > height:
+            bot = height
+            top = max(0, height - 36)
+        return top, bot, height
+
+    def _draw(self) -> None:
+        self.delete("thumb")
+        if self._last - self._first >= 0.999:
+            return
+        top, bot, _height = self._geom()
+        self.create_rectangle(3, top + 2, 9, max(top + 6, bot - 2), fill="#5c677c", outline="", tags="thumb")
+
+    def _press(self, event) -> None:
+        top, bot, _height = self._geom()
+        if event.y < top:
+            self._command("scroll", -1, "pages")
+        elif event.y > bot:
+            self._command("scroll", 1, "pages")
+        else:
+            self._grab = (int(event.y), self._first)
+
+    def _motion(self, event) -> None:
+        if self._grab is None:
+            return
+        y0, first0 = self._grab
+        _top, _bot, height = self._geom()
+        span = max(0.05, self._last - self._first)
+        nxt = first0 + (int(event.y) - y0) / max(1, height)
+        self._command("moveto", max(0.0, min(1.0 - span, nxt)))
 
 
 def wheel_pixels(delta: int) -> int:
@@ -82,6 +145,10 @@ class _ClipScroll(tk.Frame):
         self._yscrollcommand = command
 
     def _view_h(self) -> int:
+        # 排版之后实际高度才算数。只用设定高度时，窗口被压矮，底下会滚不到。
+        actual = int(self.winfo_height() or 0)
+        if actual > 1:
+            return actual
         return max(1, int(self.cget("height") or 1))
 
     def _content_h(self) -> int:
@@ -135,7 +202,7 @@ class WorklogDialogMixin:
 
     def _worklog_dur_text(self, r: dict, now: datetime) -> str:
         """记录中的那一行按秒走；已经封账的仍用分钟。"""
-        if not r.get("live") or r.get("in") is None:
+        if r.get("held") or not r.get("live") or r.get("in") is None:
             return worklog.fmt_span(r.get("dur"))
         start = int(r["in"]) * 60
         if worklog.idle_seconds() < worklog.IDLE_LIMIT_SEC:
@@ -147,6 +214,20 @@ class WorklogDialogMixin:
         if end < start:
             end = start
         return worklog.fmt_elapsed(end - start) + " · 还在记"
+
+    def _sync_doubt(self, slot: dict, r: dict, hidden: bool) -> None:
+        row = slot.get("doubt_row")
+        if row is None:
+            return
+        text = "" if hidden else str(r.get("doubt") or "")
+        if not text:
+            if row.winfo_manager():
+                row.grid_remove()
+            return
+        if slot["doubt"].cget("text") != text:
+            slot["doubt"].configure(text=text)
+        if not row.winfo_manager():
+            row.grid(row=2, column=1, columnspan=8, sticky="w", pady=(0, 6))
 
     def _refresh_worklog_live(self) -> None:
         """账本开着时，今天这一行每秒改时长，不重画整表，也不覆盖正在改的格子。"""
@@ -192,16 +273,23 @@ class WorklogDialogMixin:
             if slot["left"].cget("text") != left:
                 slot["left"].configure(text=left)
                 touched = True
-            diff_text = worklog.fmt_diff(r["diff"])
-            if slot["diff"].cget("text") != diff_text:
-                slot["diff"].configure(text=diff_text, fg=self._worklog_diff_fg(r["diff"]))
-                touched = True
-            gap_text = worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"])
-            if slot["gap"].cget("text") != gap_text:
-                slot["gap"].configure(text=gap_text, fg=self._note_gap_fg(r["arrive_gap"], r["leave_gap"]))
-                touched = True
+            note_text = worklog.company_span(r.get("note_in"), r.get("note_out"))
+            if slot["note_dur"].cget("text") != note_text:
+                slot["note_dur"].configure(text=note_text)
+            summary = worklog.day_summary(self.cfg, d, r)
+            pace = slot.get("summary_pace")
+            shown = slot["summary"].cget("text")
+            if pace is not None and pace.cget("text"):
+                shown = f"{shown}\n{pace.cget('text')}" if shown else pace.cget("text")
+            if shown != summary:
+                self._paint_day_copy(
+                    slot, summary, self._note_gap_fg(r.get("arrive_gap"), r.get("leave_gap")),
+                )
+            else:
+                self._fit_day_copy(slot)
             self._follow_declared(ui, d, slot, "in", worklog.fmt_clock(r["note_in"]))
             self._follow_declared(ui, d, slot, "out", worklog.fmt_clock(r["note_out"]))
+            self._sync_doubt(slot, r, False)
             break
         if not touched:
             self._set_habit(ui, days, today)
@@ -296,6 +384,35 @@ class WorklogDialogMixin:
                 edits[i] = (ed, vin, vout, old_in, text)
             break
 
+    def _paint_day_copy(self, slot: dict, text: str, fg: str, *, quiet: bool = False) -> None:
+        """第一句是和公司时间的差别，第二句是这一天哪里忙。两句分开，都从框的左上角写起。"""
+        parts = (text or "").split("\n", 1)
+        head = parts[0] if parts else ""
+        body = parts[1] if len(parts) > 1 else ""
+        slot["summary"].configure(text=head, fg=_CARD_MUTED if quiet or not head else fg)
+        pace = slot.get("summary_pace")
+        if pace is not None:
+            pace.configure(text=body, fg=_CARD_MUTED if quiet or not body else "#d5deea")
+        self._fit_day_copy(slot)
+
+    def _fit_day_copy(self, slot: dict) -> None:
+        """说明框每天一样大。字多字少只影响框里的内容，不改变框的尺寸。"""
+        box = slot.get("summary_box")
+        if box is None:
+            return
+        # 字是 pack 进去的。grid_propagate 管不住它，框会跟着字缩成一小块。
+        if box.pack_propagate():
+            box.pack_propagate(False)
+        if not box.winfo_manager():
+            box.grid(row=0, column=8, rowspan=2, sticky="nsew", padx=(8, 12), pady=8)
+        for key in ("summary", "summary_pace"):
+            label = slot.get(key)
+            if label is None:
+                continue
+            current = int(float(str(label.cget("wraplength") or 0)))
+            if current != _SUMMARY_WRAP:
+                label.configure(wraplength=_SUMMARY_WRAP)
+
     def _note_gap_fg(self, arrive: int | None, leave: int | None) -> str:
         vals = [v for v in (arrive, leave) if isinstance(v, int)]
         if not vals or all(v == 0 for v in vals):
@@ -303,11 +420,6 @@ class WorklogDialogMixin:
         if any(v > 0 for v in vals):
             return "#ffc46b"
         return "#ff8b8b"
-
-    def _worklog_diff_fg(self, v: int | None) -> str:
-        if v is None or v == 0:
-            return _CARD_MUTED
-        return "#ffc46b" if v > 0 else "#ff8b8b"
 
     def _worklog_apply(self, ui: dict) -> bool:
         changed = False
@@ -346,8 +458,6 @@ class WorklogDialogMixin:
             r = worklog.row(self.cfg, d, today=today)
             rows.append(r)
             label = f"{d.month}/{d.day}  周{worklog.WEEKDAY_CN[d.weekday()]}"
-            if d == today:
-                label += "  今天"
             if too_old:
                 fg = "#3a4150"
             elif d == today:
@@ -373,14 +483,17 @@ class WorklogDialogMixin:
             slot["ein"].configure(state=state)
             slot["eout"].configure(state=state)
             slot["dur"].configure(text="" if too_old else self._worklog_dur_text(r, datetime.now()))
-            slot["diff"].configure(
-                text="" if too_old else worklog.fmt_diff(r["diff"]),
-                fg=self._worklog_diff_fg(None if too_old else r["diff"]),
+            slot["note_dur"].configure(
+                text="" if too_old else worklog.company_span(r.get("note_in"), r.get("note_out")),
             )
-            slot["gap"].configure(
-                text="" if too_old else worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"]),
-                fg=_CARD_MUTED if too_old else self._note_gap_fg(r["arrive_gap"], r["leave_gap"]),
+            self._paint_day_copy(
+                slot,
+                "" if too_old else worklog.day_summary(self.cfg, d, r),
+                _CARD_MUTED if too_old else self._note_gap_fg(r.get("arrive_gap"), r.get("leave_gap")),
+                quiet=too_old,
             )
+            slot["day"] = None if too_old else d
+            self._sync_doubt(slot, r, too_old)
             can_reset = d == today and bool(r.get("note_custom")) and not too_old
             slot["reset"].configure(
                 text="恢复默认" if can_reset else "",
@@ -396,8 +509,23 @@ class WorklogDialogMixin:
             for w in slot.get("row_widgets", ()):
                 w.configure(bg=row_bg)
             slot["card"].configure(highlightbackground="#38506f" if d == today else "#2c3444")
-            slot["ein"].configure(disabledbackground=row_bg)
-            slot["eout"].configure(disabledbackground=row_bg)
+            show_today = d == today and not too_old
+            slot["today_tag"].configure(
+                text="今天" if show_today else "",
+                fg="#9ecbff" if show_today else row_bg,
+                bg=row_bg,
+                highlightthickness=0,
+            )
+            field = "#3d4a62" if state == "normal" else row_bg
+            border = "#9eb0cc" if state == "normal" else "#3a4254"
+            for w in (slot["ein"], slot["eout"]):
+                w.configure(
+                    bg=field,
+                    highlightthickness=1,
+                    highlightbackground=border,
+                    highlightcolor="#7eb6ff",
+                    disabledbackground=row_bg,
+                )
             ui["edits"].append((d, slot["vin"], slot["vout"], slot["vin"].get(), slot["vout"].get()))
         this_week = days[0] <= today <= days[-1]
         ui["week_sum"].set(worklog.summary_text("本周" if this_week else "这周", worklog.summarize(rows)))
@@ -410,6 +538,7 @@ class WorklogDialogMixin:
         if ui.get("card_on") is not None:
             ui["card_on"].set(activity.show_on_card(self.cfg))
         self._sync_worklog_privacy(ui)
+        self._fit_worklog_width(ui)
         self._paint_activity_chart(ui)
 
     def _paint_activity_chart(self, ui: dict | None = None, *, background: bool = True) -> None:
@@ -569,21 +698,24 @@ class WorklogDialogMixin:
             scroll_host, bg=_CARD_BG, highlightthickness=0, bd=0,
             width=pair_w, height=200,
         )
-        scroll_sb = tk.Scrollbar(
-            scroll_host, orient="vertical", width=8,
-            bg="#3a4254", activebackground="#5a6478", troughcolor=_CARD_BG,
-            relief="flat", bd=0, highlightthickness=0,
-        )
+        gutter = tk.Frame(scroll_host, width=12, bg=_CARD_BG, highlightthickness=0, bd=0)
+        gutter.pack_propagate(False)
+        gutter.pack(side="right", fill="y")
 
         def _on_scroll(*args) -> None:
             ui["scroll_until"] = time.monotonic() + 0.25
-            if len(args) == 3 and args[0] == "scroll":
-                scroll.yview_scroll(int(float(args[1])) * 28, "units")
+            if args and args[0] == "scroll":
+                count = int(float(args[1]))
+                what = str(args[2]) if len(args) > 2 else "units"
+                if what == "pages":
+                    scroll.yview_scroll(count, "pages")
+                else:
+                    scroll.yview_scroll(count * 28, "units")
                 return
             scroll.yview(*args)
 
+        scroll_sb = _SlimBar(gutter, _on_scroll)
         scroll.set_yscrollcommand(scroll_sb.set)
-        scroll_sb.configure(command=_on_scroll)
         scroll.pack(side="left", fill="y", expand=True)
         sheet = tk.Frame(scroll, bg=_CARD_BG)
         scroll.attach(sheet)
@@ -838,7 +970,6 @@ class WorklogDialogMixin:
             font=("Microsoft YaHei UI", 10), pady=22,
         ).pack(fill="x")
 
-        entry_bg = "#2a3344"
         table = tk.Frame(sheet, bg=_CARD_BG)
         table.pack(fill="x", pady=(10, 0))
 
@@ -854,6 +985,21 @@ class WorklogDialogMixin:
             self._fill_worklog(ui)
             err.set("已恢复今天的倒计时时间")
 
+        # 还在记的时长会带到秒，日期也会写成「今天 12/31  周五」。
+        # 列宽按最长的那句留，不然说明框会盖住时长，窗口又会把说明框切掉。
+        dur_probe = tk.Label(table, text="23小时59分59秒 · 还在记", font=("Microsoft YaHei UI", 9))
+        note_probe = tk.Label(table, text="12小时59分", font=("Microsoft YaHei UI", 9))
+        reset_probe = tk.Label(table, text="恢复默认", font=("Microsoft YaHei UI", 8))
+        today_probe = tk.Label(table, text="今天", width=4, font=("Microsoft YaHei UI", 8))
+        date_probe = tk.Label(table, text="12/31  周五", font=("Microsoft YaHei UI", 10, "bold"))
+        dur_probe.update_idletasks()
+        dur_col = max(
+            dur_probe.winfo_reqwidth(),
+            note_probe.winfo_reqwidth() + 16 + reset_probe.winfo_reqwidth(),
+        ) + 8
+        date_col = max(168, today_probe.winfo_reqwidth() + 6 + date_probe.winfo_reqwidth() + 20)
+        for probe in (dur_probe, note_probe, reset_probe, today_probe, date_probe):
+            probe.destroy()
         slots = []
         for i in range(7):
             row_bg = "#202634"
@@ -861,70 +1007,155 @@ class WorklogDialogMixin:
                 table, bg=row_bg, highlightthickness=1, highlightbackground="#2c3444",
             )
             card.pack(fill="x", pady=(0, 6))
+            # 七天共用同一套列宽，两行的名称、时间和时长才能对上。
+            for col, size in ((0, date_col), (1, 122), (2, 40), (3, 78), (5, 78), (6, 24)):
+                card.columnconfigure(col, minsize=size)
+            card.columnconfigure(4, minsize=22)
+            card.columnconfigure(7, minsize=dur_col, weight=1)
+            card.columnconfigure(8, minsize=_SUMMARY_W)
+            card.rowconfigure(0, minsize=42, uniform="dayrow")
+            card.rowconfigure(1, minsize=42, uniform="dayrow")
+            date_box = tk.Frame(card, bg=row_bg)
+            today_tag = tk.Label(
+                date_box, text="", width=4, fg="#9ecbff", bg=row_bg,
+                font=("Microsoft YaHei UI", 8), anchor="center",
+                highlightthickness=0,
+            )
             date_lbl = tk.Label(
-                card, text="", width=14, fg=_CARD_FG, bg=row_bg,
+                date_box, text="", fg=_CARD_FG, bg=row_bg,
                 font=("Microsoft YaHei UI", 10), anchor="w",
             )
-            date_lbl.pack(side="left", fill="y", padx=(12, 6), pady=8)
-            body = tk.Frame(card, bg=row_bg)
-            body.pack(side="left", fill="both", expand=True, pady=5)
-            recorded = tk.Frame(body, bg=row_bg)
-            recorded.pack(fill="x")
-            came_tag = tk.Label(recorded, text="记录", width=5, fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 8), anchor="w")
-            came = tk.Label(recorded, text="", fg=_CARD_FG, bg=row_bg, font=("Consolas", 11), anchor="w")
-            left = tk.Label(recorded, text="", fg=_CARD_FG, bg=row_bg, font=("Consolas", 11), anchor="w")
-            record_arrow = tk.Label(recorded, text="→", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9))
-            dur = tk.Label(recorded, text="", fg=_CARD_FG, bg=row_bg, font=("Microsoft YaHei UI", 9), anchor="w")
-            diff = tk.Label(recorded, text="", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9), anchor="w")
-            came_tag.pack(side="left")
-            came.pack(side="left", padx=(0, 6))
-            record_arrow.pack(side="left")
-            left.pack(side="left", padx=(6, 20))
-            dur.pack(side="left", padx=(0, 18))
-            diff.pack(side="left")
-            declared = tk.Frame(body, bg=row_bg)
-            declared.pack(fill="x", pady=(3, 0))
-            note_tag = tk.Label(
-                declared, text="自填", width=5, fg=_CARD_MUTED, bg=row_bg,
-                font=("Microsoft YaHei UI", 8), anchor="w",
+            today_tag.pack(side="left", padx=(0, 6))
+            date_lbl.pack(side="left")
+            came_tag = tk.Label(
+                card, text="软件记录使用时间段", fg=_CARD_MUTED, bg=row_bg,
+                font=("Microsoft YaHei UI", 9), anchor="w",
             )
+            note_tag = tk.Label(
+                card, text="公司正常上下班时间", fg=_CARD_MUTED, bg=row_bg,
+                font=("Microsoft YaHei UI", 9), anchor="w",
+            )
+            came = tk.Label(
+                card, text="", width=6, fg=_CARD_FG, bg=row_bg,
+                font=("Consolas", 11), anchor="center",
+            )
+            left = tk.Label(
+                card, text="", width=6, fg=_CARD_FG, bg=row_bg,
+                font=("Consolas", 11), anchor="center",
+            )
+            record_arrow = tk.Label(
+                card, text="→", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9),
+            )
+            soft_tail = tk.Frame(card, bg=row_bg)
+            dur = tk.Label(
+                soft_tail, text="", fg=_CARD_FG, bg=row_bg,
+                font=("Microsoft YaHei UI", 9), anchor="w",
+            )
+            dur.pack(side="left")
+            summary_box = tk.Frame(
+                card, width=_SUMMARY_W, height=_SUMMARY_H, bg="#161d2b",
+                highlightthickness=1, highlightbackground="#3d4b63",
+            )
+            summary_box.pack_propagate(False)
+            summary = tk.Label(
+                summary_box, text="", fg=_CARD_MUTED, bg="#161d2b",
+                font=("Microsoft YaHei UI", 9), anchor="nw", justify="left",
+                wraplength=_SUMMARY_WRAP,
+            )
+            summary_pace = tk.Label(
+                summary_box, text="", fg="#d5deea", bg="#161d2b",
+                font=("Microsoft YaHei UI", 9), anchor="nw", justify="left",
+                wraplength=_SUMMARY_WRAP,
+            )
+            summary.pack(anchor="nw", fill="x", padx=12, pady=(8, 0))
+            summary_pace.pack(anchor="nw", fill="x", padx=12, pady=(4, 0))
             vin = tk.StringVar()
             vout = tk.StringVar()
             ein = tk.Entry(
-                declared, textvariable=vin, width=6, font=("Consolas", 10), justify="center",
-                bg=entry_bg, fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
-                highlightthickness=0, disabledbackground="#202634", disabledforeground=_CARD_MUTED,
+                card, textvariable=vin, width=6, font=("Consolas", 11), justify="center",
+                bg="#3d4a62", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+                highlightthickness=1, highlightbackground="#9eb0cc", highlightcolor="#7eb6ff",
+                disabledbackground="#202634", disabledforeground=_CARD_MUTED,
             )
             eout = tk.Entry(
-                declared, textvariable=vout, width=6, font=("Consolas", 10), justify="center",
-                bg=entry_bg, fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
-                highlightthickness=0, disabledbackground="#202634", disabledforeground=_CARD_MUTED,
+                card, textvariable=vout, width=6, font=("Consolas", 11), justify="center",
+                bg="#3d4a62", fg=_CARD_FG, insertbackground=_CARD_FG, relief="flat",
+                highlightthickness=1, highlightbackground="#9eb0cc", highlightcolor="#7eb6ff",
+                disabledbackground="#202634", disabledforeground=_CARD_MUTED,
             )
             arrow = tk.Label(
-                declared, text="→", fg=_CARD_MUTED, bg=row_bg,
-                font=("Microsoft YaHei UI", 9), anchor="center",
+                card, text="→", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9),
             )
-            gap = tk.Label(declared, text="", fg=_CARD_MUTED, bg=row_bg, font=("Microsoft YaHei UI", 9), anchor="w")
+            note_tail = tk.Frame(card, bg=row_bg)
+            note_dur = tk.Label(
+                note_tail, text="", fg=_CARD_FG, bg=row_bg,
+                font=("Microsoft YaHei UI", 9), anchor="w",
+            )
             reset = tk.Label(
-                declared, text="", fg=_CARD_ACCENT, bg=row_bg,
-                font=("Microsoft YaHei UI", 8), cursor="arrow",
+                note_tail, text="", fg=_CARD_ACCENT, bg=row_bg,
+                font=("Microsoft YaHei UI", 8), anchor="w", cursor="arrow",
             )
-            note_tag.pack(side="left")
-            ein.pack(side="left", ipady=1)
-            arrow.pack(side="left", padx=6)
-            eout.pack(side="left", ipady=1)
-            gap.pack(side="left", padx=(20, 8))
-            reset.pack(side="right", padx=(8, 12))
+            note_dur.pack(side="left")
+            reset.pack(side="left", padx=(16, 0))
+            date_box.grid(row=0, column=0, rowspan=2, sticky="w", padx=(12, 8), pady=8)
+            came_tag.grid(row=0, column=1, sticky="w", pady=(8, 2))
+            note_tag.grid(row=1, column=1, sticky="w", pady=(2, 8))
+            came.grid(row=0, column=3, sticky="", pady=(8, 2))
+            ein.grid(row=1, column=3, sticky="", ipady=2, ipadx=2, pady=(2, 8))
+            record_arrow.grid(row=0, column=4, pady=(8, 2))
+            arrow.grid(row=1, column=4, pady=(2, 8))
+            left.grid(row=0, column=5, sticky="", pady=(8, 2))
+            eout.grid(row=1, column=5, sticky="", ipady=2, ipadx=2, pady=(2, 8))
+            soft_tail.grid(row=0, column=7, columnspan=1, sticky="w", pady=(8, 2), padx=(0, 8))
+            note_tail.grid(row=1, column=7, columnspan=1, sticky="w", pady=(2, 8), padx=(0, 8))
+            summary_box.grid(row=0, column=8, rowspan=2, sticky="nsew", padx=(8, 12), pady=8)
             reset.bind("<Button-1>", lambda _e: reset_today())
-            slots.append({
-                "card": card, "date": date_lbl, "came": came, "left": left,
+            doubt_row = tk.Frame(card, bg=row_bg)
+            doubt = tk.Label(
+                doubt_row, text="", fg=_CARD_MUTED, bg=row_bg,
+                font=("Microsoft YaHei UI", 9), anchor="w",
+            )
+            doubt_drop = tk.Label(
+                doubt_row, text="不算", fg=_CARD_ACCENT, bg=row_bg,
+                font=("Microsoft YaHei UI", 8), cursor="hand2",
+            )
+            doubt_keep = tk.Label(
+                doubt_row, text="算上", fg=_CARD_ACCENT, bg=row_bg,
+                font=("Microsoft YaHei UI", 8), cursor="hand2",
+            )
+            doubt.pack(side="left")
+            doubt_drop.pack(side="left", padx=(12, 0))
+            doubt_keep.pack(side="left", padx=(8, 0))
+            slot = {
+                "card": card, "date": date_lbl, "today_tag": today_tag, "came": came, "left": left,
                 "vin": vin, "vout": vout, "ein": ein, "eout": eout,
-                "dur": dur, "diff": diff, "gap": gap, "reset": reset,
+                "dur": dur, "note_dur": note_dur, "summary": summary,
+                "summary_pace": summary_pace, "summary_box": summary_box,
+                "reset": reset,
+                "day": None, "doubt_row": doubt_row, "doubt": doubt,
+                "doubt_drop": doubt_drop, "doubt_keep": doubt_keep,
                 "row_widgets": (
-                    card, date_lbl, body, recorded, declared, came_tag, came, left,
-                    record_arrow, dur, diff, note_tag, arrow, gap, reset,
+                    card, date_box, today_tag, date_lbl, came_tag, note_tag, came, left, record_arrow,
+                    soft_tail, dur, arrow, note_tail, note_dur, reset,
+                    doubt_row, doubt, doubt_drop, doubt_keep,
                 ),
-            })
+            }
+
+            def on_doubt(keep: bool, this: dict = slot) -> None:
+                day = this.get("day")
+                if day is None or not this["doubt"].cget("text"):
+                    return
+                if not worklog.decide_doubt(self.cfg, day, keep=keep):
+                    return
+                store.save_config(self.cfg)
+                self._worklog_dirty = False
+                self._worklog_save_at = time.monotonic()
+                self._fill_worklog(ui)
+
+            doubt_drop.bind("<Button-1>", lambda _e, this=slot, fn=on_doubt: fn(False, this))
+            doubt_keep.bind("<Button-1>", lambda _e, this=slot, fn=on_doubt: fn(True, this))
+            slot["card"].bind("<Configure>", lambda _e, this=slot: self._fit_day_copy(this), add="+")
+            slots.append(slot)
 
         ui = {
             "dlg": dlg,
@@ -1142,7 +1373,7 @@ class WorklogDialogMixin:
         def _sync_scroll(_event=None) -> None:
             height = max(1, int(sheet.winfo_reqheight()))
             # winfo_height 在窗口重排前还是上一档高度，会把刚收起的滚动条又装回来。
-            view = int(scroll.cget("height"))
+            view = scroll._view_h()
             width = int(scroll.winfo_width())
             if view <= 1:
                 return
@@ -1159,7 +1390,7 @@ class WorklogDialogMixin:
             scroll.refresh()
             shown = bool(scroll_sb.winfo_manager())
             if height > view + 4 and not shown:
-                scroll_sb.pack(side="right", fill="y")
+                scroll_sb.pack(fill="both", expand=True)
             elif height <= view + 1 and shown:
                 scroll_sb.pack_forget()
 
@@ -1167,7 +1398,20 @@ class WorklogDialogMixin:
         scroll.bind("<Configure>", _sync_scroll, add="+")
         _bind_wheel(scroll_host)
         self._sync_worklog_privacy(ui)
+        self._fit_worklog_width(ui)
         return ui
+
+    def _fit_worklog_width(self, ui: dict) -> None:
+        """行比两张图宽时，把视口撑到行的宽度。挤在固定宽度里，时长会被说明框盖住。"""
+        table = ui.get("table")
+        scroll = ui.get("scroll")
+        if table is None or scroll is None:
+            return
+        table.update_idletasks()
+        need = max(int(ui["pair_w"]), int(table.winfo_reqwidth()))
+        if int(scroll.cget("width")) != need:
+            scroll.configure(width=need)
+        ui["content_w"] = need
 
     def _fit_worklog_scroll(self, ui: dict, *, screen_h: int | None = None) -> None:
         canvas = ui.get("scroll")
@@ -1192,7 +1436,7 @@ class WorklogDialogMixin:
         if sb is None:
             return
         if scroll and not sb.winfo_manager():
-            sb.pack(side="right", fill="y")
+            sb.pack(fill="both", expand=True)
         elif not scroll and sb.winfo_manager():
             sb.pack_forget()
 
@@ -1206,7 +1450,12 @@ class WorklogDialogMixin:
         ui["chart_day"] = date.today()
         self._fill_worklog(ui)
         self._fit_worklog_scroll(ui)
-        _reveal_card(ui["dlg"], min_w=activity_chart.W * 2 + activity_chart.GAP + 48, min_h=420, near=self._dialog_near())
+        _reveal_card(
+            ui["dlg"],
+            min_w=int(ui.get("content_w") or (activity_chart.W * 2 + activity_chart.GAP)) + 48,
+            min_h=420,
+            near=self._dialog_near(),
+        )
         # 建窗口时 Tk 不占 Python，图已经在后台画了一大半；剩下的等一下，别先露出空板。
         activity_chart.wait(ui, 0.4)
         _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])

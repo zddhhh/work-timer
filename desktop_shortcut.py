@@ -255,7 +255,7 @@ def _write_shortcut(lnk: Path, exe: Path, *, arguments: str = "") -> bool:
             return False
         if arguments and set_args(sl, arguments):
             return False
-        set_desc(sl, "弹性下班计时器")
+        set_desc(sl, "下班倒计时")
         set_icon(sl, str(exe), 0)
         persist = _query_interface(sl, _IID_IPERSIST_FILE)
         if not persist:

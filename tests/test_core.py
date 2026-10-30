@@ -1618,6 +1618,31 @@ class WorklogTests(unittest.TestCase):
         self.assertNotIn("manual", kept)
         self.assertFalse(worklog.row(cfg, self.D.date())["note_custom"])
 
+    def test_day_card_keeps_durations_and_puts_the_gap_on_the_side(self):
+        cfg = {"activity": {"on": True, "days": {}}}
+        self.prove(cfg, 9, 10, target=(18, 0))
+        self.prove(cfg, 18, 20, target=(18, 0))
+        self.assertIsNone(worklog.set_note(cfg, self.D.date(), "9:00", "18:00"))
+        r = worklog.row(cfg, self.D.date(), today=self.LATER)
+        self.assertEqual(worklog.fmt_span(r["dur"]), "9小时10分")
+        self.assertEqual(worklog.company_span(r["note_in"], r["note_out"]), "9小时")
+        self.assertEqual(worklog.company_span(9 * 60, None), "")
+        keys = [0] * 24
+        keys[10] = 40
+        keys[14] = 8
+        cfg["activity"]["days"][self.D.date().isoformat()] = {"keys": 48, "keys_h": keys}
+        quiet = worklog.day_summary(cfg, self.D.date(), r)
+        self.assertEqual(quiet, "晚到10分，晚走20分\n11点到13点空着")
+        keys[11] = 30
+        keys[12] = 12
+        keys[13] = 12
+        cfg["activity"]["days"][self.D.date().isoformat()] = {"keys": 102, "keys_h": keys}
+        busy = worklog.day_summary(cfg, self.D.date(), r)
+        self.assertIn("晚到10分，晚走20分", busy)
+        self.assertIn("最忙", busy)
+        same = dict(r, arrive_gap=0, leave_gap=0)
+        self.assertTrue(worklog.day_summary({}, self.D.date(), same).startswith("和公司时间一致"))
+
     def test_should_track_includes_weekends_and_days_without_a_target(self):
         sat = datetime(2026, 10, 10, 10, 0)
         self.assertTrue(worklog.should_track(sat, has_target=True, set_today=False))
@@ -2169,6 +2194,144 @@ class ActivityPerfTests(unittest.TestCase):
         self.assertEqual(store.load_config()["a"], [[1, 2, 3]] * 3)
 
 
+class WorklogDoubtTests(unittest.TestCase):
+    """隔了半小时的短鼠标、滚轮先不改走了，停够半小时再问。"""
+
+    D = datetime(2026, 10, 8)
+
+    def at(self, h, m, s=0):
+        return self.D.replace(hour=h, minute=m, second=s)
+
+    def burst(self, cfg, h, m, s=0, kind="move", step=1, count=3):
+        state = None
+        when = self.at(h, m, s)
+        changed = False
+        for i in range(count):
+            when = self.at(h, m, s) + timedelta(seconds=i * step)
+            state, changed = worklog.note_input(
+                cfg, state, when, target_hm=(18, 0), kind=kind,
+            )
+        return state, when, changed
+
+    def test_a_short_mouse_return_waits_and_then_asks(self):
+        cfg = {}
+        self.burst(cfg, 9, 0, kind="key")
+        self.burst(cfg, 9, 40, kind="move")
+        day = worklog.get_day(cfg, self.D.date())
+        self.assertEqual(day["out"], 9 * 60)
+        self.assertFalse(day["hold"]["asked"])
+        row = worklog.row(cfg, self.D.date(), today=self.D.date())
+        self.assertEqual(row["doubt"], "")
+        self.assertTrue(row["held"])
+        self.assertIsNone(worklog.live_elapsed(row, self.at(9, 40, 10), 1))
+        self.assertFalse(worklog.settle_doubt(cfg, self.at(9, 40, 10), 29 * 60))
+        self.assertTrue(worklog.settle_doubt(cfg, self.at(10, 11), 30 * 60))
+        self.assertEqual(
+            worklog.row(cfg, self.D.date())["doubt"],
+            "9:00 之后只有 9:40 这一下",
+        )
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 9 * 60)
+        worklog.ensure_fields(cfg, today=self.D.date())
+        self.assertTrue(worklog.get_day(cfg, self.D.date())["hold"]["asked"])
+
+    def test_wheel_asks_but_a_key_or_a_long_move_commits(self):
+        cfg = {}
+        self.burst(cfg, 9, 0, kind="key")
+        self.burst(cfg, 9, 40, kind="wheel")
+        self.assertTrue(worklog.settle_doubt(cfg, self.at(10, 20), 31 * 60))
+        self.assertEqual(worklog.row(cfg, self.D.date())["doubt"], "9:00 之后只有 9:40 这一下")
+
+        keyed = {}
+        self.burst(keyed, 9, 0, kind="key")
+        state, when, _changed = self.burst(keyed, 9, 40, kind="move", count=2)
+        worklog.note_input(keyed, state, when + timedelta(seconds=1), target_hm=(18, 0), kind="key")
+        self.assertEqual(worklog.get_day(keyed, self.D.date())["out"], 9 * 60 + 40)
+        self.assertNotIn("hold", worklog.get_day(keyed, self.D.date()))
+
+        long = {}
+        self.burst(long, 9, 0, kind="key")
+        self.burst(long, 10, 0, kind="move")
+        self.burst(long, 10, 2, kind="move")
+        self.assertEqual(worklog.get_day(long, self.D.date())["out"], 10 * 60 + 2)
+        self.assertNotIn("hold", worklog.get_day(long, self.D.date()))
+
+    def test_same_second_click_cancels_the_doubt(self):
+        cfg = {}
+        self.burst(cfg, 9, 0, kind="key")
+        _state, when, _changed = self.burst(cfg, 9, 40, kind="move")
+        self.assertIn("hold", worklog.get_day(cfg, self.D.date()))
+        self.assertTrue(worklog.note_kind(cfg, when, "click"))
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 9 * 60 + 40)
+        self.assertNotIn("hold", worklog.get_day(cfg, self.D.date()))
+
+    def test_drop_hides_the_line_and_keep_moves_the_leave_time(self):
+        cfg = {}
+        self.burst(cfg, 9, 0, kind="key")
+        self.burst(cfg, 9, 40, kind="move")
+        worklog.settle_doubt(cfg, self.at(10, 20), 31 * 60)
+        self.assertTrue(worklog.decide_doubt(cfg, self.D.date(), keep=False))
+        self.assertEqual(worklog.row(cfg, self.D.date())["doubt"], "")
+        self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 9 * 60)
+        self.burst(cfg, 9, 41, kind="move")
+        self.assertFalse(worklog.settle_doubt(cfg, self.at(10, 20), 31 * 60))
+        self.assertEqual(worklog.row(cfg, self.D.date())["doubt"], "")
+
+        other = {}
+        self.burst(other, 9, 0, kind="key")
+        self.burst(other, 9, 40, kind="move")
+        worklog.settle_doubt(other, self.at(10, 20), 31 * 60)
+        self.assertTrue(worklog.decide_doubt(other, self.D.date(), keep=True))
+        day = worklog.get_day(other, self.D.date())
+        self.assertEqual(day["out"], 9 * 60 + 40)
+        self.assertNotIn("hold", day)
+        self.assertEqual(worklog.row(other, self.D.date())["dur"], 40)
+
+    def test_card_shows_the_line_until_drop(self):
+        import tkinter as tk
+
+        import worklog_ui
+
+        cfg = {}
+        self.burst(cfg, 9, 0, kind="key")
+        self.burst(cfg, 9, 40, kind="move")
+        worklog.settle_doubt(cfg, self.at(10, 20), 31 * 60)
+        root = tk.Tk()
+        root.withdraw()
+
+        class Host(worklog_ui.WorklogDialogMixin):
+            def __init__(self) -> None:
+                self.cfg = cfg
+                self._worklog_dirty = False
+                self._worklog_save_at = 0.0
+
+            def _tk_root(self):
+                return root
+
+            def _dialog_near(self):
+                return (40, 40)
+
+        host = Host()
+        try:
+            ui = host._build_worklog_dialog()
+            ui["anchor"] = self.D.date()
+            host._fill_worklog(ui)
+            slot = next(item for item in ui["slots"] if item["day"] == self.D.date())
+            self.assertEqual(slot["doubt"].cget("text"), "9:00 之后只有 9:40 这一下")
+            self.assertEqual(slot["left"].cget("text"), "9:00")
+            self.assertTrue(slot["doubt_row"].winfo_manager())
+            dlg = ui["dlg"]
+            dlg.deiconify()
+            dlg.attributes("-alpha", 1.0)
+            dlg.update()
+            slot["doubt_drop"].event_generate("<Button-1>")
+            dlg.update()
+            self.assertEqual(worklog.get_day(cfg, self.D.date())["out"], 9 * 60)
+            self.assertEqual(slot["doubt_row"].winfo_manager(), "")
+            self.assertEqual(slot["left"].cget("text"), "9:00")
+        finally:
+            root.destroy()
+
+
 class WorklogScrollTests(unittest.TestCase):
     def test_tall_screen_keeps_the_middle_full_height(self):
         import worklog_ui
@@ -2215,6 +2378,78 @@ class WorklogScrollTests(unittest.TestCase):
         try:
             host._fill_worklog(ui)
             self.assertEqual(worklog.row(host.cfg, date.today())["note_out"], 18 * 60)
+            today = date.today()
+            start = datetime(today.year, today.month, today.day, 9, 10, 10)
+            worklog.mark_span(
+                host.cfg, start, start.replace(hour=18, minute=20), target_hm=(18, 0),
+            )
+            worklog.set_note(host.cfg, today, "9:00", "18:00")
+            keys = [0] * 24
+            keys[10] = 40
+            keys[11] = 30
+            host.cfg.setdefault("activity", {})["on"] = True
+            host.cfg["activity"].setdefault("days", {})[today.isoformat()] = {
+                "keys": 70, "keys_h": keys,
+            }
+            host._fill_worklog(ui)
+            slot = ui["slots"][worklog.week_dates(ui["anchor"]).index(today)]
+            labels = [
+                w.cget("text") for w in slot["card"].winfo_children() if isinstance(w, tk.Label)
+            ]
+            self.assertIn("软件记录使用时间段", labels)
+            self.assertIn("公司正常上下班时间", labels)
+            self.assertEqual(slot["came"].grid_info()["column"], slot["ein"].grid_info()["column"])
+            self.assertEqual(slot["left"].grid_info()["column"], slot["eout"].grid_info()["column"])
+            self.assertEqual(
+                slot["dur"].master.grid_info()["column"],
+                slot["note_dur"].master.grid_info()["column"],
+            )
+            self.assertGreater(
+                int(slot["came"].grid_info()["column"]),
+                2,
+            )
+            self.assertEqual(str(slot["summary"].cget("anchor")), "nw")
+            self.assertEqual(str(slot["summary"].cget("justify")), "left")
+            self.assertTrue(slot["dur"].cget("text"))
+            self.assertNotIn("晚走", slot["dur"].cget("text"))
+            self.assertNotIn("早到", slot["dur"].cget("text"))
+            self.assertEqual(slot["note_dur"].cget("text"), "9小时")
+            self.assertNotIn("晚走", slot["note_dur"].cget("text"))
+            self.assertEqual(slot["summary"].cget("text"), "晚到10分，晚走20分")
+            self.assertIn("最忙", slot["summary_pace"].cget("text"))
+            self.assertNotIn("最忙", slot["summary"].cget("text"))
+            self.assertNotIn("今天", slot["date"].cget("text"))
+            self.assertEqual(slot["today_tag"].cget("text"), "今天")
+            self.assertEqual(int(float(str(slot["today_tag"].cget("highlightthickness")))), 0)
+            other = next(item for item in ui["slots"] if item is not slot)
+            self.assertEqual(other["today_tag"].cget("text"), "")
+            self.assertEqual(str(slot["summary_box"].cget("width")), str(other["summary_box"].cget("width")))
+            self.assertEqual(str(slot["summary_box"].cget("height")), str(other["summary_box"].cget("height")))
+            self.assertIs(slot["summary"].master, slot["summary_box"])
+            self.assertIs(slot["summary_pace"].master, slot["summary_box"])
+            self.assertFalse(slot["summary_box"].pack_propagate())
+            self.assertEqual(set(slot["summary_box"].grid_info()["sticky"]), set("nsew"))
+            dlg.update_idletasks()
+            self.assertEqual(slot["summary_box"].winfo_reqwidth(), other["summary_box"].winfo_reqwidth())
+            self.assertEqual(slot["summary_box"].winfo_reqheight(), other["summary_box"].winfo_reqheight())
+            self.assertGreaterEqual(slot["summary_box"].winfo_reqheight(), 50)
+            self.assertEqual(int(float(str(slot["summary_box"].cget("highlightthickness")))), 1)
+            slot["summary"].configure(text="晚到7小时19分，晚走38分，18–20点最忙")
+            dlg.update_idletasks()
+            host._fit_day_copy(slot)
+            dlg.update_idletasks()
+            room = int(float(str(slot["summary"].cget("wraplength"))))
+            self.assertGreaterEqual(room, 160)
+            self.assertLessEqual(int(slot["summary"].winfo_reqwidth()), room + 24)
+            self.assertGreaterEqual(int(ui["scroll"].cget("width")), ui["table"].winfo_reqwidth())
+            slot["dur"].configure(text="23小时59分59秒 · 还在记")
+            dlg.update_idletasks()
+            self.assertGreaterEqual(
+                int(slot["card"].columnconfigure(7)["minsize"]),
+                slot["dur"].winfo_reqwidth(),
+            )
+            self.assertEqual(int(slot["ein"].cget("highlightthickness")), 1)
+            self.assertEqual(str(slot["ein"].cget("state")), "normal")
             self.assertIs(ui["month_lbl"].master, ui["sums"])
             self.assertIs(ui["sums"].master, dlg)
             self.assertIs(ui["sheet"].master, ui["scroll"])
@@ -2227,7 +2462,7 @@ class WorklogScrollTests(unittest.TestCase):
             dlg.update_idletasks()
             self.assertTrue(ui["scroll_sb"].winfo_manager())
             self.assertEqual(ui["controls"].winfo_manager(), "pack")
-            self.assertLessEqual(ui["table"].winfo_reqwidth(), ui["pair_w"])
+            self.assertGreaterEqual(int(ui["scroll"].cget("width")), ui["table"].winfo_reqwidth())
             self.assertLess(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
             self.assertLessEqual(int(dlg.winfo_reqheight()) + 24, 720 - 48 + 8)
             host._fit_worklog_scroll(ui, screen_h=1600)
@@ -3154,6 +3389,7 @@ class ShareTests(unittest.TestCase):
         )
         self.assertNotIn("token", url.lower())
         text = share.share_text("1.3.72", url)
+        self.assertIn("下班倒计时", text)
         self.assertIn("不用登录", text)
         self.assertIn(url, text)
 
