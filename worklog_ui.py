@@ -34,6 +34,56 @@ from card_ui import (
 _SUMMARY_W = 252
 _SUMMARY_H = 58
 _SUMMARY_WRAP = 228
+_FOLD_BAR = "#1e2430"
+_FOLD_EDGE = "#2c3444"
+_FOLD_CHIP = "#2c3950"
+
+
+def _fold_chip(parent: tk.Misc) -> tk.Label:
+    """收起展开做成蓝底按钮，收着时更显眼。"""
+    return tk.Label(
+        parent, text="展开", fg="white", bg=_CARD_ACCENT,
+        font=("Microsoft YaHei UI", 9, "bold"), cursor="hand2", padx=12, pady=3,
+    )
+
+
+def _style_fold(lbl: tk.Label | None, opened: bool) -> None:
+    if lbl is None:
+        return
+    lbl.configure(
+        text="收起" if opened else "展开",
+        bg=_FOLD_CHIP if opened else _CARD_ACCENT,
+        fg="white",
+        font=("Microsoft YaHei UI", 9, "bold"),
+        padx=12,
+        pady=3,
+    )
+
+
+def _apply_fold(body: tk.Misc | None, toggle: tk.Label | None, opened: bool) -> None:
+    if body is None:
+        return
+    shown = bool(body.winfo_manager())
+    if opened and not shown:
+        body.pack(fill="x", pady=(8, 0))
+    elif not opened and shown:
+        body.pack_forget()
+    _style_fold(toggle, opened)
+
+
+def _style_min_chip(lbl: tk.Label | None, minimized: bool) -> None:
+    if lbl is None:
+        return
+    lbl.configure(
+        text="展开" if minimized else "最小化",
+        bg=_CARD_ACCENT if minimized else _FOLD_CHIP,
+        fg="white",
+        font=("Microsoft YaHei UI", 9, "bold"),
+        padx=12,
+        pady=3,
+    )
+
+
 def scroll_view(
     sheet_h: int,
     natural_h: int,
@@ -250,6 +300,9 @@ class WorklogDialogMixin:
         ui["live_sec"] = sec
         today = date.today()
         now = datetime.now()
+        if ui.get("minimized"):
+            self._sync_min_brief(ui)
+            return
         # 图在后台画；节电时少画几张，读数照样每秒走。
         gap = 3.0 if power_save.saving() else 1.0
         if mono - float(ui.get("chart_live_at") or 0) >= gap:
@@ -537,13 +590,16 @@ class WorklogDialogMixin:
         if ui.get("card_on") is not None:
             ui["card_on"].set(activity.show_on_card(self.cfg))
         self._sync_worklog_privacy(ui)
+        self._sync_min_brief(ui)
+        if ui.get("minimized"):
+            return
         self._fit_worklog_width(ui)
         self._paint_activity_chart(ui)
 
     def _paint_activity_chart(self, ui: dict | None = None, *, background: bool = True) -> None:
         """图交给后台线程画，主线程不等。画好由 _refresh_worklog_live 里的 collect 换上。"""
         ui = ui if ui is not None else self._worklog_ui
-        if ui is None or ui.get("today_lbl") is None:
+        if ui is None or ui.get("today_lbl") is None or ui.get("minimized"):
             return
         try:
             if not ui["dlg"].winfo_exists():
@@ -574,22 +630,27 @@ class WorklogDialogMixin:
             day_var.set(caption)
         if activity.settle(self.cfg, datetime.now()):
             self._activity_dirty = True
+        brief = ui.get("chart_brief")
+        if brief is not None:
+            brief.set(self._chart_brief(focus, today))
+        self._apply_chart_open(ui)
         self._apply_heat_open(ui)
         keyboard_heat.paint_into(
             ui, self.cfg, focus, today, enabled=activity.enabled(self.cfg),
         )
-        activity_chart.paint_into(
-            ui,
-            self.cfg,
-            today=today,
-            days=days,
-            enabled=activity.enabled(self.cfg),
-            this_week=days[0] <= today <= days[-1],
-            focus=focus,
-            style=activity.chart_style(self.cfg),
-            mode=activity.chart_view(self.cfg),
-            background=background,
-        )
+        if activity.chart_open(self.cfg):
+            activity_chart.paint_into(
+                ui,
+                self.cfg,
+                today=today,
+                days=days,
+                enabled=activity.enabled(self.cfg),
+                this_week=days[0] <= today <= days[-1],
+                focus=focus,
+                style=activity.chart_style(self.cfg),
+                mode=activity.chart_view(self.cfg),
+                background=background,
+            )
         self._style_chart_buttons(ui)
 
     def _style_chart_buttons(self, ui: dict) -> None:
@@ -650,19 +711,112 @@ class WorklogDialogMixin:
         self._style_heat(ui)
         self._paint_activity_chart(ui)
 
-    def _apply_heat_open(self, ui: dict) -> None:
-        body = ui.get("heat_body")
-        toggle = ui.get("heat_toggle")
-        if body is None:
+    def _chart_brief(self, focus: date, today: date) -> str:
+        if not activity.enabled(self.cfg):
+            return "没在记键鼠"
+        counted = activity.counts(self.cfg, focus)
+        keys = int(counted.get("keys") or 0)
+        clicks = int(counted.get("clicks") or 0)
+        if keys <= 0 and clicks <= 0:
+            return "还没有键鼠"
+        day = "今天" if focus == today else ("昨天" if focus == today - timedelta(days=1) else f"{focus.month}/{focus.day}")
+        return f"{day}敲了 {activity.fmt_count(keys)} 下 · 点了 {activity.fmt_count(clicks)} 次"
+
+    def _apply_chart_open(self, ui: dict) -> None:
+        _apply_fold(ui.get("chart_body"), ui.get("chart_toggle"), activity.chart_open(self.cfg))
+
+    def _toggle_chart(self, ui: dict) -> None:
+        activity.set_chart_open(self.cfg, not activity.chart_open(self.cfg))
+        store.save_config(self.cfg)
+        ui["chart_sig"] = None
+        self._apply_chart_open(ui)
+        self._paint_activity_chart(ui)
+
+    def _sync_min_brief(self, ui: dict) -> None:
+        var = ui.get("min_brief")
+        if var is None:
             return
-        opened = activity.heat_open(self.cfg)
-        shown = bool(body.winfo_manager())
-        if opened and not shown:
-            body.pack(fill="x", pady=(8, 0))
-        elif not opened and shown:
-            body.pack_forget()
-        if toggle is not None:
-            toggle.configure(text="收起" if opened else "展开")
+        if not worklog.tracking_enabled(self.cfg):
+            var.set("来 / 走已关闭")
+            return
+        today = date.today()
+        days = worklog.week_dates(ui["anchor"])
+        if today not in days:
+            var.set(str(ui["week_var"].get()))
+            return
+        r = worklog.row(self.cfg, today, today=today)
+        var.set(self._worklog_dur_text(r, datetime.now()))
+
+    def _apply_worklog_min(self, ui: dict, *, resize: bool = True) -> None:
+        """收成一条小卡片，点展开再回来。关窗口才真正走开。"""
+        on = bool(ui.get("minimized"))
+        dlg = ui.get("dlg")
+        host = ui.get("scroll_host")
+        controls = ui.get("controls")
+        sums = ui.get("sums")
+        err_row = ui.get("err_row")
+        bar = ui.get("bar")
+        nav = ui.get("nav")
+        brief = ui.get("min_brief_lbl")
+        close_lbl = ui.get("min_close")
+        _style_min_chip(ui.get("min_toggle"), on)
+
+        def hide(widget: tk.Misc | None) -> None:
+            if widget is not None and widget.winfo_manager():
+                widget.pack_forget()
+
+        def show(widget: tk.Misc | None, **kw) -> None:
+            if widget is not None and not widget.winfo_manager():
+                widget.pack(**kw)
+
+        if on:
+            for widget in (controls, host, sums, err_row, bar, nav):
+                hide(widget)
+            show(brief, side="left", padx=(14, 0))
+            show(close_lbl, side="right", padx=(8, 0))
+        else:
+            hide(brief)
+            hide(close_lbl)
+            show(bar, side="bottom", fill="x", pady=(6, 14))
+            show(err_row, side="bottom", fill="x", pady=(4, 0))
+            if err_row is not None:
+                err_row.pack_configure(padx=16)
+            show(sums, side="bottom", fill="x", padx=16)
+            show(host, anchor="nw", fill="y", expand=True)
+            show(controls, fill="x", pady=(0, 8), before=host)
+            show(nav, side="right")
+        self._sync_min_brief(ui)
+        if not on:
+            self._paint_activity_chart(ui)
+        if not resize or dlg is None:
+            return
+        try:
+            if not dlg.winfo_exists() or dlg.state() == "withdrawn":
+                return
+            here = (int(dlg.winfo_x()), int(dlg.winfo_y()))
+            shown = float(dlg.attributes("-alpha")) >= 0.5
+        except tk.TclError:
+            return
+        if not shown:
+            return
+        if on:
+            _reveal_card(dlg, min_w=320, min_h=40, near=here)
+            return
+        self._fit_worklog_width(ui)
+        self._fit_worklog_scroll(ui)
+        _reveal_card(
+            dlg,
+            min_w=int(ui.get("content_w") or (activity_chart.W * 2 + activity_chart.GAP)) + 48,
+            min_h=420,
+            near=here,
+        )
+
+    def _toggle_worklog_min(self, ui: dict) -> None:
+        ui["minimized"] = not bool(ui.get("minimized"))
+        self._apply_worklog_min(ui)
+
+    def _apply_heat_open(self, ui: dict) -> None:
+        _apply_fold(ui.get("heat_body"), ui.get("heat_toggle"), activity.heat_open(self.cfg))
 
     def _toggle_heat(self, ui: dict) -> None:
         activity.set_heat_open(self.cfg, not activity.heat_open(self.cfg))
@@ -738,9 +892,21 @@ class WorklogDialogMixin:
         tk.Label(
             top, text="工时账本", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(side="left")
+        min_toggle = _fold_chip(top)
+        min_toggle.pack(side="right", padx=(10, 0), pady=1)
+        _style_min_chip(min_toggle, False)
         week_var = tk.StringVar()
         nav = tk.Frame(top, bg=_CARD_BG)
         nav.pack(side="right")
+        min_brief = tk.StringVar(value="")
+        min_brief_lbl = tk.Label(
+            top, textvariable=min_brief, fg=_CARD_MUTED, bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 10), cursor="hand2",
+        )
+        min_close = tk.Label(
+            top, text="关闭", fg=_CARD_MUTED, bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 9), cursor="hand2",
+        )
         scroll_host = tk.Frame(body, bg=_CARD_BG)
         scroll_host.pack(anchor="nw", fill="y", expand=True)
         scroll = _ClipScroll(
@@ -798,7 +964,26 @@ class WorklogDialogMixin:
             store.save_config(self.cfg)
             self._paint_activity_chart(ui)
 
-        charts = tk.Frame(sheet, bg=_CARD_BG, width=pair_w, height=activity_chart.H + 32)
+        acts = tk.Frame(sheet, bg=_CARD_BG)
+        acts.pack(fill="x")
+        acts_head = tk.Frame(
+            acts, bg=_FOLD_BAR, highlightthickness=1, highlightbackground=_FOLD_EDGE,
+        )
+        acts_head.pack(fill="x")
+        chart_title = tk.Label(
+            acts_head, text="键鼠", fg=_CARD_FG, bg=_FOLD_BAR,
+            font=("Microsoft YaHei UI", 10, "bold"), cursor="hand2",
+        )
+        chart_title.pack(side="left", padx=(12, 0), pady=7)
+        chart_brief = tk.StringVar(value="还没有键鼠")
+        tk.Label(
+            acts_head, textvariable=chart_brief, fg=_CARD_MUTED, bg=_FOLD_BAR,
+            font=("Microsoft YaHei UI", 9), anchor="w",
+        ).pack(side="left", padx=(12, 8), pady=7)
+        chart_toggle = _fold_chip(acts_head)
+        chart_toggle.pack(side="right", padx=(8, 12), pady=5)
+        chart_body = tk.Frame(acts, bg=_CARD_BG)
+        charts = tk.Frame(chart_body, bg=_CARD_BG, width=pair_w, height=activity_chart.H + 32)
         charts.pack(fill="x")
         charts.pack_propagate(False)
         charts.columnconfigure(0, minsize=activity_chart.W, weight=1)
@@ -874,33 +1059,32 @@ class WorklogDialogMixin:
         heat = tk.Frame(sheet, bg=_CARD_BG)
         heat.pack(fill="x", pady=(10, 2))
         heat_head = tk.Frame(
-            heat, bg="#1e2430", highlightthickness=1, highlightbackground="#2c3444",
+            heat, bg=_FOLD_BAR, highlightthickness=1, highlightbackground=_FOLD_EDGE,
         )
         heat_head.pack(fill="x")
         heat_title = tk.Label(
-            heat_head, text="键盘", fg=_CARD_FG, bg="#1e2430",
+            heat_head, text="键盘", fg=_CARD_FG, bg=_FOLD_BAR,
             font=("Microsoft YaHei UI", 10, "bold"), cursor="hand2",
         )
         heat_title.pack(side="left", padx=(12, 0), pady=7)
         heat_brief = tk.StringVar(value="还没有按键")
         tk.Label(
-            heat_head, textvariable=heat_brief, fg=_CARD_MUTED, bg="#1e2430",
+            heat_head, textvariable=heat_brief, fg=_CARD_MUTED, bg=_FOLD_BAR,
             font=("Microsoft YaHei UI", 9), anchor="w",
         ).pack(side="left", padx=(12, 8), pady=7)
-        heat_toggle = tk.Label(
-            heat_head, text="展开", fg=_CARD_FG, bg="#1e2430",
-            font=("Microsoft YaHei UI", 9), cursor="hand2",
-        )
-        heat_toggle.pack(side="right", padx=(8, 12), pady=7)
+        heat_toggle = _fold_chip(heat_head)
+        heat_toggle.pack(side="right", padx=(8, 12), pady=5)
+        heat_body = tk.Frame(heat, bg=_CARD_BG)
+        heat_tools = tk.Frame(heat_body, bg=_CARD_BG)
+        heat_tools.pack(fill="x", pady=(8, 0))
         heat_view_btns: dict[str, tk.Label] = {}
         for key, label in (("rank", "排行"), ("map", "热力图")):
             btn = tk.Label(
-                heat_head, text=label, fg=_CARD_MUTED, bg="#1e2430",
+                heat_tools, text=label, fg=_CARD_MUTED, bg=_CARD_BG,
                 font=("Microsoft YaHei UI", 9), cursor="hand2",
             )
-            btn.pack(side="right", padx=(10, 0), pady=7)
+            btn.pack(side="right", padx=(10, 0))
             heat_view_btns[key] = btn
-        heat_body = tk.Frame(heat, bg=_CARD_BG)
         heat_lbl = tk.Label(heat_body, bg=_CARD_BG, bd=0, highlightthickness=0)
         heat_lbl.pack(anchor="w")
         heat_var = tk.StringVar(value="数字是这个键按了多少下")
@@ -989,24 +1173,18 @@ class WorklogDialogMixin:
         )
         top_panel.pack(fill="x")
         top_inner = tk.Frame(top_panel, bg="#1e2430")
-        top_inner.pack(fill="x", padx=12, pady=9)
-        top_head = tk.Frame(top_inner, bg="#1e2430")
-        top_head.pack(fill="x")
+        top_inner.pack(fill="x", padx=12, pady=6)
         tk.Label(
-            top_head, text="计时器顶栏", fg=_CARD_FG, bg="#1e2430",
+            top_inner, text="计时器顶栏", fg=_CARD_FG, bg="#1e2430",
             font=("Microsoft YaHei UI", 10, "bold"),
         ).pack(side="left")
-        tk.Label(
-            top_head, text="选择主计时器上方显示的三个指标", fg=_CARD_MUTED, bg="#1e2430",
-            font=("Microsoft YaHei UI", 8),
-        ).pack(side="left", padx=(10, 0))
         tk.Checkbutton(
-            top_head, text="显示", variable=card_on, command=toggle_card,
+            top_inner, text="显示", variable=card_on, command=toggle_card,
             fg=_CARD_FG, bg="#1e2430", selectcolor="#222733", activebackground="#1e2430",
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="right")
         slot_row = tk.Frame(top_inner, bg="#1e2430")
-        slot_row.pack(fill="x", pady=(7, 0))
+        slot_row.pack(side="left", fill="x", expand=True, padx=(12, 8))
         slot_vars: list[tk.StringVar] = []
         slot_buttons: list[tk.Menubutton] = []
         slot_labels = [label for _key, label in activity.CARD_CHOICES]
@@ -1023,19 +1201,13 @@ class WorklogDialogMixin:
 
         chosen = activity.card_slots(self.cfg)
         for index in range(3):
-            cell = tk.Frame(slot_row, bg="#1e2430")
-            cell.pack(side="left", fill="x", expand=True, padx=(0, 10 if index < 2 else 0))
-            tk.Label(
-                cell, text=f"第 {index + 1} 项", fg=_CARD_MUTED, bg="#1e2430",
-                font=("Microsoft YaHei UI", 8),
-            ).pack(anchor="w", pady=(0, 2))
             var = tk.StringVar(value=activity.card_label(chosen[index]) + "    ▼")
             slot_vars.append(var)
             picker = tk.Menubutton(
-                cell, textvariable=var, anchor="w", cursor="hand2", indicatoron=False,
+                slot_row, textvariable=var, anchor="w", cursor="hand2", indicatoron=False,
                 bg="#222733", fg=_CARD_FG, activebackground="#2a3344", activeforeground=_CARD_FG,
                 highlightthickness=1, highlightbackground="#3a465c", highlightcolor=_CARD_ACCENT,
-                relief="flat", bd=0, font=("Microsoft YaHei UI", 9, "bold"), padx=10, pady=5,
+                relief="flat", bd=0, font=("Microsoft YaHei UI", 9, "bold"), padx=10, pady=3,
             )
             menu = tk.Menu(
                 picker, tearoff=False, bg="#222733", fg=_CARD_FG,
@@ -1045,7 +1217,7 @@ class WorklogDialogMixin:
             for label in slot_labels:
                 menu.add_command(label=label, command=lambda v=label, i=index: pick_slot(i, v))
             picker.configure(menu=menu)
-            picker.pack(fill="x")
+            picker.pack(side="left", fill="x", expand=True, padx=(0, 8 if index < 2 else 0))
             slot_buttons.append(picker)
 
         history_notice = tk.Frame(
@@ -1248,6 +1420,7 @@ class WorklogDialogMixin:
         ui = {
             "dlg": dlg,
             "stop": False,
+            "live": False,
             "anchor": date.today(),
             "slots": slots,
             "edits": [],
@@ -1262,7 +1435,16 @@ class WorklogDialogMixin:
             "sums": sums,
             "sheet": sheet,
             "scroll": scroll,
+            "scroll_host": scroll_host,
             "scroll_sb": scroll_sb,
+            "bar": bar,
+            "err_row": err_row,
+            "nav": nav,
+            "minimized": False,
+            "min_toggle": min_toggle,
+            "min_brief": min_brief,
+            "min_brief_lbl": min_brief_lbl,
+            "min_close": min_close,
             "pair_w": pair_w,
             "track_on": track_on,
             "act_on": act_on,
@@ -1276,11 +1458,15 @@ class WorklogDialogMixin:
             "today_lbl": today_lbl,
             "week_lbl": week_lbl,
             "charts": charts,
+            "chart_body": chart_body,
+            "chart_toggle": chart_toggle,
+            "chart_brief": chart_brief,
             "heat_lbl": heat_lbl,
             "heat_var": heat_var,
             "heat_brief": heat_brief,
             "heat_body": heat_body,
             "heat_toggle": heat_toggle,
+            "heat_tools": heat_tools,
             "heat_view_btns": heat_view_btns,
             "chart_placeholder": placeholder,
             "day_var": day_var,
@@ -1302,7 +1488,13 @@ class WorklogDialogMixin:
             btn.bind("<Button-1>", lambda _e, s=key: self._set_heat_view(ui, s))
         heat_toggle.bind("<Button-1>", lambda _e: self._toggle_heat(ui))
         heat_title.bind("<Button-1>", lambda _e: self._toggle_heat(ui))
+        chart_toggle.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
+        chart_title.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
+        min_toggle.bind("<Button-1>", lambda _e: self._toggle_worklog_min(ui))
+        min_brief_lbl.bind("<Button-1>", lambda _e: ui.get("minimized") and self._toggle_worklog_min(ui))
         self._style_chart_buttons(ui)
+        self._apply_chart_open(ui)
+        self._apply_heat_open(ui)
 
         def on_charts_width(e) -> None:
             width = int(getattr(e, "width", 0) or 0)
@@ -1403,6 +1595,8 @@ class WorklogDialogMixin:
         week_lbl.bind("<Button-1>", on_week_click)
 
         def close() -> None:
+            ui["minimized"] = False
+            self._apply_worklog_min(ui, resize=False)
             ui["stop"] = True
             _park_card(dlg, ui.get("fg", 0))
 
@@ -1491,6 +1685,7 @@ class WorklogDialogMixin:
         ui["save_btn"] = save_btn
         ui["export_btn"] = export_btn
         _card_btn(bar, "关闭", close).pack(side="left", padx=6)
+        min_close.bind("<Button-1>", lambda _e: close())
         dlg.bind("<Return>", lambda _e: save())
         dlg.bind("<Escape>", lambda _e: close())
 
@@ -1563,7 +1758,7 @@ class WorklogDialogMixin:
         sheet = ui.get("sheet")
         sb = ui.get("scroll_sb")
         dlg = ui.get("dlg")
-        if canvas is None or sheet is None or dlg is None:
+        if canvas is None or sheet is None or dlg is None or ui.get("minimized"):
             return
         sheet.update_idletasks()
         sheet_h = max(1, int(sheet.winfo_reqheight()))
@@ -1588,11 +1783,37 @@ class WorklogDialogMixin:
     def _open_worklog_dialog(self) -> None:
         self._worklog_tick(force=True)
         ui = self._ensure_worklog_ui()
-        ui["stop"] = False
-        ui["fg"] = layered_win.user32.GetForegroundWindow()
         ui["err"].set("")
         ui["anchor"] = date.today()
         ui["chart_day"] = date.today()
+        if ui.get("live"):
+            ui["minimized"] = False
+            self._apply_worklog_min(ui, resize=False)
+            self._fill_worklog(ui)
+            self._fit_worklog_scroll(ui)
+            try:
+                here = (int(ui["dlg"].winfo_x()), int(ui["dlg"].winfo_y()))
+                shown = float(ui["dlg"].attributes("-alpha")) >= 0.5
+            except tk.TclError:
+                here, shown = self._dialog_near(), False
+            if shown:
+                _reveal_card(
+                    ui["dlg"],
+                    min_w=int(ui.get("content_w") or (activity_chart.W * 2 + activity_chart.GAP)) + 48,
+                    min_h=420,
+                    near=here,
+                )
+            try:
+                ui["dlg"].lift()
+                ui["dlg"].focus_force()
+            except tk.TclError:
+                pass
+            return
+        ui["live"] = True
+        ui["stop"] = False
+        ui["minimized"] = False
+        self._apply_worklog_min(ui, resize=False)
+        ui["fg"] = layered_win.user32.GetForegroundWindow()
         self._fill_worklog(ui)
         self._fit_worklog_scroll(ui)
         _reveal_card(
@@ -1603,4 +1824,7 @@ class WorklogDialogMixin:
         )
         # 建窗口时 Tk 不占 Python，图已经在后台画了一大半；剩下的等一下，别先露出空板。
         activity_chart.wait(ui, 0.4)
-        _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
+        try:
+            _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
+        finally:
+            ui["live"] = False

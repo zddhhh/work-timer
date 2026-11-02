@@ -23,11 +23,13 @@ _EDGE = (58, 68, 86, 255)
 _INK = (214, 222, 234, 255)
 _DIM = (132, 142, 160, 255)
 _QUIET = (96, 106, 124, 255)
+# 次数对峰值开 1.85 次方：只有很接近最高的键才进暖色，常用键不会一片金黄。
+_GAMMA = 1.85
 _STOPS = (
     (0.0, (32, 52, 78)),
-    (0.22, (38, 92, 148)),
-    (0.55, (72, 168, 206)),
-    (0.82, (186, 214, 168)),
+    (0.28, (38, 92, 148)),
+    (0.58, (72, 168, 206)),
+    (0.88, (186, 214, 168)),
     (1.0, (255, 196, 112)),
 )
 
@@ -248,6 +250,13 @@ def image_size(width: int | None = None, zones: frozenset | set | None = None) -
     return width, _HEAD + int(depth * unit) + _RANK + 12
 
 
+def _tone(count: int, peak: int) -> float:
+    """把次数映射到 0～1。峰值是 1；一半次数大约只有 0.28，进不了最高档。"""
+    if peak <= 0 or count <= 0:
+        return 0.0
+    return (count / peak) ** _GAMMA
+
+
 def _heat(t: float) -> tuple[int, int, int, int]:
     t = max(0.0, min(1.0, t))
     for i in range(1, len(_STOPS)):
@@ -433,7 +442,7 @@ def render(
             fill = _IDLE
             edge = _EDGE
         else:
-            fill = _heat((count / peak) ** 0.55)
+            fill = _heat(_tone(count, peak))
             edge = tuple(min(255, c + 24) for c in fill[:3]) + (255,)
         draw.rounded_rectangle(box, radius=6, fill=fill, outline=edge)
         if ident in (_hx(0x46), _hx(0x4A)):
@@ -568,8 +577,7 @@ def render_rank(
         place = str(i + 1)
         place_fill = (255, 196, 112, 255) if i < 3 else _QUIET
         draw.text((18, y + 8), place, font=meta_font, fill=place_fill)
-        t = (count / peak) ** 0.55 if peak else 0
-        fill = _heat(t)
+        fill = _heat(_tone(count, peak))
         draw.rounded_rectangle((34, y + 12, 48, y + 24), radius=3, fill=fill)
         name = _rank_name(ident)
         draw.text((name_x, y + 7), name, font=name_font, fill=_INK)

@@ -1034,6 +1034,18 @@ def set_chart_style(cfg: dict, style: str) -> str:
     return str(book["chart"])
 
 
+def chart_open(cfg: dict) -> bool:
+    """键鼠图默认收着。展开过一次，下次还开着。"""
+    raw = cfg.get(_KEY)
+    return bool(isinstance(raw, dict) and raw.get("chart_open"))
+
+
+def set_chart_open(cfg: dict, on: bool) -> bool:
+    book = _book(cfg)
+    book["chart_open"] = bool(on)
+    return bool(book["chart_open"])
+
+
 def heat_open(cfg: dict) -> bool:
     """键盘默认收着，打开账本先看工时。"""
     raw = cfg.get(_KEY)
