@@ -138,6 +138,62 @@ def _geom_wh(geom: str) -> tuple[int, int]:
     return int(w), int(h)
 
 
+def _card_iconic(dlg: tk.Toplevel | None) -> bool:
+    if dlg is None:
+        return False
+    try:
+        return bool(dlg.winfo_exists()) and dlg.state() == "iconic"
+    except tk.TclError:
+        return False
+
+
+def _set_card_icon(dlg: tk.Toplevel, title: str = "工时账本") -> None:
+    try:
+        dlg.title(title)
+    except tk.TclError:
+        pass
+    if not _APP_ICON.is_file():
+        return
+    try:
+        dlg.iconbitmap(str(_APP_ICON))
+    except tk.TclError:
+        pass
+
+
+def _iconify_card(dlg: tk.Toplevel, title: str = "工时账本") -> None:
+    """无边框卡片进任务栏，跟普通软件最小化一样。"""
+    try:
+        if not dlg.winfo_exists() or dlg.state() == "iconic":
+            return
+        dlg._min_geom = dlg.geometry()
+        _set_card_icon(dlg, title)
+        dlg.overrideredirect(False)
+        dlg.update_idletasks()
+        dlg.iconify()
+    except tk.TclError:
+        pass
+
+
+def _restore_card(dlg: tk.Toplevel) -> None:
+    """从任务栏点回来：去掉系统标题栏，还是原来那张卡片。"""
+    try:
+        if not dlg.winfo_exists():
+            return
+        if dlg.state() == "iconic":
+            dlg.deiconify()
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+        geom = getattr(dlg, "_min_geom", None)
+        if geom:
+            dlg.geometry(geom)
+        dlg.attributes("-alpha", 1.0)
+        _click_through(dlg, False)
+        dlg.lift()
+        dlg.focus_force()
+    except tk.TclError:
+        pass
+
+
 def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     """按内容把卡片撑开；藏着的卡片在屏幕外画完，再挪回来亮出。
 
@@ -147,6 +203,8 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     已经亮着时，尺寸没变就只刷新；要变高变宽就先透明，避免改尺寸那一帧闪出空底板。
     """
     try:
+        if dlg.state() == "iconic":
+            return
         withdrawn = dlg.state() == "withdrawn"
         visible = not withdrawn and _alpha(dlg) >= 0.99
     except tk.TclError:
@@ -191,6 +249,7 @@ _GWL_EXSTYLE = -20
 _WS_EX_TRANSPARENT = 0x20
 _WS_EX_LAYERED = 0x80000
 _PARK_POS = "+-20000+0"
+_APP_ICON = Path(__file__).resolve().parent / "assets" / "app.ico"
 
 
 def _frame_hwnd(dlg: tk.Toplevel) -> int:
@@ -710,7 +769,7 @@ def _sync_open_card_hide(dlg: tk.Toplevel, win) -> None:
         return
     try:
         hidden = bool(fn())
-        if not dlg.winfo_exists():
+        if not dlg.winfo_exists() or dlg.state() == "iconic":
             return
     except tk.TclError:
         return

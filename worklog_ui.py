@@ -23,11 +23,15 @@ from card_ui import (
     _CARD_MUTED,
     _card_btn,
     _card_dialog,
+    _card_iconic,
+    _iconify_card,
     _native_file_dialog,
     _pack_err_line,
     _park_card,
+    _restore_card,
     _reveal_card,
     _run_card_modal,
+    _set_card_icon,
 )
 
 # 七天的说明框用同一尺寸。框里固定两行：上一行对公司时间，下一行说忙闲。
@@ -69,19 +73,6 @@ def _apply_fold(body: tk.Misc | None, toggle: tk.Label | None, opened: bool) -> 
     elif not opened and shown:
         body.pack_forget()
     _style_fold(toggle, opened)
-
-
-def _style_min_chip(lbl: tk.Label | None, minimized: bool) -> None:
-    if lbl is None:
-        return
-    lbl.configure(
-        text="展开" if minimized else "最小化",
-        bg=_CARD_ACCENT if minimized else _FOLD_CHIP,
-        fg="white",
-        font=("Microsoft YaHei UI", 9, "bold"),
-        padx=12,
-        pady=3,
-    )
 
 
 def scroll_view(
@@ -285,7 +276,7 @@ class WorklogDialogMixin:
             return
         dlg = ui["dlg"]
         try:
-            if not dlg.winfo_exists() or dlg.state() == "withdrawn":
+            if not dlg.winfo_exists() or dlg.state() in ("withdrawn", "iconic"):
                 return
         except tk.TclError:
             return
@@ -300,9 +291,6 @@ class WorklogDialogMixin:
         ui["live_sec"] = sec
         today = date.today()
         now = datetime.now()
-        if ui.get("minimized"):
-            self._sync_min_brief(ui)
-            return
         # 图在后台画；节电时少画几张，读数照样每秒走。
         gap = 3.0 if power_save.saving() else 1.0
         if mono - float(ui.get("chart_live_at") or 0) >= gap:
@@ -590,8 +578,7 @@ class WorklogDialogMixin:
         if ui.get("card_on") is not None:
             ui["card_on"].set(activity.show_on_card(self.cfg))
         self._sync_worklog_privacy(ui)
-        self._sync_min_brief(ui)
-        if ui.get("minimized"):
+        if _card_iconic(ui.get("dlg")):
             return
         self._fit_worklog_width(ui)
         self._paint_activity_chart(ui)
@@ -599,7 +586,7 @@ class WorklogDialogMixin:
     def _paint_activity_chart(self, ui: dict | None = None, *, background: bool = True) -> None:
         """图交给后台线程画，主线程不等。画好由 _refresh_worklog_live 里的 collect 换上。"""
         ui = ui if ui is not None else self._worklog_ui
-        if ui is None or ui.get("today_lbl") is None or ui.get("minimized"):
+        if ui is None or ui.get("today_lbl") is None or _card_iconic(ui.get("dlg")):
             return
         try:
             if not ui["dlg"].winfo_exists():
@@ -732,88 +719,21 @@ class WorklogDialogMixin:
         self._apply_chart_open(ui)
         self._paint_activity_chart(ui)
 
-    def _sync_min_brief(self, ui: dict) -> None:
-        var = ui.get("min_brief")
-        if var is None:
-            return
-        if not worklog.tracking_enabled(self.cfg):
-            var.set("来 / 走已关闭")
-            return
-        today = date.today()
-        days = worklog.week_dates(ui["anchor"])
-        if today not in days:
-            var.set(str(ui["week_var"].get()))
-            return
-        r = worklog.row(self.cfg, today, today=today)
-        var.set(self._worklog_dur_text(r, datetime.now()))
-
-    def _apply_worklog_min(self, ui: dict, *, resize: bool = True) -> None:
-        """收成一条小卡片，点展开再回来。关窗口才真正走开。"""
-        on = bool(ui.get("minimized"))
+    def _minimize_worklog(self, ui: dict) -> None:
         dlg = ui.get("dlg")
-        host = ui.get("scroll_host")
-        controls = ui.get("controls")
-        sums = ui.get("sums")
-        err_row = ui.get("err_row")
-        bar = ui.get("bar")
-        nav = ui.get("nav")
-        brief = ui.get("min_brief_lbl")
-        close_lbl = ui.get("min_close")
-        _style_min_chip(ui.get("min_toggle"), on)
-
-        def hide(widget: tk.Misc | None) -> None:
-            if widget is not None and widget.winfo_manager():
-                widget.pack_forget()
-
-        def show(widget: tk.Misc | None, **kw) -> None:
-            if widget is not None and not widget.winfo_manager():
-                widget.pack(**kw)
-
-        if on:
-            for widget in (controls, host, sums, err_row, bar, nav):
-                hide(widget)
-            show(brief, side="left", padx=(14, 0))
-            show(close_lbl, side="right", padx=(8, 0))
-        else:
-            hide(brief)
-            hide(close_lbl)
-            show(bar, side="bottom", fill="x", pady=(6, 14))
-            show(err_row, side="bottom", fill="x", pady=(4, 0))
-            if err_row is not None:
-                err_row.pack_configure(padx=16)
-            show(sums, side="bottom", fill="x", padx=16)
-            show(host, anchor="nw", fill="y", expand=True)
-            show(controls, fill="x", pady=(0, 8), before=host)
-            show(nav, side="right")
-        self._sync_min_brief(ui)
-        if not on:
-            self._paint_activity_chart(ui)
-        if not resize or dlg is None:
+        if dlg is None or _card_iconic(dlg):
             return
-        try:
-            if not dlg.winfo_exists() or dlg.state() == "withdrawn":
-                return
-            here = (int(dlg.winfo_x()), int(dlg.winfo_y()))
-            shown = float(dlg.attributes("-alpha")) >= 0.5
-        except tk.TclError:
-            return
-        if not shown:
-            return
-        if on:
-            _reveal_card(dlg, min_w=320, min_h=40, near=here)
-            return
-        self._fit_worklog_width(ui)
-        self._fit_worklog_scroll(ui)
-        _reveal_card(
-            dlg,
-            min_w=int(ui.get("content_w") or (activity_chart.W * 2 + activity_chart.GAP)) + 48,
-            min_h=420,
-            near=here,
-        )
+        ui["minimized"] = True
+        ui["min_unmapped"] = False
+        _iconify_card(dlg)
 
-    def _toggle_worklog_min(self, ui: dict) -> None:
-        ui["minimized"] = not bool(ui.get("minimized"))
-        self._apply_worklog_min(ui)
+    def _restore_worklog(self, ui: dict) -> None:
+        dlg = ui.get("dlg")
+        if dlg is None:
+            return
+        ui["minimized"] = False
+        ui["min_unmapped"] = False
+        _restore_card(dlg)
 
     def _apply_heat_open(self, ui: dict) -> None:
         _apply_fold(ui.get("heat_body"), ui.get("heat_toggle"), activity.heat_open(self.cfg))
@@ -861,6 +781,7 @@ class WorklogDialogMixin:
     def _build_worklog_dialog(self) -> dict:
         pair_w = activity_chart.W * 2 + activity_chart.GAP
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=868)
+        _set_card_icon(dlg)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(6, 14))
         err = tk.StringVar(value="")
@@ -892,21 +813,14 @@ class WorklogDialogMixin:
         tk.Label(
             top, text="工时账本", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(side="left")
-        min_toggle = _fold_chip(top)
+        min_toggle = tk.Label(
+            top, text="最小化", fg="white", bg=_FOLD_CHIP,
+            font=("Microsoft YaHei UI", 9, "bold"), cursor="hand2", padx=12, pady=3,
+        )
         min_toggle.pack(side="right", padx=(10, 0), pady=1)
-        _style_min_chip(min_toggle, False)
         week_var = tk.StringVar()
         nav = tk.Frame(top, bg=_CARD_BG)
         nav.pack(side="right")
-        min_brief = tk.StringVar(value="")
-        min_brief_lbl = tk.Label(
-            top, textvariable=min_brief, fg=_CARD_MUTED, bg=_CARD_BG,
-            font=("Microsoft YaHei UI", 10), cursor="hand2",
-        )
-        min_close = tk.Label(
-            top, text="关闭", fg=_CARD_MUTED, bg=_CARD_BG,
-            font=("Microsoft YaHei UI", 9), cursor="hand2",
-        )
         scroll_host = tk.Frame(body, bg=_CARD_BG)
         scroll_host.pack(anchor="nw", fill="y", expand=True)
         scroll = _ClipScroll(
@@ -1442,9 +1356,6 @@ class WorklogDialogMixin:
             "nav": nav,
             "minimized": False,
             "min_toggle": min_toggle,
-            "min_brief": min_brief,
-            "min_brief_lbl": min_brief_lbl,
-            "min_close": min_close,
             "pair_w": pair_w,
             "track_on": track_on,
             "act_on": act_on,
@@ -1490,8 +1401,28 @@ class WorklogDialogMixin:
         heat_title.bind("<Button-1>", lambda _e: self._toggle_heat(ui))
         chart_toggle.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
         chart_title.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
-        min_toggle.bind("<Button-1>", lambda _e: self._toggle_worklog_min(ui))
-        min_brief_lbl.bind("<Button-1>", lambda _e: ui.get("minimized") and self._toggle_worklog_min(ui))
+        min_toggle.bind("<Button-1>", lambda _e: self._minimize_worklog(ui))
+
+        def on_unmap(_e) -> None:
+            try:
+                if dlg.state() == "iconic":
+                    ui["minimized"] = True
+                    ui["min_unmapped"] = True
+            except tk.TclError:
+                pass
+
+        def on_map(_e) -> None:
+            if not ui.get("min_unmapped"):
+                return
+            try:
+                if dlg.state() != "normal":
+                    return
+            except tk.TclError:
+                return
+            self._restore_worklog(ui)
+
+        dlg.bind("<Unmap>", on_unmap, add="+")
+        dlg.bind("<Map>", on_map, add="+")
         self._style_chart_buttons(ui)
         self._apply_chart_open(ui)
         self._apply_heat_open(ui)
@@ -1596,7 +1527,14 @@ class WorklogDialogMixin:
 
         def close() -> None:
             ui["minimized"] = False
-            self._apply_worklog_min(ui, resize=False)
+            ui["min_unmapped"] = False
+            try:
+                if dlg.state() == "iconic":
+                    dlg.attributes("-alpha", 0.0)
+                    dlg.overrideredirect(True)
+                    dlg.deiconify()
+            except tk.TclError:
+                pass
             ui["stop"] = True
             _park_card(dlg, ui.get("fg", 0))
 
@@ -1685,7 +1623,6 @@ class WorklogDialogMixin:
         ui["save_btn"] = save_btn
         ui["export_btn"] = export_btn
         _card_btn(bar, "关闭", close).pack(side="left", padx=6)
-        min_close.bind("<Button-1>", lambda _e: close())
         dlg.bind("<Return>", lambda _e: save())
         dlg.bind("<Escape>", lambda _e: close())
 
@@ -1758,7 +1695,7 @@ class WorklogDialogMixin:
         sheet = ui.get("sheet")
         sb = ui.get("scroll_sb")
         dlg = ui.get("dlg")
-        if canvas is None or sheet is None or dlg is None or ui.get("minimized"):
+        if canvas is None or sheet is None or dlg is None or _card_iconic(dlg):
             return
         sheet.update_idletasks()
         sheet_h = max(1, int(sheet.winfo_reqheight()))
@@ -1787,22 +1724,10 @@ class WorklogDialogMixin:
         ui["anchor"] = date.today()
         ui["chart_day"] = date.today()
         if ui.get("live"):
-            ui["minimized"] = False
-            self._apply_worklog_min(ui, resize=False)
+            if _card_iconic(ui["dlg"]) or ui.get("minimized"):
+                self._restore_worklog(ui)
             self._fill_worklog(ui)
             self._fit_worklog_scroll(ui)
-            try:
-                here = (int(ui["dlg"].winfo_x()), int(ui["dlg"].winfo_y()))
-                shown = float(ui["dlg"].attributes("-alpha")) >= 0.5
-            except tk.TclError:
-                here, shown = self._dialog_near(), False
-            if shown:
-                _reveal_card(
-                    ui["dlg"],
-                    min_w=int(ui.get("content_w") or (activity_chart.W * 2 + activity_chart.GAP)) + 48,
-                    min_h=420,
-                    near=here,
-                )
             try:
                 ui["dlg"].lift()
                 ui["dlg"].focus_force()
@@ -1812,7 +1737,7 @@ class WorklogDialogMixin:
         ui["live"] = True
         ui["stop"] = False
         ui["minimized"] = False
-        self._apply_worklog_min(ui, resize=False)
+        ui["min_unmapped"] = False
         ui["fg"] = layered_win.user32.GetForegroundWindow()
         self._fill_worklog(ui)
         self._fit_worklog_scroll(ui)
