@@ -23,15 +23,11 @@ from card_ui import (
     _CARD_MUTED,
     _card_btn,
     _card_dialog,
-    _card_iconic,
-    _iconify_card,
     _native_file_dialog,
     _pack_err_line,
     _park_card,
-    _restore_card,
     _reveal_card,
     _run_card_modal,
-    _set_card_icon,
 )
 
 # 七天的说明框用同一尺寸。框里固定两行：上一行对公司时间，下一行说忙闲。
@@ -272,11 +268,11 @@ class WorklogDialogMixin:
     def _refresh_worklog_live(self) -> None:
         """账本开着时，今天这一行每秒改时长，不重画整表，也不覆盖正在改的格子。"""
         ui = self._worklog_ui
-        if ui is None or ui.get("stop"):
+        if ui is None or ui.get("stop") or ui.get("minimized"):
             return
         dlg = ui["dlg"]
         try:
-            if not dlg.winfo_exists() or dlg.state() in ("withdrawn", "iconic"):
+            if not dlg.winfo_exists() or dlg.state() == "withdrawn":
                 return
         except tk.TclError:
             return
@@ -578,7 +574,7 @@ class WorklogDialogMixin:
         if ui.get("card_on") is not None:
             ui["card_on"].set(activity.show_on_card(self.cfg))
         self._sync_worklog_privacy(ui)
-        if _card_iconic(ui.get("dlg")):
+        if ui.get("minimized"):
             return
         self._fit_worklog_width(ui)
         self._paint_activity_chart(ui)
@@ -586,7 +582,7 @@ class WorklogDialogMixin:
     def _paint_activity_chart(self, ui: dict | None = None, *, background: bool = True) -> None:
         """图交给后台线程画，主线程不等。画好由 _refresh_worklog_live 里的 collect 换上。"""
         ui = ui if ui is not None else self._worklog_ui
-        if ui is None or ui.get("today_lbl") is None or _card_iconic(ui.get("dlg")):
+        if ui is None or ui.get("today_lbl") is None or ui.get("minimized"):
             return
         try:
             if not ui["dlg"].winfo_exists():
@@ -719,21 +715,120 @@ class WorklogDialogMixin:
         self._apply_chart_open(ui)
         self._paint_activity_chart(ui)
 
+    def _ensure_worklog_dock(self) -> tk.Toplevel | None:
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is not None:
+            try:
+                if dock.winfo_exists():
+                    return dock
+            except tk.TclError:
+                pass
+        root = self._tk_root()
+        dock = tk.Toplevel(root)
+        dock.withdraw()
+        dock.overrideredirect(True)
+        dock.resizable(False, False)
+        try:
+            dock.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        dock.configure(bg=_CARD_ACCENT)
+        btn = tk.Label(
+            dock, text="工时账本", fg="white", bg=_CARD_ACCENT,
+            font=("Microsoft YaHei UI", 9, "bold"), cursor="hand2", padx=12, pady=4,
+        )
+        btn.pack()
+        btn.bind("<Button-1>", lambda _e: self._restore_worklog(self._ensure_worklog_ui()))
+        dock.bind("<Button-1>", lambda _e: self._restore_worklog(self._ensure_worklog_ui()))
+        self._worklog_dock = dock
+        return dock
+
+    def _place_worklog_dock(self) -> None:
+        if not getattr(self, "_worklog_docked", False):
+            return
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is None:
+            return
+        try:
+            if not dock.winfo_exists():
+                return
+            if getattr(self, "_esc_hidden", False):
+                dock.withdraw()
+                return
+        except tk.TclError:
+            return
+        win = getattr(self, "win", None)
+        try:
+            dock.update_idletasks()
+            bw = max(1, int(dock.winfo_reqwidth()))
+            bh = max(1, int(dock.winfo_reqheight()))
+            if win is not None:
+                area = layered_win.work_area()
+                x = int(win.x) + max(0, (int(getattr(self, "_win_w", bw)) - bw) // 2)
+                y = int(win.y) - bh + 6
+                if y < int(area.top):
+                    y = int(win.y) + 4
+                x = max(int(area.left), min(x, int(area.right) - bw))
+            else:
+                x, y = 40, 40
+            if dock.state() == "withdrawn":
+                dock.deiconify()
+            dock.geometry(f"{bw}x{bh}+{x}+{y}")
+            dock.attributes("-topmost", True)
+            dock.lift()
+        except tk.TclError:
+            pass
+
+    def _show_worklog_dock(self) -> None:
+        self._worklog_docked = True
+        if self._ensure_worklog_dock() is None:
+            return
+        self._place_worklog_dock()
+
+    def _hide_worklog_dock(self) -> None:
+        self._worklog_docked = False
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is None:
+            return
+        try:
+            dock.withdraw()
+        except tk.TclError:
+            pass
+
     def _minimize_worklog(self, ui: dict) -> None:
         dlg = ui.get("dlg")
-        if dlg is None or _card_iconic(dlg):
+        if dlg is None or ui.get("minimized"):
             return
+        try:
+            ui["dock_near"] = (int(dlg.winfo_x()), int(dlg.winfo_y()))
+        except tk.TclError:
+            ui["dock_near"] = None
         ui["minimized"] = True
-        ui["min_unmapped"] = False
-        _iconify_card(dlg)
+        _park_card(dlg, ui.get("fg", 0))
+        self._show_worklog_dock()
 
     def _restore_worklog(self, ui: dict) -> None:
         dlg = ui.get("dlg")
         if dlg is None:
             return
+        if not ui.get("minimized"):
+            try:
+                dlg.lift()
+                dlg.focus_force()
+            except tk.TclError:
+                pass
+            return
         ui["minimized"] = False
-        ui["min_unmapped"] = False
-        _restore_card(dlg)
+        self._hide_worklog_dock()
+        self._fill_worklog(ui)
+        self._fit_worklog_scroll(ui)
+        near = ui.get("dock_near") or self._dialog_near()
+        _reveal_card(
+            dlg,
+            min_w=int(ui.get("content_w") or (activity_chart.W * 2 + activity_chart.GAP)) + 48,
+            min_h=420,
+            near=near,
+        )
 
     def _apply_heat_open(self, ui: dict) -> None:
         _apply_fold(ui.get("heat_body"), ui.get("heat_toggle"), activity.heat_open(self.cfg))
@@ -781,7 +876,6 @@ class WorklogDialogMixin:
     def _build_worklog_dialog(self) -> dict:
         pair_w = activity_chart.W * 2 + activity_chart.GAP
         dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=pair_w + 48, height=868)
-        _set_card_icon(dlg)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(6, 14))
         err = tk.StringVar(value="")
@@ -1402,27 +1496,6 @@ class WorklogDialogMixin:
         chart_toggle.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
         chart_title.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
         min_toggle.bind("<Button-1>", lambda _e: self._minimize_worklog(ui))
-
-        def on_unmap(_e) -> None:
-            try:
-                if dlg.state() == "iconic":
-                    ui["minimized"] = True
-                    ui["min_unmapped"] = True
-            except tk.TclError:
-                pass
-
-        def on_map(_e) -> None:
-            if not ui.get("min_unmapped"):
-                return
-            try:
-                if dlg.state() != "normal":
-                    return
-            except tk.TclError:
-                return
-            self._restore_worklog(ui)
-
-        dlg.bind("<Unmap>", on_unmap, add="+")
-        dlg.bind("<Map>", on_map, add="+")
         self._style_chart_buttons(ui)
         self._apply_chart_open(ui)
         self._apply_heat_open(ui)
@@ -1527,14 +1600,7 @@ class WorklogDialogMixin:
 
         def close() -> None:
             ui["minimized"] = False
-            ui["min_unmapped"] = False
-            try:
-                if dlg.state() == "iconic":
-                    dlg.attributes("-alpha", 0.0)
-                    dlg.overrideredirect(True)
-                    dlg.deiconify()
-            except tk.TclError:
-                pass
+            self._hide_worklog_dock()
             ui["stop"] = True
             _park_card(dlg, ui.get("fg", 0))
 
@@ -1695,7 +1761,7 @@ class WorklogDialogMixin:
         sheet = ui.get("sheet")
         sb = ui.get("scroll_sb")
         dlg = ui.get("dlg")
-        if canvas is None or sheet is None or dlg is None or _card_iconic(dlg):
+        if canvas is None or sheet is None or dlg is None or ui.get("minimized"):
             return
         sheet.update_idletasks()
         sheet_h = max(1, int(sheet.winfo_reqheight()))
@@ -1724,20 +1790,19 @@ class WorklogDialogMixin:
         ui["anchor"] = date.today()
         ui["chart_day"] = date.today()
         if ui.get("live"):
-            if _card_iconic(ui["dlg"]) or ui.get("minimized"):
+            if ui.get("minimized"):
                 self._restore_worklog(ui)
-            self._fill_worklog(ui)
-            self._fit_worklog_scroll(ui)
-            try:
-                ui["dlg"].lift()
-                ui["dlg"].focus_force()
-            except tk.TclError:
-                pass
+            else:
+                try:
+                    ui["dlg"].lift()
+                    ui["dlg"].focus_force()
+                except tk.TclError:
+                    pass
             return
         ui["live"] = True
         ui["stop"] = False
         ui["minimized"] = False
-        ui["min_unmapped"] = False
+        self._hide_worklog_dock()
         ui["fg"] = layered_win.user32.GetForegroundWindow()
         self._fill_worklog(ui)
         self._fit_worklog_scroll(ui)

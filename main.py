@@ -218,6 +218,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._activity_dirty = False
         self._ui_prewarmed = False
         self._worklog_ui: dict | None = None
+        self._worklog_dock: tk.Toplevel | None = None
+        self._worklog_docked = False
         self._schedule_ui: dict | None = None
         self._check_clock_on_boot()
 
@@ -1223,6 +1225,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_pin_rotate = now_m
             self._last_key = ""
         self._worklog_tick()
+        self._place_worklog_dock()
         if paint and not self.win.screen_asleep:
             self._paint()
         self._prune_thunder_hits(now_m)
@@ -2190,6 +2193,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._tick_trail()
                 if self._esc_hidden:
                     # 单实例 ShowWindow 可能已把 hwnd 显示，但 _esc_hidden 未清 → 主循环空转像卡死
+                    self._place_worklog_dock()
                     if self.win.hwnd and layered_win.user32.IsWindowVisible(self.win.hwnd):
                         self._show_after_esc()
                     else:
@@ -2233,6 +2237,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 if dragging:
                     # 拖动只搬现成的画面。重画和截屏都要等桌面合成，松手后再补一帧。
                     was_dragging = True
+                    self._place_worklog_dock()
                     time.sleep(0.001)
                     continue
                 if was_resizing or resized:
