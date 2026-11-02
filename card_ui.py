@@ -222,13 +222,21 @@ def _park_card(dlg: tk.Toplevel, give_focus_to: int = 0) -> None:
     """
     try:
         dlg.attributes("-alpha", 0.0)
+        hwnd = _frame_hwnd(dlg)
+        u = layered_win.user32
+        if hwnd:
+            u.SetWindowPos(
+                hwnd, None, -20000, 0, 0, 0,
+                layered_win.SWP_NOSIZE
+                | layered_win.SWP_NOACTIVATE
+                | layered_win.SWP_NOZORDER
+                | layered_win.SWP_NOSENDCHANGING,
+            )
         dlg.geometry(_PARK_POS)
         if dlg.state() == "withdrawn":
             dlg.deiconify()
             dlg.update()
         _click_through(dlg, True)
-        hwnd = _frame_hwnd(dlg)
-        u = layered_win.user32
         if hwnd and u.GetForegroundWindow() == hwnd and give_focus_to and u.IsWindow(give_focus_to):
             u.SetForegroundWindow(give_focus_to)
     except tk.TclError:
@@ -742,6 +750,16 @@ def _run_card_modal(
                 break
             if not dlg.winfo_exists():
                 break
+            if win is not None and (win.resizing or win.dragging):
+                win.pump()
+                if on_frame is not None:
+                    on_frame()
+                elif live is not None:
+                    live()
+                if note is not None:
+                    note()
+                time.sleep(0.001)
+                continue
             _sync_open_card_hide(dlg, win)
             dlg.update()
             if stop is not None and stop():

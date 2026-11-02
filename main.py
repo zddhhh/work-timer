@@ -1239,6 +1239,31 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             ui = getattr(self, "_worklog_ui", None)
             if ui is not None and ui.get("stop"):
                 return
+            if self.win.resizing:
+                self._card_was_resizing = True
+                self._sync_layout_from_window()
+                self._meow.resizing(True, time.monotonic())
+                self._place_worklog_dock(follow_only=True)
+                self._paint()
+                return
+            if self.win.dragging:
+                self._card_was_dragging = True
+                self._place_worklog_dock(follow_only=True)
+                return
+            if getattr(self, "_card_was_resizing", False) or self.win.just_resized:
+                self._card_was_resizing = False
+                self._meow.resizing(False, time.monotonic())
+                self.win.ensure_visible()
+                self._sync_layout_from_window()
+                self._persist_size()
+                self._persist_pos()
+                self._last_key = ""
+                self._place_worklog_dock()
+            if getattr(self, "_card_was_dragging", False) or self.win.just_moved:
+                self._card_was_dragging = False
+                self.win.ensure_visible()
+                self._persist_pos()
+                self._last_key = ""
             if self._menu_pos is not None:
                 sx, sy = self._menu_pos
                 self._menu_pos = None
@@ -1890,6 +1915,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
     def _paint(self) -> None:
         if self._painting:
             return
+        if self.win.width != self._win_w or self.win.height != self._win_h:
+            self._sync_layout_from_window()
         self._painting = True
         try:
             self._paint_now()

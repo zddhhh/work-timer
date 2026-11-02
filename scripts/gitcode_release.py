@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 关掉工时账本不再卡住计时器"
+    "- 工时账本最小化后计时器可以照常缩放；关掉时不再跳一下"
 )
 
 
