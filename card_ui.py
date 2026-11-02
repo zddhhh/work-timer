@@ -722,15 +722,19 @@ def _pack_attach_editor(
 
 
 def _hide_open_card(dlg: tk.Toplevel) -> None:
-    """隐藏键把右键弹窗一起收起。已经藏过就不动。"""
+    """隐藏键把右键弹窗一起收起。已经藏过就不动。
+
+    先 SetWindowPos 挪出屏幕，和计时器的 ShowWindow 一样是原生调用；
+    Tk 改透明度、改 geometry 放后面，那些要等消息循环，看起来会慢半拍。
+    """
     try:
         if getattr(dlg, "_key_hidden", False):
             return
+        xy = _card_screen_xy(dlg)
+        dlg._hide_xy = xy
         dlg._key_hidden = True
-        dlg._hide_geom = dlg.geometry()
-        dlg._hide_xy = _card_screen_xy(dlg)
-        dlg.attributes("-alpha", 0.0)
         _move_card_hwnd(dlg, -20000, 0)
+        dlg.attributes("-alpha", 0.0)
         dlg.geometry(_PARK_POS)
         _click_through(dlg, True)
     except tk.TclError:
@@ -748,6 +752,8 @@ def _show_open_card(dlg: tk.Toplevel) -> None:
         geom = getattr(dlg, "_hide_geom", None)
         xy = getattr(dlg, "_hide_xy", None)
         _click_through(dlg, False)
+        if xy is not None:
+            _move_card_hwnd(dlg, int(xy[0]), int(xy[1]))
         if dlg.state() == "withdrawn":
             dlg.deiconify()
         if geom:
@@ -798,41 +804,48 @@ def _run_card_modal(
     """
     live = getattr(win, "blocked_live", None) if win is not None else None
     note = getattr(win, "note_beat", None) if win is not None else None
+    prev_card = getattr(win, "_open_card", None) if win is not None else None
+    if win is not None:
+        win._open_card = dlg
     if stop is None:
         dlg.bind("<Escape>", lambda _e: dlg.destroy())
-    while True:
-        try:
-            if stop is not None and stop():
-                break
-            if not dlg.winfo_exists():
-                break
-            if win is not None and (
-                bool(getattr(win, "resizing", False)) or bool(getattr(win, "dragging", False))
-            ):
-                win.pump()
+    try:
+        while True:
+            try:
+                if stop is not None and stop():
+                    break
+                if not dlg.winfo_exists():
+                    break
+                if win is not None and (
+                    bool(getattr(win, "resizing", False)) or bool(getattr(win, "dragging", False))
+                ):
+                    win.pump()
+                    if on_frame is not None:
+                        on_frame()
+                    elif live is not None:
+                        live()
+                    if note is not None:
+                        note()
+                    time.sleep(0.001)
+                    continue
+                _sync_open_card_hide(dlg, win)
+                dlg.update()
+                if stop is not None and stop():
+                    break
+                if win is not None:
+                    win.pump()
+                if live is not None and on_frame is not live:
+                    live()
                 if on_frame is not None:
                     on_frame()
-                elif live is not None:
-                    live()
                 if note is not None:
                     note()
-                time.sleep(0.001)
-                continue
-            _sync_open_card_hide(dlg, win)
-            dlg.update()
-            if stop is not None and stop():
+            except Exception:
                 break
-            if win is not None:
-                win.pump()
-            if live is not None and on_frame is not live:
-                live()
-            if on_frame is not None:
-                on_frame()
-            if note is not None:
-                note()
-        except Exception:
-            break
-        time.sleep(0.02)
+            time.sleep(0.02)
+    finally:
+        if win is not None:
+            win._open_card = prev_card
 
 
 def _ask_offwork_setup(

@@ -56,6 +56,7 @@ from card_ui import (
     _card_dialog,
     _fit_card,
     _geom_wh,  # noqa: F401  测试从 main 里取
+    _hide_open_card,
     _offscreen_bounds,  # noqa: F401  测试从 main 里取
     _pack_err_line,
     _pack_full_text,
@@ -1039,6 +1040,23 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_key = ""
             self._force_surface_sample = True
 
+    def _hide_key_companions(self) -> None:
+        """隐藏键先收账本和贴条，再藏计时器，避免账本慢半拍。"""
+        dlg = getattr(self.win, "_open_card", None) if self.win is not None else None
+        if dlg is not None:
+            _hide_open_card(dlg)
+        ui = getattr(self, "_worklog_ui", None)
+        other = ui.get("dlg") if ui else None
+        if other is not None and other is not dlg:
+            _hide_open_card(other)
+        sched = getattr(self, "_schedule_ui", None)
+        sdlg = sched.get("dlg") if sched else None
+        if sdlg is not None and sdlg is not dlg and sdlg is not other:
+            _hide_open_card(sdlg)
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is not None:
+            dock.hide()
+
     def _toggle_key_hide(self) -> None:
         if not self._key_hide_on() and not self._esc_hidden:
             return
@@ -1046,6 +1064,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._show_after_esc()
             return
         self.win.dismiss_popup()
+        self._hide_key_companions()
         self.win.hide()
         self._esc_hidden = True
 

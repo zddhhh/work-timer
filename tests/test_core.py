@@ -657,6 +657,53 @@ class GameDialogTests(unittest.TestCase):
         self.assertGreaterEqual(seen["alpha"], 0.9)
         root.destroy()
 
+    def test_hide_open_card_leaves_screen_before_tk_update(self):
+        import tkinter as tk
+
+        import card_ui
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(80, 80), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(80, 80))
+        here = card_ui._card_screen_xy(dlg)
+        self.assertIsNotNone(here)
+        self.assertGreater(here[0], -500)
+        card_ui._hide_open_card(dlg)
+        gone = card_ui._card_screen_xy(dlg)
+        self.assertIsNotNone(gone)
+        self.assertLess(gone[0], -500)
+        root.destroy()
+
+    def test_hide_key_hides_dock_before_timer(self):
+        import main
+
+        order = []
+
+        class Dock:
+            def hide(self):
+                order.append("dock")
+
+        class Win:
+            def dismiss_popup(self):
+                return None
+
+            def hide(self):
+                order.append("timer")
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.win = Win()
+        host._worklog_ui = None
+        host._schedule_ui = None
+        host._worklog_dock = Dock()
+        host._esc_hidden = False
+        host._key_hide_on = lambda: True
+        host._toggle_key_hide()
+        self.assertEqual(order, ["dock", "timer"])
+        self.assertTrue(host._esc_hidden)
+
     def test_hide_key_does_not_unpark_minimized_card(self):
         import tkinter as tk
 
@@ -2564,6 +2611,9 @@ class WorklogScrollTests(unittest.TestCase):
             card_ui._hide_open_card(dlg)
             self.assertTrue(getattr(dlg, "_key_hidden", False))
             self.assertTrue(host._worklog_needs_reveal(ui))
+            gone = card_ui._card_screen_xy(dlg)
+            self.assertIsNotNone(gone)
+            self.assertLess(gone[0], -500)
             hwnd = card_ui._frame_hwnd(dlg)
             if hwnd:
                 ex = int(layered_win.user32.GetWindowLongPtrW(hwnd, -20) or 0)
