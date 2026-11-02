@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 按隐藏键时工时账本和计时器一起收走，不再慢半拍"
+    "- 工时账本最小化后不再影响计时器自适应；检查更新也不会挡住小签"
 )
 
 

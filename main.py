@@ -168,6 +168,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.running = True
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
+        self._need_worklog = False
         self._schedule_list_open = False
         self._need_close_schedule_list = False
         self._tk: tk.Tk | None = None
@@ -1116,8 +1117,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         return self._tk
 
     def _dialog_near(self) -> _Anchor:
-        """弹窗绕开计时器本体放，不遮挡倒计时。"""
-        return _Anchor(self.win.x, self.win.y, self._win_w, self._win_h)
+        """弹窗绕开计时器本体放；账本最小化时连顶上小签一起让开。"""
+        return self._timer_anchor()
 
     def _open_setup_dialog(self) -> None:
         start_preset = self._start_hm()
@@ -1277,12 +1278,14 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._persist_size()
                 self._persist_pos()
                 self._last_key = ""
+                self._force_surface_sample = True
                 self._place_worklog_dock()
             if getattr(self, "_card_was_dragging", False) or self.win.just_moved:
                 self._card_was_dragging = False
                 self.win.ensure_visible()
                 self._persist_pos()
                 self._last_key = ""
+                self._force_surface_sample = True
             if self._menu_pos is not None:
                 sx, sy = self._menu_pos
                 self._menu_pos = None
@@ -1298,6 +1301,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 else:
                     self._card_paint_at = now_m
             self._tick_alive(paint=paint)
+            self._refresh_surface()
             self._refresh_worklog_live()
         except Exception as e:  # noqa: BLE001
             store.log_exception("card-frame", e)
@@ -2263,6 +2267,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 if self._need_dialog:
                     self._need_dialog = False
                     self._open_idle_dialog()
+                if self._need_worklog and not self._update_dialog_open:
+                    self._need_worklog = False
+                    self._open_worklog_dialog()
                 if (
                     self._update_available
                     and not self._update_prompted

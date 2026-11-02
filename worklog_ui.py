@@ -24,6 +24,7 @@ from card_ui import (
     _CARD_BG,
     _CARD_FG,
     _CARD_MUTED,
+    _Anchor,
     _card_btn,
     _card_dialog,
     _card_needs_reveal,
@@ -1007,6 +1008,32 @@ class WorklogDialogMixin:
             int(getattr(self, "_win_h", 92)),
         )
 
+    def _timer_anchor(self) -> _Anchor:
+        """弹窗要绕开的矩形：计时器本体，最小化时把顶上小签也算进去。"""
+        x, y, w, h = self._worklog_card_rect()
+        if not getattr(self, "_worklog_docked", False):
+            return _Anchor(x, y, w, h)
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is None or not getattr(dock, "_shown", False):
+            return _Anchor(x, y, w, h)
+        dx, dy = int(getattr(dock, "x", x)), int(getattr(dock, "y", y))
+        dw, dh = int(getattr(dock, "w", 0) or 0), int(getattr(dock, "h", 0) or 0)
+        if dw < 2 or dh < 2:
+            return _Anchor(x, y, w, h)
+        left, top = min(x, dx), min(y, dy)
+        return _Anchor(left, top, max(x + w, dx + dw) - left, max(y + h, dy + dh) - top)
+
+    def _dock_should_stay_back(self) -> bool:
+        """别的卡片弹窗在时，贴条只跟着挪，不要抢到最前挡住更新窗。"""
+        if getattr(self, "_update_dialog_open", False):
+            return True
+        if getattr(self, "_schedule_list_open", False):
+            return True
+        win = getattr(self, "win", None)
+        if win is not None and getattr(win, "_open_card", None) is not None:
+            return True
+        return False
+
     def _ensure_worklog_dock(self) -> WorklogDock | None:
         dock = getattr(self, "_worklog_dock", None)
         if dock is not None and int(getattr(dock, "hwnd", 0) or 0):
@@ -1018,10 +1045,8 @@ class WorklogDialogMixin:
         return dock
 
     def _on_worklog_dock_click(self) -> None:
-        ui = getattr(self, "_worklog_ui", None)
-        if ui is None:
-            ui = self._ensure_worklog_ui()
-        self._restore_worklog(ui)
+        """贴条点一下只记一笔，主循环再打开账本，避免在鼠标消息里进模态。"""
+        self._need_worklog = True
 
     def _follow_worklog_dock(self) -> None:
         """计时器一挪就跟。发生在鼠标消息里，不能进 Tk。"""
@@ -1048,6 +1073,7 @@ class WorklogDialogMixin:
             return
         if win is not None and getattr(win, "_popup_open", False):
             return
+        back = self._dock_should_stay_back()
         if follow_only and dock is not None and dock._shown:
             dock.follow(self._worklog_card_rect())
             return
@@ -1055,7 +1081,10 @@ class WorklogDialogMixin:
         if dock is None:
             return
         fill, outline, ink = self._dock_colors()
-        dock.show(fill, outline, ink, self._worklog_card_rect(), raise_window=not follow_only)
+        dock.show(
+            fill, outline, ink, self._worklog_card_rect(),
+            raise_window=not follow_only and not back,
+        )
 
     def _pump_worklog_dock(self) -> None:
         dock = getattr(self, "_worklog_dock", None)
@@ -1084,6 +1113,7 @@ class WorklogDialogMixin:
         dlg._parked_min = True
         _park_card(dlg, ui.get("fg", 0))
         self._show_worklog_dock()
+        ui["stop"] = True
 
     def _worklog_needs_reveal(self, ui: dict) -> bool:
         dlg = ui.get("dlg")
@@ -1106,6 +1136,7 @@ class WorklogDialogMixin:
                 pass
             return
         ui["minimized"] = False
+        ui["stop"] = False
         dlg._key_hidden = False
         dlg._parked_min = False
         self._hide_worklog_dock()
@@ -2126,3 +2157,5 @@ class WorklogDialogMixin:
             _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
         finally:
             ui["live"] = False
+            if ui.get("minimized"):
+                ui["stop"] = False

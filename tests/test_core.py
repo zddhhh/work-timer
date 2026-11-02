@@ -2585,22 +2585,44 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertTrue(ui["min_toggle"].bind("<ButtonRelease-1>"))
             self.assertEqual(ui["scroll_host"].winfo_manager(), "pack")
             self.assertEqual(ui["bar"].winfo_manager(), "pack")
+            class _Win:
+                _popup_open = False
+                _open_card = None
+                x, y = 800, 500
+            host.win = _Win()
+            host._win_w, host._win_h = 248, 92
             host._minimize_worklog(ui)
             self.assertTrue(ui["minimized"])
+            self.assertTrue(ui["stop"])
             self.assertTrue(getattr(dlg, "_parked_min", False))
             self.assertTrue(host._worklog_docked)
             dock = host._worklog_dock
             self.assertIsNotNone(dock)
             self.assertEqual(getattr(dock, "_caption", ""), "工时账本")
             self.assertTrue(int(getattr(dock, "hwnd", 0) or 0))
-            class _Win:
-                _popup_open = True
-                x, y = 80, 90
-            host.win = _Win()
-            host._win_w, host._win_h = 248, 92
+            a = host._timer_anchor()
+            self.assertLessEqual(a.y, 500)
+            self.assertGreaterEqual(a.y + a.h, 500 + 92)
+            host._on_worklog_dock_click()
+            self.assertTrue(host._need_worklog)
+            raised = []
+            real_show = dock.show
+
+            def wrap_show(fill, outline, ink, card, *, raise_window=True):
+                raised.append(raise_window)
+                return real_show(fill, outline, ink, card, raise_window=raise_window)
+
+            dock.show = wrap_show
+            host._update_dialog_open = True
+            host._place_worklog_dock()
+            self.assertTrue(raised)
+            self.assertFalse(raised[-1])
+            host._update_dialog_open = False
+            host.win._popup_open = True
             parked = (dock.x, dock.y)
             host._place_worklog_dock()
             self.assertEqual((dock.x, dock.y), parked)
+            host.win._popup_open = False
             host._restore_worklog(ui)
             self.assertFalse(ui["minimized"])
             self.assertFalse(getattr(dlg, "_parked_min", False))
