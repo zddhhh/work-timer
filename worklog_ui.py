@@ -1,14 +1,16 @@
 """工时账本窗口：一周的来了、走了，键鼠次数图，保留天数。"""
 from __future__ import annotations
 
+import ctypes
 import os
 import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog
+from typing import Callable
 
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageTk
 
 import activity
 import activity_chart
@@ -39,8 +41,9 @@ _FOLD_BAR = "#1e2430"
 _FOLD_EDGE = "#2c3444"
 _FOLD_CHIP = "#2c3950"
 _CHROME_BG = "#222733"
-_DOCK_KEY = "#ff00ff"
+_DOCK_CLASS = "WorkTimerWorklogDock"
 _DOCK_FONTS: dict[int, ImageFont.ImageFont] = {}
+_MA_NOACTIVATE = 3
 
 
 def _chrome_btn(parent: tk.Misc, text: str) -> tk.Label:
@@ -77,28 +80,215 @@ def _dock_font(size: int) -> ImageFont.ImageFont:
     return got
 
 
-def _dock_photo(
+def _dock_image(
     fill: tuple[int, int, int],
     outline: tuple[int, int, int],
     ink: tuple[int, int, int],
-    master: tk.Misc,
-) -> ImageTk.PhotoImage:
-    """和计时器同一套深色上圆下直小签，贴在卡片顶上。"""
+) -> Image.Image:
+    """和计时器同一套深色上圆下直小签。"""
+    ss = 2
     text = "工时账本"
-    font = _dock_font(12)
+    font = _dock_font(12 * ss)
     probe = ImageDraw.Draw(Image.new("L", (1, 1)))
     box = probe.textbbox((0, 0), text, font=font)
     tw, th = box[2] - box[0], box[3] - box[1]
-    pad_x, pad_y = 14, 5
+    pad_x, pad_y = 14 * ss, 5 * ss
     w = tw + pad_x * 2
     h = th + pad_y * 2
-    radius = min(h // 2, 10)
-    im = Image.new("RGB", (w, h), (255, 0, 255))
+    radius = min(h // 2, 10 * ss)
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle((0, 0, w - 1, h + radius), radius=radius, fill=fill, outline=outline)
-    d.line((1, h - 1, w - 2, h - 1), fill=fill)
-    d.text((pad_x - box[0], pad_y - box[1]), text, font=font, fill=ink)
-    return ImageTk.PhotoImage(im, master=master)
+    d.rounded_rectangle((0, 0, w - 1, h + radius), radius=radius, fill=fill + (248,), outline=outline + (90,))
+    d.text((pad_x - box[0], pad_y - box[1]), text, font=font, fill=ink + (255,))
+    return im.resize((max(1, w // ss), max(1, h // ss)), Image.Resampling.LANCZOS)
+
+
+def _premultiplied_bgra(im: Image.Image) -> bytes:
+    r, g, b, a = im.split()
+    pm = Image.merge("RGBA", (ImageChops.multiply(r, a), ImageChops.multiply(g, a), ImageChops.multiply(b, a), a))
+    return pm.tobytes("raw", "BGRA")
+
+
+def dock_place(
+    card_x: int, card_y: int, card_w: int, card_h: int, bw: int, bh: int,
+    area: tuple[int, int, int, int],
+) -> tuple[int, int]:
+    """贴在计时器顶边正中；顶到工作区上沿就落到卡片里面。"""
+    left, top, right, bottom = area
+    x = int(card_x) + max(0, (int(card_w) - bw) // 2)
+    y = int(card_y) - bh + 3
+    if y < int(top):
+        y = int(card_y) + 4
+    x = max(int(left), min(x, int(right) - bw))
+    return x, y
+
+
+class WorklogDock:
+    """原生分层小签。拖动跟计时器走同一条鼠标消息，不进 Tk、不抬右键菜单。"""
+
+    def __init__(self, on_click: Callable[[], None] | None = None) -> None:
+        self.hwnd = 0
+        self.w = self.h = 0
+        self.x = self.y = 0
+        self._shown = False
+        self._sig: tuple | None = None
+        self._caption = "工时账本"
+        self._on_click = on_click
+        self._wndproc = layered_win.WNDPROC(self._proc)
+        self._hinst = layered_win.kernel32.GetModuleHandleW(None)
+        self._hdc_screen = 0
+        self._hdc_mem = 0
+        self._hbmp = 0
+        self._old = 0
+        self._bits = None
+
+    def _proc(self, hwnd, msg, wparam, lparam):
+        if msg == layered_win.WM_MOUSEACTIVATE:
+            return _MA_NOACTIVATE
+        if msg == layered_win.WM_LBUTTONUP:
+            fn = self._on_click
+            if fn is not None:
+                try:
+                    fn()
+                except Exception:
+                    pass
+            return 0
+        return layered_win.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def _ensure(self) -> bool:
+        if self.hwnd:
+            return True
+        wc = layered_win.WNDCLASSW()
+        wc.lpfnWndProc = self._wndproc
+        wc.hInstance = self._hinst
+        wc.hCursor = layered_win.user32.LoadCursorW(None, layered_win.IDC_ARROW)
+        wc.lpszClassName = _DOCK_CLASS
+        layered_win.user32.RegisterClassW(ctypes.byref(wc))
+        ex = (
+            layered_win.WS_EX_LAYERED
+            | layered_win.WS_EX_TOPMOST
+            | layered_win.WS_EX_TOOLWINDOW
+        )
+        self.hwnd = layered_win.user32.CreateWindowExW(
+            ex, _DOCK_CLASS, "", layered_win.WS_POPUP, 0, 0, 1, 1, None, None, self._hinst, None,
+        ) or 0
+        if not self.hwnd:
+            return False
+        self._hdc_screen = layered_win.user32.GetDC(None)
+        self._hdc_mem = layered_win.gdi32.CreateCompatibleDC(self._hdc_screen)
+        return True
+
+    def _alloc(self, w: int, h: int) -> None:
+        if self._old:
+            layered_win.gdi32.SelectObject(self._hdc_mem, self._old)
+            self._old = 0
+        if self._hbmp:
+            layered_win.gdi32.DeleteObject(self._hbmp)
+            self._hbmp = 0
+        bmi = layered_win.BITMAPINFO()
+        bmi.bmiHeader.biSize = ctypes.sizeof(layered_win.BITMAPINFOHEADER)
+        bmi.bmiHeader.biWidth = w
+        bmi.bmiHeader.biHeight = -h
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = layered_win.BI_RGB
+        bits = ctypes.c_void_p()
+        self._hbmp = layered_win.gdi32.CreateDIBSection(
+            self._hdc_mem, ctypes.byref(bmi), layered_win.DIB_RGB_COLORS, ctypes.byref(bits), None, 0,
+        ) or 0
+        self._bits = bits
+        self._old = layered_win.gdi32.SelectObject(self._hdc_mem, self._hbmp) if self._hbmp else 0
+        self.w, self.h = w, h
+
+    def _card_area(self, card: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        cx, cy, cw, ch = card
+        try:
+            r = layered_win.monitor_work_at(cx + cw // 2, cy + ch // 2)
+            return int(r.left), int(r.top), int(r.right), int(r.bottom)
+        except Exception:
+            return 0, 0, 1920, 1080
+
+    def show(
+        self,
+        fill: tuple[int, int, int],
+        outline: tuple[int, int, int],
+        ink: tuple[int, int, int],
+        card: tuple[int, int, int, int],
+        *,
+        raise_window: bool = True,
+    ) -> None:
+        if not self._ensure():
+            return
+        sig = (fill, outline, ink)
+        repaint = sig != self._sig
+        if repaint:
+            im = _dock_image(fill, outline, ink)
+            if im.size != (self.w, self.h) or not self._hbmp:
+                self._alloc(*im.size)
+            if not self._hbmp:
+                return
+            ctypes.memmove(self._bits, _premultiplied_bgra(im), self.w * self.h * 4)
+            self._sig = sig
+        x, y = dock_place(*card, self.w, self.h, self._card_area(card))
+        if not repaint and self._shown and (x, y) == (self.x, self.y) and not raise_window:
+            return
+        self.x, self.y = x, y
+        pt = layered_win.POINT(x, y)
+        size = layered_win.SIZE(self.w, self.h)
+        src = layered_win.POINT(0, 0)
+        blend = layered_win.BLENDFUNCTION(layered_win.AC_SRC_OVER, 0, 255, layered_win.AC_SRC_ALPHA)
+        layered_win.user32.UpdateLayeredWindow(
+            self.hwnd, self._hdc_screen, ctypes.byref(pt), ctypes.byref(size),
+            self._hdc_mem, ctypes.byref(src), 0, ctypes.byref(blend), layered_win.ULW_ALPHA,
+        )
+        if not self._shown:
+            layered_win.user32.ShowWindow(self.hwnd, layered_win.SW_SHOWNOACTIVATE)
+            self._shown = True
+        if raise_window:
+            layered_win.user32.SetWindowPos(
+                self.hwnd, layered_win.HWND_TOPMOST, 0, 0, 0, 0,
+                layered_win.SWP_NOMOVE | layered_win.SWP_NOSIZE | layered_win.SWP_NOACTIVATE,
+            )
+
+    def follow(self, card: tuple[int, int, int, int]) -> None:
+        """只挪位置。拖动时和计时器走同一条鼠标消息，不重画、不改 Z 序。"""
+        if not self.hwnd or not self._shown or self.w < 2:
+            return
+        x, y = dock_place(*card, self.w, self.h, self._card_area(card))
+        if (x, y) == (self.x, self.y):
+            return
+        self.x, self.y = x, y
+        layered_win.user32.SetWindowPos(self.hwnd, None, x, y, 0, 0, layered_win._MOVE_FLAGS)
+
+    def hide(self) -> None:
+        if self.hwnd and self._shown:
+            layered_win.user32.ShowWindow(self.hwnd, 0)
+        self._shown = False
+
+    def pump(self) -> None:
+        if not self.hwnd:
+            return
+        msg = layered_win.MSG()
+        while layered_win.user32.PeekMessageW(ctypes.byref(msg), self.hwnd, 0, 0, layered_win.PM_REMOVE):
+            layered_win.user32.DispatchMessageW(ctypes.byref(msg))
+
+    def destroy(self) -> None:
+        self.hide()
+        if self._old and self._hdc_mem:
+            layered_win.gdi32.SelectObject(self._hdc_mem, self._old)
+            self._old = 0
+        if self._hbmp:
+            layered_win.gdi32.DeleteObject(self._hbmp)
+            self._hbmp = 0
+        if self._hdc_mem:
+            layered_win.gdi32.DeleteDC(self._hdc_mem)
+            self._hdc_mem = 0
+        if self._hdc_screen:
+            layered_win.user32.ReleaseDC(None, self._hdc_screen)
+            self._hdc_screen = 0
+        if self.hwnd:
+            layered_win.user32.DestroyWindow(self.hwnd)
+            self.hwnd = 0
 
 
 def _fold_chip(parent: tk.Misc) -> tk.Label:
@@ -787,111 +977,81 @@ class WorklogDialogMixin:
                 pass
         return (22, 26, 36), (58, 68, 86), (240, 243, 248)
 
-    def _paint_worklog_dock(self, dock: tk.Toplevel) -> None:
-        fill, outline, ink = self._dock_colors()
-        keyed = bool(getattr(dock, "_key_ok", False))
-        sig = (fill, outline, ink, keyed)
-        if getattr(dock, "_sig", None) == sig and getattr(dock, "_photo", None) is not None:
-            return
-        photo = _dock_photo(fill, outline, ink, master=dock)
-        dock._photo = photo
-        dock._sig = sig
-        dock._caption = "工时账本"
-        bg = _DOCK_KEY if keyed else "#{:02x}{:02x}{:02x}".format(*fill)
-        dock.configure(bg=bg)
-        btn = getattr(dock, "_btn", None)
-        if btn is not None:
-            btn.configure(image=photo, bg=bg)
-
-    def _ensure_worklog_dock(self) -> tk.Toplevel | None:
-        dock = getattr(self, "_worklog_dock", None)
-        if dock is not None:
-            try:
-                if dock.winfo_exists():
-                    self._paint_worklog_dock(dock)
-                    return dock
-            except tk.TclError:
-                pass
-        root = self._tk_root()
-        dock = tk.Toplevel(root)
-        dock.withdraw()
-        dock.overrideredirect(True)
-        dock.resizable(False, False)
-        keyed = False
-        try:
-            dock.attributes("-topmost", True)
-            dock.attributes("-transparentcolor", _DOCK_KEY)
-            keyed = True
-        except tk.TclError:
-            try:
-                dock.attributes("-topmost", True)
-            except tk.TclError:
-                pass
-        dock._key_ok = keyed
-        dock.configure(bg=_DOCK_KEY if keyed else "#161a24")
-        btn = tk.Label(
-            dock, bd=0, highlightthickness=0, cursor="hand2",
-            bg=_DOCK_KEY if keyed else "#161a24",
+    def _worklog_card_rect(self) -> tuple[int, int, int, int]:
+        win = getattr(self, "win", None)
+        if win is None:
+            return 40, 40, 248, 92
+        return (
+            int(getattr(win, "x", 40)),
+            int(getattr(win, "y", 40)),
+            int(getattr(self, "_win_w", 248)),
+            int(getattr(self, "_win_h", 92)),
         )
-        btn.pack()
-        dock._btn = btn
-        dock._caption = "工时账本"
-        self._paint_worklog_dock(dock)
-        btn.bind("<Button-1>", lambda _e: self._restore_worklog(self._ensure_worklog_ui()))
-        dock.bind("<Button-1>", lambda _e: self._restore_worklog(self._ensure_worklog_ui()))
+
+    def _ensure_worklog_dock(self) -> WorklogDock | None:
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is not None and int(getattr(dock, "hwnd", 0) or 0):
+            return dock
+        dock = WorklogDock(on_click=self._on_worklog_dock_click)
+        if not dock._ensure():
+            return None
         self._worklog_dock = dock
         return dock
 
-    def _place_worklog_dock(self) -> None:
+    def _on_worklog_dock_click(self) -> None:
+        ui = getattr(self, "_worklog_ui", None)
+        if ui is None:
+            ui = self._ensure_worklog_ui()
+        self._restore_worklog(ui)
+
+    def _follow_worklog_dock(self) -> None:
+        """计时器一挪就跟。发生在鼠标消息里，不能进 Tk。"""
         if not getattr(self, "_worklog_docked", False):
             return
         dock = getattr(self, "_worklog_dock", None)
-        if dock is None:
-            return
-        try:
-            if not dock.winfo_exists():
-                return
-            if getattr(self, "_esc_hidden", False):
-                dock.withdraw()
-                return
-        except tk.TclError:
+        if dock is None or not dock._shown:
             return
         win = getattr(self, "win", None)
-        try:
-            self._paint_worklog_dock(dock)
-            dock.update_idletasks()
-            bw = max(1, int(dock.winfo_reqwidth()))
-            bh = max(1, int(dock.winfo_reqheight()))
-            if win is not None:
-                area = layered_win.work_area()
-                x = int(win.x) + max(0, (int(getattr(self, "_win_w", bw)) - bw) // 2)
-                y = int(win.y) - bh + 3
-                if y < int(area.top):
-                    y = int(win.y) + 4
-                x = max(int(area.left), min(x, int(area.right) - bw))
-            else:
-                x, y = 40, 40
-            if dock.state() == "withdrawn":
-                dock.deiconify()
-            dock.geometry(f"{bw}x{bh}+{x}+{y}")
-        except tk.TclError:
-            pass
+        if win is not None and getattr(win, "_popup_open", False):
+            return
+        dock.follow(self._worklog_card_rect())
+
+    def _place_worklog_dock(self, *, follow_only: bool = False) -> None:
+        dock = getattr(self, "_worklog_dock", None)
+        if not getattr(self, "_worklog_docked", False):
+            if dock is not None:
+                dock.hide()
+            return
+        win = getattr(self, "win", None)
+        if getattr(self, "_esc_hidden", False):
+            if dock is not None:
+                dock.hide()
+            return
+        if win is not None and getattr(win, "_popup_open", False):
+            return
+        if follow_only and dock is not None and dock._shown:
+            dock.follow(self._worklog_card_rect())
+            return
+        dock = self._ensure_worklog_dock()
+        if dock is None:
+            return
+        fill, outline, ink = self._dock_colors()
+        dock.show(fill, outline, ink, self._worklog_card_rect(), raise_window=not follow_only)
+
+    def _pump_worklog_dock(self) -> None:
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is not None:
+            dock.pump()
 
     def _show_worklog_dock(self) -> None:
         self._worklog_docked = True
-        if self._ensure_worklog_dock() is None:
-            return
         self._place_worklog_dock()
 
     def _hide_worklog_dock(self) -> None:
         self._worklog_docked = False
         dock = getattr(self, "_worklog_dock", None)
-        if dock is None:
-            return
-        try:
-            dock.withdraw()
-        except tk.TclError:
-            pass
+        if dock is not None:
+            dock.hide()
 
     def _minimize_worklog(self, ui: dict) -> None:
         dlg = ui.get("dlg")

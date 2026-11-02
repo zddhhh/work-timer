@@ -218,7 +218,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._activity_dirty = False
         self._ui_prewarmed = False
         self._worklog_ui: dict | None = None
-        self._worklog_dock: tk.Toplevel | None = None
+        self._worklog_dock = None
         self._worklog_docked = False
         self._schedule_ui: dict | None = None
         self._check_clock_on_boot()
@@ -235,6 +235,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self.win.set_mouse_leave_handler(self._on_mouse_leave)
         self.win.set_right_click_handler(self._request_menu)
         self.win.set_request_show_handler(self._on_request_show)
+        self.win.set_geometry_handler(self._follow_worklog_dock)
         self._esc_hidden = False
 
         area = layered_win.work_area()
@@ -1226,6 +1227,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_key = ""
         self._worklog_tick()
         self._place_worklog_dock()
+        self._pump_worklog_dock()
         if paint and not self.win.screen_asleep:
             self._paint()
         self._prune_thunder_hits(now_m)
@@ -1234,6 +1236,10 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
     def _card_frame(self) -> None:
         """自家弹窗循环里调用：比定时器多刷新工时账本那一行。"""
         try:
+            if self._menu_pos is not None:
+                sx, sy = self._menu_pos
+                self._menu_pos = None
+                self._handle_menu(sx, sy)
             paint = True
             ui = getattr(self, "_worklog_ui", None)
             if ui is not None and time.monotonic() < float(ui.get("scroll_until") or 0):
@@ -2189,6 +2195,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             try:
                 self._note_beat()
                 self.win.pump()
+                self._pump_worklog_dock()
                 self._poll_key_hide()
                 self._tick_trail()
                 if self._esc_hidden:
@@ -2237,7 +2244,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 if dragging:
                     # 拖动只搬现成的画面。重画和截屏都要等桌面合成，松手后再补一帧。
                     was_dragging = True
-                    self._place_worklog_dock()
+                    self._place_worklog_dock(follow_only=True)
                     time.sleep(0.001)
                     continue
                 if was_resizing or resized:

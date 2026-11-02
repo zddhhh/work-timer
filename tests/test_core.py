@@ -2337,6 +2337,11 @@ class WorklogScrollTests(unittest.TestCase):
         import worklog_ui
 
         view, scroll = worklog_ui.scroll_view(640, 860, 1080)
+        area = (0, 0, 1920, 1080)
+        x, y = worklog_ui.dock_place(800, 500, 248, 92, 80, 26, area)
+        self.assertEqual((x, y), (800 + (248 - 80) // 2, 500 - 26 + 3))
+        _x, y2 = worklog_ui.dock_place(800, 2, 248, 92, 80, 26, area)
+        self.assertEqual(y2, 2 + 4)
         self.assertEqual((view, scroll), (640, False))
         self.assertEqual(worklog_ui.wheel_pixels(120), -40)
         self.assertEqual(worklog_ui.wheel_pixels(-120), 40)
@@ -2478,6 +2483,15 @@ class WorklogScrollTests(unittest.TestCase):
             dock = host._worklog_dock
             self.assertIsNotNone(dock)
             self.assertEqual(getattr(dock, "_caption", ""), "工时账本")
+            self.assertTrue(int(getattr(dock, "hwnd", 0) or 0))
+            class _Win:
+                _popup_open = True
+                x, y = 80, 90
+            host.win = _Win()
+            host._win_w, host._win_h = 248, 92
+            parked = (dock.x, dock.y)
+            host._place_worklog_dock()
+            self.assertEqual((dock.x, dock.y), parked)
             host._restore_worklog(ui)
             self.assertFalse(ui["minimized"])
             self.assertFalse(host._worklog_docked)
@@ -2526,6 +2540,9 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertEqual(ui["table"].winfo_manager(), "pack")
             self.assertEqual(ui["history_notice"].winfo_manager(), "")
         finally:
+            dock = getattr(host, "_worklog_dock", None)
+            if dock is not None:
+                dock.destroy()
             dlg.destroy()
             root.destroy()
 
