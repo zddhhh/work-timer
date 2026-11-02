@@ -63,6 +63,15 @@ def _arm_chrome(min_btn: tk.Label, close_btn: tk.Label) -> None:
     hover(close_btn, "#5c3038", "#ffd0d0")
 
 
+def _on_chrome_release(lbl: tk.Label, fn) -> None:
+    """标题栏按钮用松开，避免按下就把窗口收走，鼠标落到计时器上把拖动掐死。"""
+    def handler(e) -> None:
+        if 0 <= int(e.x) < max(1, lbl.winfo_width()) and 0 <= int(e.y) < max(1, lbl.winfo_height()):
+            fn()
+
+    lbl.bind("<ButtonRelease-1>", handler)
+
+
 def _dock_font(size: int) -> ImageFont.ImageFont:
     got = _DOCK_FONTS.get(size)
     if got is not None:
@@ -262,7 +271,15 @@ class WorklogDock:
 
     def hide(self) -> None:
         if self.hwnd and self._shown:
-            layered_win.user32.ShowWindow(self.hwnd, 0)
+            layered_win.user32.SetWindowPos(
+                self.hwnd, None, 0, 0, 0, 0,
+                layered_win.SWP_HIDEWINDOW
+                | layered_win.SWP_NOMOVE
+                | layered_win.SWP_NOSIZE
+                | layered_win.SWP_NOACTIVATE
+                | layered_win.SWP_NOZORDER
+                | layered_win.SWP_NOSENDCHANGING,
+            )
         self._shown = False
 
     def pump(self) -> None:
@@ -834,7 +851,7 @@ class WorklogDialogMixin:
     def _paint_activity_chart(self, ui: dict | None = None, *, background: bool = True) -> None:
         """图交给后台线程画，主线程不等。画好由 _refresh_worklog_live 里的 collect 换上。"""
         ui = ui if ui is not None else self._worklog_ui
-        if ui is None or ui.get("today_lbl") is None or ui.get("minimized"):
+        if ui is None or ui.get("stop") or ui.get("today_lbl") is None or ui.get("minimized"):
             return
         try:
             if not ui["dlg"].winfo_exists():
@@ -1759,7 +1776,7 @@ class WorklogDialogMixin:
         heat_title.bind("<Button-1>", lambda _e: self._toggle_heat(ui))
         chart_toggle.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
         chart_title.bind("<Button-1>", lambda _e: self._toggle_chart(ui))
-        min_toggle.bind("<Button-1>", lambda _e: self._minimize_worklog(ui))
+        _on_chrome_release(min_toggle, lambda: self._minimize_worklog(ui))
         self._style_chart_buttons(ui)
         self._apply_chart_open(ui)
         self._apply_heat_open(ui)
@@ -1863,9 +1880,16 @@ class WorklogDialogMixin:
         week_lbl.bind("<Button-1>", on_week_click)
 
         def close() -> None:
-            ui["minimized"] = False
-            self._hide_worklog_dock()
             ui["stop"] = True
+            ui["minimized"] = False
+            job = ui.get("heat_job")
+            if job is not None:
+                try:
+                    ui["charts"].after_cancel(job)
+                except (tk.TclError, AttributeError, KeyError):
+                    pass
+                ui["heat_job"] = None
+            self._hide_worklog_dock()
             _park_card(dlg, ui.get("fg", 0))
 
         def save() -> None:
@@ -1952,7 +1976,7 @@ class WorklogDialogMixin:
         export_btn.pack(side="left", padx=6)
         ui["save_btn"] = save_btn
         ui["export_btn"] = export_btn
-        close_lbl.bind("<Button-1>", lambda _e: close())
+        _on_chrome_release(close_lbl, close)
         dlg.bind("<Return>", lambda _e: save())
         dlg.bind("<Escape>", lambda _e: close())
 

@@ -2475,6 +2475,8 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertEqual(str(ui["min_toggle"].cget("text")), "最小化")
             self.assertIs(ui["close_lbl"].master, ui["min_toggle"].master)
             self.assertEqual(str(ui["close_lbl"].cget("text")), "关闭")
+            self.assertTrue(ui["close_lbl"].bind("<ButtonRelease-1>"))
+            self.assertTrue(ui["min_toggle"].bind("<ButtonRelease-1>"))
             self.assertEqual(ui["scroll_host"].winfo_manager(), "pack")
             self.assertEqual(ui["bar"].winfo_manager(), "pack")
             host._minimize_worklog(ui)

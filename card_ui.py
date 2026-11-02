@@ -226,8 +226,6 @@ def _park_card(dlg: tk.Toplevel, give_focus_to: int = 0) -> None:
         if dlg.state() == "withdrawn":
             dlg.deiconify()
             dlg.update()
-        else:
-            dlg.update_idletasks()
         _click_through(dlg, True)
         hwnd = _frame_hwnd(dlg)
         u = layered_win.user32
@@ -746,6 +744,8 @@ def _run_card_modal(
                 break
             _sync_open_card_hide(dlg, win)
             dlg.update()
+            if stop is not None and stop():
+                break
             if win is not None:
                 win.pump()
             if live is not None and on_frame is not live:

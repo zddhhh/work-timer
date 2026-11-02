@@ -1226,7 +1226,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_pin_rotate = now_m
             self._last_key = ""
         self._worklog_tick()
-        self._place_worklog_dock()
+        self._place_worklog_dock(follow_only=True)
         self._pump_worklog_dock()
         if paint and not self.win.screen_asleep:
             self._paint()
@@ -1236,12 +1236,14 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
     def _card_frame(self) -> None:
         """自家弹窗循环里调用：比定时器多刷新工时账本那一行。"""
         try:
+            ui = getattr(self, "_worklog_ui", None)
+            if ui is not None and ui.get("stop"):
+                return
             if self._menu_pos is not None:
                 sx, sy = self._menu_pos
                 self._menu_pos = None
                 self._handle_menu(sx, sy)
             paint = True
-            ui = getattr(self, "_worklog_ui", None)
             if ui is not None and time.monotonic() < float(ui.get("scroll_until") or 0):
                 # 账本正在滑。这一帧把 CPU 留给窗口挪动，倒计时晚几十毫秒再画。
                 paint = False
