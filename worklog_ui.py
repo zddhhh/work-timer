@@ -1,13 +1,14 @@
 """工时账本窗口：一周的来了、走了，键鼠次数图，保留天数。"""
 from __future__ import annotations
 
+import os
 import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog
 
-from PIL import ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 import activity
 import activity_chart
@@ -37,6 +38,67 @@ _SUMMARY_WRAP = 228
 _FOLD_BAR = "#1e2430"
 _FOLD_EDGE = "#2c3444"
 _FOLD_CHIP = "#2c3950"
+_CHROME_BG = "#222733"
+_DOCK_KEY = "#ff00ff"
+_DOCK_FONTS: dict[int, ImageFont.ImageFont] = {}
+
+
+def _chrome_btn(parent: tk.Misc, text: str) -> tk.Label:
+    """标题栏上成组的最小化 / 关闭，不要做成大蓝按钮。"""
+    return tk.Label(
+        parent, text=text, fg=_CARD_FG, bg=_CHROME_BG,
+        font=("Microsoft YaHei UI", 9), cursor="hand2", padx=11, pady=3,
+    )
+
+
+def _arm_chrome(min_btn: tk.Label, close_btn: tk.Label) -> None:
+    def hover(lbl: tk.Label, bg: str, fg: str) -> None:
+        lbl.bind("<Enter>", lambda _e, w=lbl, b=bg, f=fg: w.configure(bg=b, fg=f))
+        lbl.bind("<Leave>", lambda _e, w=lbl: w.configure(bg=_CHROME_BG, fg=_CARD_FG))
+
+    hover(min_btn, "#2d3548", _CARD_FG)
+    hover(close_btn, "#5c3038", "#ffd0d0")
+
+
+def _dock_font(size: int) -> ImageFont.ImageFont:
+    got = _DOCK_FONTS.get(size)
+    if got is not None:
+        return got
+    fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    for name in ("msyhbd.ttc", "msyh.ttc", "simhei.ttf"):
+        try:
+            got = ImageFont.truetype(str(fonts / name), size)
+            break
+        except OSError:
+            continue
+    if got is None:
+        got = ImageFont.load_default()
+    _DOCK_FONTS[size] = got
+    return got
+
+
+def _dock_photo(
+    fill: tuple[int, int, int],
+    outline: tuple[int, int, int],
+    ink: tuple[int, int, int],
+    master: tk.Misc,
+) -> ImageTk.PhotoImage:
+    """和计时器同一套深色上圆下直小签，贴在卡片顶上。"""
+    text = "工时账本"
+    font = _dock_font(12)
+    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    box = probe.textbbox((0, 0), text, font=font)
+    tw, th = box[2] - box[0], box[3] - box[1]
+    pad_x, pad_y = 14, 5
+    w = tw + pad_x * 2
+    h = th + pad_y * 2
+    radius = min(h // 2, 10)
+    im = Image.new("RGB", (w, h), (255, 0, 255))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle((0, 0, w - 1, h + radius), radius=radius, fill=fill, outline=outline)
+    d.line((1, h - 1, w - 2, h - 1), fill=fill)
+    d.text((pad_x - box[0], pad_y - box[1]), text, font=font, fill=ink)
+    return ImageTk.PhotoImage(im, master=master)
 
 
 def _fold_chip(parent: tk.Misc) -> tk.Label:
@@ -715,11 +777,38 @@ class WorklogDialogMixin:
         self._apply_chart_open(ui)
         self._paint_activity_chart(ui)
 
+    def _dock_colors(self) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
+        theme_fn = getattr(self, "_theme", None)
+        if callable(theme_fn):
+            try:
+                theme = theme_fn()
+                return theme.fill[:3], theme.outline[:3], theme.title[:3]
+            except Exception:
+                pass
+        return (22, 26, 36), (58, 68, 86), (240, 243, 248)
+
+    def _paint_worklog_dock(self, dock: tk.Toplevel) -> None:
+        fill, outline, ink = self._dock_colors()
+        keyed = bool(getattr(dock, "_key_ok", False))
+        sig = (fill, outline, ink, keyed)
+        if getattr(dock, "_sig", None) == sig and getattr(dock, "_photo", None) is not None:
+            return
+        photo = _dock_photo(fill, outline, ink, master=dock)
+        dock._photo = photo
+        dock._sig = sig
+        dock._caption = "工时账本"
+        bg = _DOCK_KEY if keyed else "#{:02x}{:02x}{:02x}".format(*fill)
+        dock.configure(bg=bg)
+        btn = getattr(dock, "_btn", None)
+        if btn is not None:
+            btn.configure(image=photo, bg=bg)
+
     def _ensure_worklog_dock(self) -> tk.Toplevel | None:
         dock = getattr(self, "_worklog_dock", None)
         if dock is not None:
             try:
                 if dock.winfo_exists():
+                    self._paint_worklog_dock(dock)
                     return dock
             except tk.TclError:
                 pass
@@ -728,16 +817,26 @@ class WorklogDialogMixin:
         dock.withdraw()
         dock.overrideredirect(True)
         dock.resizable(False, False)
+        keyed = False
         try:
             dock.attributes("-topmost", True)
+            dock.attributes("-transparentcolor", _DOCK_KEY)
+            keyed = True
         except tk.TclError:
-            pass
-        dock.configure(bg=_CARD_ACCENT)
+            try:
+                dock.attributes("-topmost", True)
+            except tk.TclError:
+                pass
+        dock._key_ok = keyed
+        dock.configure(bg=_DOCK_KEY if keyed else "#161a24")
         btn = tk.Label(
-            dock, text="工时账本", fg="white", bg=_CARD_ACCENT,
-            font=("Microsoft YaHei UI", 9, "bold"), cursor="hand2", padx=12, pady=4,
+            dock, bd=0, highlightthickness=0, cursor="hand2",
+            bg=_DOCK_KEY if keyed else "#161a24",
         )
         btn.pack()
+        dock._btn = btn
+        dock._caption = "工时账本"
+        self._paint_worklog_dock(dock)
         btn.bind("<Button-1>", lambda _e: self._restore_worklog(self._ensure_worklog_ui()))
         dock.bind("<Button-1>", lambda _e: self._restore_worklog(self._ensure_worklog_ui()))
         self._worklog_dock = dock
@@ -759,13 +858,14 @@ class WorklogDialogMixin:
             return
         win = getattr(self, "win", None)
         try:
+            self._paint_worklog_dock(dock)
             dock.update_idletasks()
             bw = max(1, int(dock.winfo_reqwidth()))
             bh = max(1, int(dock.winfo_reqheight()))
             if win is not None:
                 area = layered_win.work_area()
                 x = int(win.x) + max(0, (int(getattr(self, "_win_w", bw)) - bw) // 2)
-                y = int(win.y) - bh + 6
+                y = int(win.y) - bh + 3
                 if y < int(area.top):
                     y = int(win.y) + 4
                 x = max(int(area.left), min(x, int(area.right) - bw))
@@ -774,8 +874,6 @@ class WorklogDialogMixin:
             if dock.state() == "withdrawn":
                 dock.deiconify()
             dock.geometry(f"{bw}x{bh}+{x}+{y}")
-            dock.attributes("-topmost", True)
-            dock.lift()
         except tk.TclError:
             pass
 
@@ -907,14 +1005,19 @@ class WorklogDialogMixin:
         tk.Label(
             top, text="工时账本", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
         ).pack(side="left")
-        min_toggle = tk.Label(
-            top, text="最小化", fg="white", bg=_FOLD_CHIP,
-            font=("Microsoft YaHei UI", 9, "bold"), cursor="hand2", padx=12, pady=3,
+        chrome = tk.Frame(
+            top, bg=_CHROME_BG, highlightthickness=1, highlightbackground=_FOLD_EDGE,
         )
-        min_toggle.pack(side="right", padx=(10, 0), pady=1)
+        chrome.pack(side="right", padx=(10, 0), pady=1)
+        min_toggle = _chrome_btn(chrome, "最小化")
+        min_toggle.pack(side="left")
+        tk.Frame(chrome, bg=_FOLD_EDGE, width=1).pack(side="left", fill="y", pady=4)
+        close_lbl = _chrome_btn(chrome, "关闭")
+        close_lbl.pack(side="left")
+        _arm_chrome(min_toggle, close_lbl)
         week_var = tk.StringVar()
         nav = tk.Frame(top, bg=_CARD_BG)
-        nav.pack(side="right")
+        nav.pack(side="right", padx=(0, 10))
         scroll_host = tk.Frame(body, bg=_CARD_BG)
         scroll_host.pack(anchor="nw", fill="y", expand=True)
         scroll = _ClipScroll(
@@ -1450,6 +1553,7 @@ class WorklogDialogMixin:
             "nav": nav,
             "minimized": False,
             "min_toggle": min_toggle,
+            "close_lbl": close_lbl,
             "pair_w": pair_w,
             "track_on": track_on,
             "act_on": act_on,
@@ -1688,7 +1792,7 @@ class WorklogDialogMixin:
         export_btn.pack(side="left", padx=6)
         ui["save_btn"] = save_btn
         ui["export_btn"] = export_btn
-        _card_btn(bar, "关闭", close).pack(side="left", padx=6)
+        close_lbl.bind("<Button-1>", lambda _e: close())
         dlg.bind("<Return>", lambda _e: save())
         dlg.bind("<Escape>", lambda _e: close())
 

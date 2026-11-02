@@ -2468,6 +2468,8 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertEqual(ui["chart_body"].winfo_manager(), "pack")
             host._toggle_chart(ui)
             self.assertEqual(str(ui["min_toggle"].cget("text")), "最小化")
+            self.assertIs(ui["close_lbl"].master, ui["min_toggle"].master)
+            self.assertEqual(str(ui["close_lbl"].cget("text")), "关闭")
             self.assertEqual(ui["scroll_host"].winfo_manager(), "pack")
             self.assertEqual(ui["bar"].winfo_manager(), "pack")
             host._minimize_worklog(ui)
@@ -2475,8 +2477,7 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertTrue(host._worklog_docked)
             dock = host._worklog_dock
             self.assertIsNotNone(dock)
-            texts = [w.cget("text") for w in dock.winfo_children() if isinstance(w, tk.Label)]
-            self.assertIn("工时账本", texts)
+            self.assertEqual(getattr(dock, "_caption", ""), "工时账本")
             host._restore_worklog(ui)
             self.assertFalse(ui["minimized"])
             self.assertFalse(host._worklog_docked)
