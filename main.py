@@ -779,7 +779,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._note_work_input(now, evidence)
         if delta is not None and activity.add_travel(self.cfg, delta[0], delta[1], now):
             self._activity_dirty = True
-        if kind and activity.note(self.cfg, kind, now):
+        key = activity.key_id(buf) if kind == "key" else None
+        if kind and activity.note(self.cfg, kind, now, key=key):
             self._activity_dirty = True
 
     def _maybe_skin_interact(self, lx: int, ly: int) -> None:

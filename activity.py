@@ -1,6 +1,7 @@
-"""键鼠次数：只记敲了多少下、点了多少次，不记按了哪个键。"""
+"""键鼠次数：记敲了多少下、点了多少次，以及每个键各按了多少下。不记按键顺序。"""
 from __future__ import annotations
 
+import ctypes
 import math
 import sys
 from datetime import date, datetime, timedelta
@@ -68,6 +69,7 @@ _DEVICE_AT = 8
 _DEVICE_SIZE = 4 if sys.maxsize <= 2**32 else 8
 _FLAG_AT = _HDR
 _KEY_FLAGS_AT = _HDR + 2
+_KEY_VK_AT = _HDR + 6
 _BUTTON_FLAGS_AT = _HDR + 4
 _DX_AT = _HDR + 12
 _DY_AT = _HDR + 16
@@ -171,6 +173,13 @@ def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
     book["days"] = cleaned
     book["on"] = bool(book.get("on"))
     book["on_card"] = bool(book.get("on")) and bool(book.get("on_card"))
+    zones = set(z for z in (book.get("heat_zones") or []) if z in ("nav", "num", "extra"))
+    for item in cleaned.values():
+        for ident in item.get("keymap") or {}:
+            z = key_zone(str(ident))
+            if z != "main":
+                zones.add(z)
+    book["heat_zones"] = sorted(zones)
 
 
 def _hours24(v) -> list[int]:
@@ -291,6 +300,7 @@ def _clean_day(v: dict, *, inst: bool = True) -> dict:
         "clicks_ms": _hours24(v.get("clicks_ms")),
         "wheels_ms": _hours24(v.get("wheels_ms")),
         "travel_ms": _hours24(v.get("travel_ms")),
+        "keymap": _clean_keymap(v.get("keymap")),
     }
     for key in _LAST_KEYS:
         item[key] = _hours24(v.get(key))
@@ -688,8 +698,108 @@ def fmt_speed_line(
     )
 
 
-def note(cfg: dict, kind: str, now: datetime | None = None) -> bool:
-    """记一次。kind 是 key / click / wheel。没开开关则什么都不做。"""
+def _vk_from_make(make: int, flags: int) -> int:
+    """扫描码换成左右能分开的虚拟键。输入法占住时，原始键号会变成「正在处理」。"""
+    scan = int(make) & 0xFF
+    if flags & 2:
+        scan |= 0xE000
+    try:
+        return int(ctypes.windll.user32.MapVirtualKeyW(scan, 3) or 0) & 0xFF
+    except Exception:
+        return 0
+
+
+def key_id(buf: bytes) -> str | None:
+    """键盘按下时的键号。松开、说不清的键不记。小键盘回车和主键回车分开。"""
+    if parse_raw(buf) != "key" or len(buf) < _KEY_VK_AT + 2:
+        return None
+    flags = int.from_bytes(buf[_KEY_FLAGS_AT:_KEY_FLAGS_AT + 2], "little")
+    vk = int.from_bytes(buf[_KEY_VK_AT:_KEY_VK_AT + 2], "little")
+    make = int.from_bytes(buf[_HDR:_HDR + 2], "little")
+    # 0 / 0xFF 没有键；0xE5 是输入法占位；0xE7 是直接塞进来的字符。
+    # 0x10 / 0x11 / 0x12 分不出左右，隐藏键设成 Ctrl 时就会对不上图上的键。
+    if vk in (0, 0xFF, 0xE5, 0xE7, 0x10, 0x11, 0x12):
+        mapped = _vk_from_make(make, flags)
+        if mapped and mapped not in (0, 0xFF, 0xE5, 0xE7):
+            vk = mapped
+    if vk <= 0 or vk >= 256 or vk in (0xE5, 0xE7):
+        return None
+    if vk == 0x0D and flags & 2:
+        return "numenter"
+    if vk == 0x10:
+        return "A0"
+    if vk == 0x11:
+        return "A2"
+    if vk == 0x12:
+        return "A4"
+    return f"{vk:02X}"
+
+
+def _clean_keymap(raw) -> dict:
+    """只留键号和次数。顺序、时间都不在这里。"""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for name, count in raw.items():
+        ident = str(name)
+        if ident != "numenter" and (len(ident) != 2 or any(c not in "0123456789ABCDEF" for c in ident)):
+            continue
+        n = _n(count)
+        if n:
+            out[ident] = n
+    return out
+
+
+# 键盘图按这台电脑实际按过的区域来画。没小键盘的笔记本，右边那一块就不画。
+_NAV_IDS = {"2D", "24", "21", "2E", "23", "22", "26", "25", "28", "27"}
+_EXTRA_IDS = {"2C", "91", "13"}
+
+
+def key_zone(ident: str) -> str:
+    """main 是字母数字；nav 是 Ins/方向；num 是小键盘；extra 是屏/滚/停。"""
+    ident = str(ident)
+    if ident in ("10", "11", "12"):
+        ident = {"10": "A0", "11": "A2", "12": "A4"}[ident]
+    if ident == "numenter":
+        return "num"
+    if ident in _NAV_IDS:
+        return "nav"
+    if ident in _EXTRA_IDS:
+        return "extra"
+    try:
+        vk = int(ident, 16)
+    except ValueError:
+        return "main"
+    if 0x60 <= vk <= 0x6F or vk == 0x90:
+        return "num"
+    return "main"
+
+
+def _note_zone(cfg: dict, ident: str) -> None:
+    zone = key_zone(ident)
+    if zone == "main":
+        return
+    book = _book(cfg)
+    got = book.get("heat_zones")
+    zones = set(got) if isinstance(got, list) else set()
+    if zone not in zones:
+        zones.add(zone)
+        book["heat_zones"] = sorted(zones)
+
+
+def heat_zones(cfg: dict) -> list[str]:
+    raw = cfg.get(_KEY)
+    got = raw.get("heat_zones") if isinstance(raw, dict) else None
+    if not isinstance(got, list):
+        return []
+    return [z for z in got if z in ("nav", "num", "extra")]
+
+
+def note(cfg: dict, kind: str, now: datetime | None = None, key: str | None = None) -> bool:
+    """记一次。kind 是 key / click / wheel。没开开关则什么都不做。
+
+    key 是键号。只累加这个键按了多少下，不记下先按了谁。
+    """
     if not enabled(cfg):
         return False
     if kind not in ("key", "click", "wheel"):
@@ -698,6 +808,15 @@ def note(cfg: dict, kind: str, now: datetime | None = None) -> bool:
     item = _day(cfg, now.date())
     field = {"key": "keys", "click": "clicks", "wheel": "wheels"}[kind]
     item[field] = _n(item.get(field)) + 1
+    if kind == "key" and key:
+        board = item.get("keymap")
+        if not isinstance(board, dict):
+            board = {}
+            item["keymap"] = board
+        ident = str(key)
+        if ident == "numenter" or (len(ident) == 2 and all(c in "0123456789ABCDEF" for c in ident)):
+            board[ident] = _n(board.get(ident)) + 1
+            _note_zone(cfg, ident)
     h = now.hour
     if 0 <= h < 24:
         item["hours"][h] = _n(item["hours"][h]) + 1
@@ -725,7 +844,7 @@ def counts(cfg: dict, d: date) -> dict:
 
 
 def parse_raw(buf: bytes) -> str | None:
-    """从 WM_INPUT 的原始缓冲里认出是键盘按下、鼠标点还是滚轮。不读键码。"""
+    """从 WM_INPUT 的原始缓冲里认出是键盘按下、鼠标点还是滚轮。键号由 key_id 读。"""
     if len(buf) < _HDR + 8:
         return None
     dw_type = int.from_bytes(buf[0:4], "little")
@@ -913,6 +1032,30 @@ def set_chart_style(cfg: dict, style: str) -> str:
     book = _book(cfg)
     book["chart"] = style if style in ("line", "bar") else "line"
     return str(book["chart"])
+
+
+def heat_open(cfg: dict) -> bool:
+    """键盘默认收着，打开账本先看工时。"""
+    raw = cfg.get(_KEY)
+    return bool(isinstance(raw, dict) and raw.get("heat_open"))
+
+
+def set_heat_open(cfg: dict, on: bool) -> bool:
+    book = _book(cfg)
+    book["heat_open"] = bool(on)
+    return bool(book["heat_open"])
+
+
+def heat_view(cfg: dict) -> str:
+    raw = cfg.get(_KEY)
+    view = raw.get("heat_view") if isinstance(raw, dict) else None
+    return view if view in ("map", "rank") else "map"
+
+
+def set_heat_view(cfg: dict, view: str) -> str:
+    book = _book(cfg)
+    book["heat_view"] = view if view in ("map", "rank") else "map"
+    return str(book["heat_view"])
 
 
 def still_phrase(idle_s: float) -> str | None:

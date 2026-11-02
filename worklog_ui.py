@@ -11,6 +11,7 @@ from PIL import ImageTk
 
 import activity
 import activity_chart
+import keyboard_heat
 import layered_win
 import power_save
 import store
@@ -33,8 +34,6 @@ from card_ui import (
 _SUMMARY_W = 252
 _SUMMARY_H = 58
 _SUMMARY_WRAP = 228
-
-
 def scroll_view(
     sheet_h: int,
     natural_h: int,
@@ -575,6 +574,10 @@ class WorklogDialogMixin:
             day_var.set(caption)
         if activity.settle(self.cfg, datetime.now()):
             self._activity_dirty = True
+        self._apply_heat_open(ui)
+        keyboard_heat.paint_into(
+            ui, self.cfg, focus, today, enabled=activity.enabled(self.cfg),
+        )
         activity_chart.paint_into(
             ui,
             self.cfg,
@@ -604,6 +607,7 @@ class WorklogDialogMixin:
                 fg=_CARD_FG if on else _CARD_MUTED,
                 font=("Microsoft YaHei UI", 9, "bold" if on else "normal"),
             )
+        self._style_heat(ui)
 
     def _set_chart_style(self, ui: dict, style: str) -> None:
         if activity.chart_style(self.cfg) == style:
@@ -621,6 +625,51 @@ class WorklogDialogMixin:
         store.save_config(self.cfg)
         self._style_chart_buttons(ui)
         ui["chart_sig"] = None
+        self._paint_activity_chart(ui)
+
+    def _style_heat(self, ui: dict) -> None:
+        view = activity.heat_view(self.cfg)
+        for key, btn in (ui.get("heat_view_btns") or {}).items():
+            on = key == view
+            btn.configure(
+                fg=_CARD_FG if on else _CARD_MUTED,
+                font=("Microsoft YaHei UI", 9, "bold" if on else "normal"),
+            )
+
+    def _set_heat_view(self, ui: dict, view: str) -> None:
+        opening = not activity.heat_open(self.cfg)
+        if activity.heat_view(self.cfg) == view and not opening:
+            return
+        activity.set_heat_view(self.cfg, view)
+        if opening:
+            activity.set_heat_open(self.cfg, True)
+        store.save_config(self.cfg)
+        ui["heat_sig"] = None
+        ui["heat_hover"] = False
+        self._apply_heat_open(ui)
+        self._style_heat(ui)
+        self._paint_activity_chart(ui)
+
+    def _apply_heat_open(self, ui: dict) -> None:
+        body = ui.get("heat_body")
+        toggle = ui.get("heat_toggle")
+        if body is None:
+            return
+        opened = activity.heat_open(self.cfg)
+        shown = bool(body.winfo_manager())
+        if opened and not shown:
+            body.pack(fill="x", pady=(8, 0))
+        elif not opened and shown:
+            body.pack_forget()
+        if toggle is not None:
+            toggle.configure(text="收起" if opened else "展开")
+
+    def _toggle_heat(self, ui: dict) -> None:
+        activity.set_heat_open(self.cfg, not activity.heat_open(self.cfg))
+        store.save_config(self.cfg)
+        ui["heat_sig"] = None
+        ui["heat_hover"] = False
+        self._apply_heat_open(ui)
         self._paint_activity_chart(ui)
 
     def _week_day_bounds(self, ui: dict, today: date) -> tuple[date, date]:
@@ -768,7 +817,8 @@ class WorklogDialogMixin:
             self._paint_activity_chart(ui)
 
         day_card = tk.Frame(charts, bg=_CARD_BG)
-        day_card.grid(row=0, column=0, sticky="nsew", padx=(0, activity_chart.GAP // 2))
+        # 内容比两张图宽时，两张图各贴一边，外沿和下面的卡片对齐，多出来的宽度留在中间。
+        day_card.grid(row=0, column=0, sticky="nsw", padx=(0, activity_chart.GAP // 2))
         day_head = tk.Frame(day_card, bg=_CARD_BG)
         day_head.pack(fill="x", pady=(0, 4))
 
@@ -801,7 +851,7 @@ class WorklogDialogMixin:
         today_lbl.pack(anchor="w")
 
         week_card = tk.Frame(charts, bg=_CARD_BG)
-        week_card.grid(row=0, column=1, sticky="nsew", padx=(activity_chart.GAP // 2, 0))
+        week_card.grid(row=0, column=1, sticky="nse", padx=(activity_chart.GAP // 2, 0))
         week_head = tk.Frame(week_card, bg=_CARD_BG)
         week_head.pack(fill="x", pady=(0, 4))
         tk.Label(
@@ -820,6 +870,44 @@ class WorklogDialogMixin:
         placeholder = ImageTk.PhotoImage(activity_chart.blank())
         today_lbl.configure(image=placeholder)
         week_lbl.configure(image=placeholder)
+
+        heat = tk.Frame(sheet, bg=_CARD_BG)
+        heat.pack(fill="x", pady=(10, 2))
+        heat_head = tk.Frame(
+            heat, bg="#1e2430", highlightthickness=1, highlightbackground="#2c3444",
+        )
+        heat_head.pack(fill="x")
+        heat_title = tk.Label(
+            heat_head, text="键盘", fg=_CARD_FG, bg="#1e2430",
+            font=("Microsoft YaHei UI", 10, "bold"), cursor="hand2",
+        )
+        heat_title.pack(side="left", padx=(12, 0), pady=7)
+        heat_brief = tk.StringVar(value="还没有按键")
+        tk.Label(
+            heat_head, textvariable=heat_brief, fg=_CARD_MUTED, bg="#1e2430",
+            font=("Microsoft YaHei UI", 9), anchor="w",
+        ).pack(side="left", padx=(12, 8), pady=7)
+        heat_toggle = tk.Label(
+            heat_head, text="展开", fg=_CARD_FG, bg="#1e2430",
+            font=("Microsoft YaHei UI", 9), cursor="hand2",
+        )
+        heat_toggle.pack(side="right", padx=(8, 12), pady=7)
+        heat_view_btns: dict[str, tk.Label] = {}
+        for key, label in (("rank", "排行"), ("map", "热力图")):
+            btn = tk.Label(
+                heat_head, text=label, fg=_CARD_MUTED, bg="#1e2430",
+                font=("Microsoft YaHei UI", 9), cursor="hand2",
+            )
+            btn.pack(side="right", padx=(10, 0), pady=7)
+            heat_view_btns[key] = btn
+        heat_body = tk.Frame(heat, bg=_CARD_BG)
+        heat_lbl = tk.Label(heat_body, bg=_CARD_BG, bd=0, highlightthickness=0)
+        heat_lbl.pack(anchor="w")
+        heat_var = tk.StringVar(value="数字是这个键按了多少下")
+        tk.Label(
+            heat_body, textvariable=heat_var, fg=_CARD_MUTED, bg=_CARD_BG,
+            font=("Microsoft YaHei UI", 9), anchor="w", justify="left", wraplength=960,
+        ).pack(anchor="w", pady=(6, 0))
 
         keep_var = tk.IntVar(value=activity.keep_days(self.cfg))
 
@@ -877,7 +965,7 @@ class WorklogDialogMixin:
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left")
         tk.Checkbutton(
-            checks, text="记录键盘、鼠标次数和位移", variable=act_on, command=toggle_act,
+            checks, text="记录按键分布、鼠标次数和位移", variable=act_on, command=toggle_act,
             fg=_CARD_FG, bg="#1e2430", selectcolor="#222733", activebackground="#1e2430",
             activeforeground=_CARD_FG, highlightthickness=0, font=("Microsoft YaHei UI", 9),
         ).pack(side="left", padx=(18, 0))
@@ -1187,6 +1275,13 @@ class WorklogDialogMixin:
             "slot_buttons": slot_buttons,
             "today_lbl": today_lbl,
             "week_lbl": week_lbl,
+            "charts": charts,
+            "heat_lbl": heat_lbl,
+            "heat_var": heat_var,
+            "heat_brief": heat_brief,
+            "heat_body": heat_body,
+            "heat_toggle": heat_toggle,
+            "heat_view_btns": heat_view_btns,
             "chart_placeholder": placeholder,
             "day_var": day_var,
             "chart_day": date.today(),
@@ -1203,7 +1298,36 @@ class WorklogDialogMixin:
             btn.bind("<Button-1>", lambda _e, s=key: self._set_chart_style(ui, s))
         for key, btn in view_btns.items():
             btn.bind("<Button-1>", lambda _e, s=key: self._set_chart_view(ui, s))
+        for key, btn in heat_view_btns.items():
+            btn.bind("<Button-1>", lambda _e, s=key: self._set_heat_view(ui, s))
+        heat_toggle.bind("<Button-1>", lambda _e: self._toggle_heat(ui))
+        heat_title.bind("<Button-1>", lambda _e: self._toggle_heat(ui))
         self._style_chart_buttons(ui)
+
+        def on_charts_width(e) -> None:
+            width = int(getattr(e, "width", 0) or 0)
+            if width <= 1 or ui.get("heat_width") == width:
+                return
+            ui["heat_width"] = width
+            ui["heat_sig"] = None
+            if ui.get("heat_job") is not None:
+                return
+
+            def paint() -> None:
+                ui["heat_job"] = None
+                try:
+                    if not charts.winfo_exists():
+                        return
+                except tk.TclError:
+                    return
+                focus = ui.get("chart_day") or date.today()
+                keyboard_heat.paint_into(
+                    ui, self.cfg, focus, date.today(), enabled=activity.enabled(self.cfg),
+                )
+
+            ui["heat_job"] = charts.after_idle(paint)
+
+        charts.bind("<Configure>", on_charts_width, add="+")
 
         def bind_chart(lbl: tk.Label, panel: str) -> None:
             def move(e) -> None:
@@ -1232,6 +1356,27 @@ class WorklogDialogMixin:
 
         bind_chart(today_lbl, "today")
         bind_chart(week_lbl, "week")
+
+        def heat_move(e) -> None:
+            ww = max(1, heat_lbl.winfo_width())
+            wh = max(1, heat_lbl.winfo_height())
+            width, height = ui.get("heat_size") or keyboard_heat.image_size()
+            keyboard_heat.hover(ui, int(e.x * width / ww), int(e.y * height / wh))
+
+        def heat_leave(_e) -> None:
+            try:
+                px, py = heat_lbl.winfo_pointerxy()
+                x, y = heat_lbl.winfo_rootx(), heat_lbl.winfo_rooty()
+                inside = x <= px < x + heat_lbl.winfo_width() and y <= py < y + heat_lbl.winfo_height()
+            except tk.TclError:
+                inside = False
+            if inside:
+                return
+            ui["heat_hover"] = False
+            keyboard_heat.hover(ui, -1, -1)
+
+        heat_lbl.bind("<Motion>", heat_move)
+        heat_lbl.bind("<Leave>", heat_leave)
 
         def on_week_click(e) -> None:
             ww = max(1, week_lbl.winfo_width())

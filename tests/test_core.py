@@ -2455,17 +2455,20 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertIs(ui["sheet"].master, ui["scroll"])
             self.assertIsNot(ui["controls"].master, ui["sheet"])
             self.assertEqual(ui["controls"].winfo_manager(), "pack")
+            self.assertEqual(ui["heat_body"].winfo_manager(), "")
+            host._toggle_heat(ui)
+            self.assertEqual(ui["heat_body"].winfo_manager(), "pack")
+            host._toggle_heat(ui)
             self.assertEqual(len(ui["slot_buttons"]), 3)
             self.assertTrue(all(isinstance(btn, tk.Menubutton) for btn in ui["slot_buttons"]))
             self.assertTrue(all(str(btn.cget("textvariable")) for btn in ui["slot_buttons"]))
             host._fit_worklog_scroll(ui, screen_h=720)
             dlg.update_idletasks()
             self.assertTrue(ui["scroll_sb"].winfo_manager())
-            self.assertEqual(ui["controls"].winfo_manager(), "pack")
             self.assertGreaterEqual(int(ui["scroll"].cget("width")), ui["table"].winfo_reqwidth())
             self.assertLess(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
             self.assertLessEqual(int(dlg.winfo_reqheight()) + 24, 720 - 48 + 8)
-            host._fit_worklog_scroll(ui, screen_h=1600)
+            host._fit_worklog_scroll(ui, screen_h=2400)
             dlg.update_idletasks()
             self.assertEqual(ui["scroll_sb"].winfo_manager(), "")
             self.assertEqual(int(ui["scroll"].cget("height")), int(ui["sheet"].winfo_reqheight()))
@@ -2988,6 +2991,95 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(off.size, im.size)
         self.assertEqual(off_hits, [])
         self.assertEqual(activity_chart.hover_text(hits, hits[0]["x0"] + 1, hits[0]["y0"] + 1), hits[0]["text"])
+
+    def test_keyboard_heat_counts_each_key_without_the_order(self):
+        import activity
+        import keyboard_heat
+
+        cfg = {}
+        now = datetime(2026, 10, 30, 10, 0)
+        buf = bytearray(activity._HDR + 24)
+        buf[0] = 1
+        buf[activity._KEY_VK_AT] = 0x45
+        self.assertEqual(activity.key_id(bytes(buf)), "45")
+        self.assertFalse(activity.note(cfg, "key", now, key="45"))
+        activity.set_enabled(cfg, True)
+        activity.note(cfg, "key", now, key="45")
+        activity.note(cfg, "key", now, key="45")
+        up = bytearray(buf)
+        up[activity._KEY_FLAGS_AT] = 1
+        self.assertIsNone(activity.key_id(bytes(up)))
+        num = bytearray(buf)
+        num[activity._KEY_FLAGS_AT] = 2
+        num[activity._KEY_VK_AT] = 0x0D
+        self.assertEqual(activity.key_id(bytes(num)), "numenter")
+        held = bytearray(buf)
+        held[activity._KEY_VK_AT] = 0xE5
+        held[activity._HDR] = 0x1D  # 左 Ctrl 的扫描码
+        self.assertEqual(activity.key_id(bytes(held)), "A2")
+        generic = bytearray(buf)
+        generic[activity._KEY_VK_AT] = 0x11
+        generic[activity._HDR] = 0x1D
+        self.assertEqual(activity.key_id(bytes(generic)), "A2")
+        activity.note(cfg, "key", now, key="numenter")
+        counted = activity.counts(cfg, now.date())
+        self.assertEqual(counted["keys"], 3)
+        self.assertEqual(counted["keymap"], {"45": 2, "numenter": 1})
+        self.assertNotIn("45", activity.report_text(cfg, now.date()))
+        activity.ensure_fields(cfg, today=now.date())
+        self.assertEqual(activity.counts(cfg, now.date())["keymap"]["45"], 2)
+
+        img, hits, summary = keyboard_heat.render(
+            {"45": 80, "5A": 1}, enabled=True, focus=now.date(), today=now.date(),
+        )
+        self.assertEqual(img.size, keyboard_heat.image_size(zones=keyboard_heat._live_zones({"45": 80, "5A": 1})))
+        self.assertFalse(any("Num" in hit["text"] for hit in hits))
+        with_num, num_hits, _num_sum = keyboard_heat.render({"45": 3, "numenter": 2}, enabled=True)
+        self.assertTrue(any("小键盘回车" in hit["text"] or hit["text"].startswith("回车") for hit in num_hits))
+        self.assertGreater(with_num.size[0], 0)
+        self.assertTrue(any("Num" in hit["text"] for hit in num_hits))
+        hot = next(hit for hit in hits if hit["text"].startswith("E "))
+        cold = next(hit for hit in hits if hit["text"].startswith("Z "))
+
+        def fill_at(hit):
+            return img.getpixel((hit["x0"] + 8, hit["y0"] + 7))
+
+        self.assertGreater(sum(fill_at(hot)[:3]), sum(fill_at(cold)[:3]))
+        self.assertIn("按了", summary)
+        self.assertIn("次", summary)
+        self.assertIn("80", hot["text"])
+        folded, folded_hits, _folded_sum = keyboard_heat.render({"11": 9}, enabled=True)
+        ctrl = next(hit for hit in folded_hits if hit["text"].startswith("Ctrl") and "9" in hit["text"])
+        self.assertIn("按了 9 次", ctrl["text"])
+        marked, marked_hits, _mark_sum = keyboard_heat.render({}, enabled=True, hide_id="C0")
+        backtick = next(hit for hit in marked_hits if hit["text"].startswith("`"))
+        self.assertIn("隐藏键", backtick["text"])
+        _off, off_hits, off_sum = keyboard_heat.render({"45": 80}, enabled=False)
+        self.assertIn("关着", off_sum)
+        self.assertTrue(off_hits)
+        self.assertTrue(all("没在记" in hit["text"] for hit in off_hits))
+        self.assertEqual(keyboard_heat.hit_text(hits, hot["x0"] + 2, hot["y0"] + 2), hot["text"])
+        wide, _wide_hits, _wide_sum = keyboard_heat.render({"45": 3}, enabled=True, width=1200)
+        self.assertEqual(wide.size[0], 1200)
+        self.assertEqual(keyboard_heat.image_size(1200)[0], 1200)
+        rank_img, rank_hits, rank_sum = keyboard_heat.render_rank(
+            {"45": 20, "52": 5, "11": 9}, enabled=True, width=1200,
+        )
+        self.assertEqual(rank_img.size[0], 1200)
+        self.assertIn("E 按了 20 次", rank_sum)
+        self.assertIn("左 Ctrl", rank_sum)
+        self.assertGreaterEqual(len(rank_hits), 3)
+        self.assertIn("第 1", rank_hits[0]["text"])
+        activity.set_heat_view(cfg, "rank")
+        activity.ensure_fields(cfg, today=now.date())
+        self.assertEqual(activity.heat_view(cfg), "rank")
+        self.assertEqual(activity.heat_view({}), "map")
+        self.assertEqual(activity.set_heat_view({}, "nope"), "map")
+        self.assertIn("num", activity.heat_zones(cfg))
+        self.assertNotIn("nav", activity.heat_zones(cfg))
+        self.assertFalse(activity.heat_open({}))
+        activity.set_heat_open(cfg, True)
+        self.assertTrue(activity.heat_open(cfg))
 
     def test_parse_raw_ignores_key_up(self):
         import activity
