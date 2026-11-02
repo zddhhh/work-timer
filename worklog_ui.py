@@ -26,6 +26,8 @@ from card_ui import (
     _CARD_MUTED,
     _card_btn,
     _card_dialog,
+    _card_needs_reveal,
+    _click_through,
     _native_file_dialog,
     _pack_err_line,
     _park_card,
@@ -1079,22 +1081,35 @@ class WorklogDialogMixin:
         except tk.TclError:
             ui["dock_near"] = None
         ui["minimized"] = True
+        dlg._parked_min = True
         _park_card(dlg, ui.get("fg", 0))
         self._show_worklog_dock()
+
+    def _worklog_needs_reveal(self, ui: dict) -> bool:
+        dlg = ui.get("dlg")
+        if dlg is None:
+            return True
+        if ui.get("minimized"):
+            return True
+        return _card_needs_reveal(dlg)
 
     def _restore_worklog(self, ui: dict) -> None:
         dlg = ui.get("dlg")
         if dlg is None:
             return
-        if not ui.get("minimized"):
+        if not self._worklog_needs_reveal(ui):
             try:
+                _click_through(dlg, False)
                 dlg.lift()
                 dlg.focus_force()
             except tk.TclError:
                 pass
             return
         ui["minimized"] = False
+        dlg._key_hidden = False
+        dlg._parked_min = False
         self._hide_worklog_dock()
+        _click_through(dlg, False)
         self._fill_worklog(ui)
         self._fit_worklog_scroll(ui)
         near = ui.get("dock_near") or self._dialog_near()
@@ -1882,6 +1897,8 @@ class WorklogDialogMixin:
         def close() -> None:
             ui["stop"] = True
             ui["minimized"] = False
+            dlg._key_hidden = False
+            dlg._parked_min = False
             job = ui.get("heat_job")
             if job is not None:
                 try:
@@ -2078,10 +2095,11 @@ class WorklogDialogMixin:
         ui["anchor"] = date.today()
         ui["chart_day"] = date.today()
         if ui.get("live"):
-            if ui.get("minimized"):
+            if self._worklog_needs_reveal(ui):
                 self._restore_worklog(ui)
             else:
                 try:
+                    _click_through(ui["dlg"], False)
                     ui["dlg"].lift()
                     ui["dlg"].focus_force()
                 except tk.TclError:
@@ -2090,6 +2108,8 @@ class WorklogDialogMixin:
         ui["live"] = True
         ui["stop"] = False
         ui["minimized"] = False
+        ui["dlg"]._key_hidden = False
+        ui["dlg"]._parked_min = False
         self._hide_worklog_dock()
         ui["fg"] = layered_win.user32.GetForegroundWindow()
         self._fill_worklog(ui)

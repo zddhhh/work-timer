@@ -1,6 +1,7 @@
 """计时器弹出的深色卡片窗：定位、拖动、隐藏到屏幕外、模态等待、附件编辑。"""
 from __future__ import annotations
 
+import ctypes
 import time
 import tkinter as tk
 from pathlib import Path
@@ -153,13 +154,16 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
         visible = not withdrawn and _alpha(dlg) >= 0.99
     except tk.TclError:
         withdrawn, visible = True, False
-    if not visible:
-        # 带着 WS_EX_TRANSPARENT 挪回屏幕会被当成「底下变了」整窗重画，必须先摘掉
-        _click_through(dlg, False)
+    # 隐藏键会给卡片加上鼠标穿透。亮出来时必须摘掉，否则点得到计时器、点不到账本。
+    _click_through(dlg, False)
     bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
     try:
         if visible:
-            if _geom_wh(dlg.geometry()) == _geom_wh(bounds):
+            try:
+                same = _geom_wh(dlg.geometry()) == _geom_wh(bounds)
+            except ValueError:
+                same = False
+            if same:
                 dlg.update()
                 return
             dlg.attributes("-alpha", 0.0)
@@ -207,10 +211,60 @@ def _click_through(dlg: tk.Toplevel, on: bool) -> None:
     if not hwnd:
         return
     u = layered_win.user32
-    ex = u.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+    ex = int(u.GetWindowLongPtrW(hwnd, _GWL_EXSTYLE) or 0)
     want = (ex | _WS_EX_TRANSPARENT | _WS_EX_LAYERED) if on else (ex & ~_WS_EX_TRANSPARENT)
     if want != ex:
-        u.SetWindowLongW(hwnd, _GWL_EXSTYLE, want)
+        u.SetWindowLongPtrW(hwnd, _GWL_EXSTYLE, want)
+        u.SetWindowPos(
+            hwnd, None, 0, 0, 0, 0,
+            layered_win.SWP_NOMOVE
+            | layered_win.SWP_NOSIZE
+            | layered_win.SWP_NOZORDER
+            | layered_win.SWP_NOACTIVATE
+            | layered_win.SWP_FRAMECHANGED,
+        )
+
+
+def _card_screen_xy(dlg: tk.Toplevel) -> tuple[int, int] | None:
+    hwnd = _frame_hwnd(dlg)
+    if hwnd:
+        rc = layered_win.RECT()
+        if layered_win.user32.GetWindowRect(hwnd, ctypes.byref(rc)):
+            return int(rc.left), int(rc.top)
+    try:
+        return int(dlg.winfo_x()), int(dlg.winfo_y())
+    except tk.TclError:
+        return None
+
+
+def _card_needs_reveal(dlg: tk.Toplevel) -> bool:
+    """藏在屏幕外、全透明、或还标着隐藏键，都要再亮一次，不能只 lift。"""
+    if getattr(dlg, "_key_hidden", False) or getattr(dlg, "_parked_min", False):
+        return True
+    try:
+        if float(dlg.attributes("-alpha")) < 0.9:
+            return True
+        if int(dlg.winfo_x()) < -500 or int(dlg.winfo_y()) < -500:
+            return True
+        if not dlg.winfo_viewable():
+            return True
+    except tk.TclError:
+        return True
+    xy = _card_screen_xy(dlg)
+    return xy is not None and (xy[0] < -500 or xy[1] < -500)
+
+
+def _move_card_hwnd(dlg: tk.Toplevel, x: int, y: int) -> None:
+    hwnd = _frame_hwnd(dlg)
+    if not hwnd:
+        return
+    layered_win.user32.SetWindowPos(
+        hwnd, None, int(x), int(y), 0, 0,
+        layered_win.SWP_NOSIZE
+        | layered_win.SWP_NOACTIVATE
+        | layered_win.SWP_NOZORDER
+        | layered_win.SWP_NOSENDCHANGING,
+    )
 
 
 def _park_card(dlg: tk.Toplevel, give_focus_to: int = 0) -> None:
@@ -222,21 +276,14 @@ def _park_card(dlg: tk.Toplevel, give_focus_to: int = 0) -> None:
     """
     try:
         dlg.attributes("-alpha", 0.0)
-        hwnd = _frame_hwnd(dlg)
-        u = layered_win.user32
-        if hwnd:
-            u.SetWindowPos(
-                hwnd, None, -20000, 0, 0, 0,
-                layered_win.SWP_NOSIZE
-                | layered_win.SWP_NOACTIVATE
-                | layered_win.SWP_NOZORDER
-                | layered_win.SWP_NOSENDCHANGING,
-            )
+        _move_card_hwnd(dlg, -20000, 0)
         dlg.geometry(_PARK_POS)
         if dlg.state() == "withdrawn":
             dlg.deiconify()
             dlg.update()
         _click_through(dlg, True)
+        hwnd = _frame_hwnd(dlg)
+        u = layered_win.user32
         if hwnd and u.GetForegroundWindow() == hwnd and give_focus_to and u.IsWindow(give_focus_to):
             u.SetForegroundWindow(give_focus_to)
     except tk.TclError:
@@ -681,7 +728,9 @@ def _hide_open_card(dlg: tk.Toplevel) -> None:
             return
         dlg._key_hidden = True
         dlg._hide_geom = dlg.geometry()
+        dlg._hide_xy = _card_screen_xy(dlg)
         dlg.attributes("-alpha", 0.0)
+        _move_card_hwnd(dlg, -20000, 0)
         dlg.geometry(_PARK_POS)
         _click_through(dlg, True)
     except tk.TclError:
@@ -692,13 +741,19 @@ def _show_open_card(dlg: tk.Toplevel) -> None:
     try:
         if not getattr(dlg, "_key_hidden", False):
             return
-        dlg._key_hidden = False
+        # 最小化停在屏幕外，回来只亮计时器，别把账本从角落里掏出来。
+        if getattr(dlg, "_parked_min", False):
+            dlg._key_hidden = False
+            return
         geom = getattr(dlg, "_hide_geom", None)
+        xy = getattr(dlg, "_hide_xy", None)
         _click_through(dlg, False)
         if dlg.state() == "withdrawn":
             dlg.deiconify()
         if geom:
             dlg.geometry(geom)
+        if xy is not None:
+            _move_card_hwnd(dlg, int(xy[0]), int(xy[1]))
         dlg.update()
         dlg.attributes("-alpha", 1.0)
         dlg.lift()
@@ -707,6 +762,7 @@ def _show_open_card(dlg: tk.Toplevel) -> None:
         except tk.TclError:
             pass
         dlg.focus_force()
+        dlg._key_hidden = False
     except tk.TclError:
         pass
 
@@ -750,7 +806,9 @@ def _run_card_modal(
                 break
             if not dlg.winfo_exists():
                 break
-            if win is not None and (win.resizing or win.dragging):
+            if win is not None and (
+                bool(getattr(win, "resizing", False)) or bool(getattr(win, "dragging", False))
+            ):
                 win.pump()
                 if on_frame is not None:
                     on_frame()

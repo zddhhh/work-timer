@@ -619,6 +619,65 @@ class GameDialogTests(unittest.TestCase):
         self.assertTrue(getattr(dlg, "_key_hidden", False))
         root.destroy()
 
+    def test_hide_key_comes_back_and_opens_the_card(self):
+        import tkinter as tk
+
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(80, 80), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        hidden = {"v": False}
+        n = {"v": 0}
+        seen = {"hidden": True, "alpha": 0.0}
+
+        class Win:
+            def pump(self):
+                return None
+
+            def dialog_hidden(self):
+                return hidden["v"]
+
+            def note_beat(self):
+                n["v"] += 1
+                if n["v"] == 2:
+                    hidden["v"] = True
+                elif n["v"] == 4:
+                    hidden["v"] = False
+                elif n["v"] == 5:
+                    seen["hidden"] = getattr(dlg, "_key_hidden", True)
+                    seen["alpha"] = float(dlg.attributes("-alpha"))
+                elif n["v"] >= 6:
+                    dlg.destroy()
+
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(80, 80))
+        main._run_card_modal(dlg, Win())
+        self.assertFalse(seen["hidden"])
+        self.assertGreaterEqual(seen["alpha"], 0.9)
+        root.destroy()
+
+    def test_hide_key_does_not_unpark_minimized_card(self):
+        import tkinter as tk
+
+        import card_ui
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(80, 80), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(80, 80))
+        dlg._parked_min = True
+        card_ui._park_card(dlg, 0)
+        card_ui._hide_open_card(dlg)
+        self.assertTrue(dlg._key_hidden)
+        card_ui._show_open_card(dlg)
+        self.assertFalse(dlg._key_hidden)
+        self.assertLess(float(dlg.attributes("-alpha")), 0.5)
+        self.assertTrue(dlg._parked_min)
+        root.destroy()
+
     def test_dismiss_popup_is_safe_without_a_menu(self):
         import layered_win
 
@@ -2481,6 +2540,7 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertEqual(ui["bar"].winfo_manager(), "pack")
             host._minimize_worklog(ui)
             self.assertTrue(ui["minimized"])
+            self.assertTrue(getattr(dlg, "_parked_min", False))
             self.assertTrue(host._worklog_docked)
             dock = host._worklog_dock
             self.assertIsNotNone(dock)
@@ -2496,7 +2556,31 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertEqual((dock.x, dock.y), parked)
             host._restore_worklog(ui)
             self.assertFalse(ui["minimized"])
+            self.assertFalse(getattr(dlg, "_parked_min", False))
             self.assertFalse(host._worklog_docked)
+            import card_ui
+            import layered_win
+
+            card_ui._hide_open_card(dlg)
+            self.assertTrue(getattr(dlg, "_key_hidden", False))
+            self.assertTrue(host._worklog_needs_reveal(ui))
+            hwnd = card_ui._frame_hwnd(dlg)
+            if hwnd:
+                ex = int(layered_win.user32.GetWindowLongPtrW(hwnd, -20) or 0)
+                self.assertTrue(ex & 0x20)
+            card_ui._show_open_card(dlg)
+            self.assertFalse(getattr(dlg, "_key_hidden", False))
+            self.assertGreaterEqual(float(dlg.attributes("-alpha")), 0.9)
+            if hwnd:
+                ex = int(layered_win.user32.GetWindowLongPtrW(hwnd, -20) or 0)
+                self.assertFalse(ex & 0x20)
+            self.assertFalse(host._worklog_needs_reveal(ui))
+            card_ui._hide_open_card(dlg)
+            self.assertTrue(host._worklog_needs_reveal(ui))
+            host._restore_worklog(ui)
+            self.assertFalse(getattr(dlg, "_key_hidden", False))
+            self.assertGreaterEqual(float(dlg.attributes("-alpha")), 0.9)
+            self.assertFalse(host._worklog_needs_reveal(ui))
             self.assertEqual(ui["scroll_host"].winfo_manager(), "pack")
             self.assertEqual(len(ui["slot_buttons"]), 3)
             self.assertTrue(all(isinstance(btn, tk.Menubutton) for btn in ui["slot_buttons"]))
