@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 按隐藏键再回来，工时账本最小化的小签还在"
+    "- 装在微信文件夹里时，更新会改到用户目录，减少 360 拦截"
 )
 
 

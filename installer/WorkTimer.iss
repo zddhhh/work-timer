@@ -305,6 +305,54 @@ begin
   Result := ExpandConstant('{param:WTNOLAUNCH|0}') = '0';
 end;
 
+function SafeAppDir: String;
+begin
+  Result := ExpandConstant('{localappdata}\Programs\WorkTimer');
+end;
+
+function IsProtectedDir(const Dir: String): Boolean;
+var
+  S: String;
+begin
+  S := LowerCase(AddBackslash(Dir));
+  Result :=
+    (Pos('\微信\', S) > 0) or
+    (Pos('\微信文件\', S) > 0) or
+    (Pos('\weixin\', S) > 0) or
+    (Pos('\wechat\', S) > 0) or
+    (Pos('\wechat files\', S) > 0) or
+    (Pos('\wxwork\', S) > 0) or
+    (Pos('\wxwork files\', S) > 0) or
+    (Pos('\xwechat\', S) > 0) or
+    (Pos('\tencent files\', S) > 0) or
+    (Pos('\tencent\qq\', S) > 0) or
+    (Pos('\dingtalk\', S) > 0) or
+    (Pos('\钉钉\', S) > 0);
+end;
+
+procedure InitializeWizard;
+begin
+  if IsProtectedDir(WizardDirValue) then
+  begin
+    Log('relocate off chat folder: ' + WizardDirValue + ' -> ' + SafeAppDir);
+    WizardForm.DirEdit.Text := SafeAppDir;
+  end;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID <> wpSelectDir then
+    Exit;
+  if IsProtectedDir(WizardDirValue) then
+  begin
+    MsgBox('不要装到微信、QQ 的文件夹里，更新时会被拦截。' + #13#10 +
+           '请用默认位置。', mbError, MB_OK);
+    WizardForm.DirEdit.Text := SafeAppDir;
+    Result := False;
+  end;
+end;
+
 function InitializeSetup: Boolean;
 begin
   try

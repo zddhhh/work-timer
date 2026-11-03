@@ -95,6 +95,35 @@ class VersionTests(unittest.TestCase):
             p.write_bytes(b"<html>")
             self.assertFalse(updater._looks_like_exe(p))
 
+    def test_protected_install_dir(self):
+        self.assertTrue(updater.is_protected_install_dir(r"F:\微信\WorkTimer"))
+        self.assertTrue(updater.is_protected_install_dir(r"C:\Users\a\Documents\WeChat Files\xx\WorkTimer"))
+        self.assertTrue(updater.is_protected_install_dir(r"D:\WXWork\WorkTimer"))
+        self.assertFalse(updater.is_protected_install_dir(r"C:\Users\a\AppData\Local\Programs\WorkTimer"))
+        self.assertFalse(updater.is_protected_install_dir(""))
+
+    def test_update_from_wechat_dir_relocates(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as d:
+            setup = Path(d) / "WorkTimer-Setup.exe"
+            setup.write_bytes(b"MZ")
+            wechat = Path(d) / "微信" / "WorkTimer" / "WorkTimer.exe"
+            wechat.parent.mkdir(parents=True)
+            popped = []
+
+            def fake_popen(args, **_kwargs):
+                popped.append(list(args))
+                return mock.Mock()
+
+            with mock.patch.object(updater, "current_exe_path", return_value=wechat), \
+                    mock.patch.object(updater, "is_installed", return_value=True), \
+                    mock.patch.object(updater.subprocess, "Popen", fake_popen):
+                updater.apply_update_and_restart(setup)
+            joined = " ".join(popped[0])
+            self.assertIn("/DIR=", joined)
+            self.assertIn("Programs", joined)
+
     def test_safe_error_strips_url(self):
         msg = updater._safe_error(RuntimeError("bad https://x/y?access_token=abc end"))
         self.assertNotIn("access_token", msg)

@@ -299,6 +299,38 @@ def check_update(cfg: dict) -> tuple[str, ReleaseInfo | None]:
     return "latest", info
 
 
+_PROTECTED_DIR_MARKS = (
+    "\\微信\\",
+    "\\微信文件\\",
+    "\\weixin\\",
+    "\\wechat\\",
+    "\\wechat files\\",
+    "\\wxwork\\",
+    "\\wxwork files\\",
+    "\\xwechat\\",
+    "\\tencent files\\",
+    "\\tencent\\qq\\",
+    "\\dingtalk\\",
+    "\\钉钉\\",
+)
+
+
+def is_protected_install_dir(path: Path | str | None) -> bool:
+    """微信/QQ 接收目录会被 360 拦更新时写 VCRUNTIME140.dll。"""
+    raw = str(path or "").replace("/", "\\")
+    if not raw:
+        return False
+    s = raw.lower()
+    if not s.endswith("\\"):
+        s += "\\"
+    return any(mark in s for mark in _PROTECTED_DIR_MARKS)
+
+
+def default_install_dir() -> Path:
+    root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return Path(root) / "Programs" / "WorkTimer"
+
+
 def current_exe_path() -> Path | None:
     if not getattr(sys, "frozen", False):
         return None
@@ -464,6 +496,8 @@ def apply_update_and_restart(setup: Path) -> None:
     except OSError:
         pass
     args = [str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"]
+    if is_protected_install_dir(cur.parent):
+        args.append("/DIR=" + str(default_install_dir()))
     if not is_installed():
         args.append(f"/WTLEGACY={cur}")
     env = os.environ.copy()
