@@ -704,6 +704,28 @@ class GameDialogTests(unittest.TestCase):
         self.assertEqual(order, ["dock", "timer"])
         self.assertTrue(host._esc_hidden)
 
+    def test_hide_key_comes_back_restores_the_dock(self):
+        import main
+
+        shown = []
+
+        class Win:
+            def show(self):
+                return None
+
+            def keep_topmost(self):
+                return None
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.win = Win()
+        host._esc_hidden = True
+        host._last_key = "x"
+        host._force_surface_sample = False
+        host._place_worklog_dock = lambda **_k: shown.append(True)
+        host._show_after_esc()
+        self.assertFalse(host._esc_hidden)
+        self.assertEqual(shown, [True])
+
     def test_hide_key_does_not_unpark_minimized_card(self):
         import tkinter as tk
 
@@ -2600,6 +2622,14 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertIsNotNone(dock)
             self.assertEqual(getattr(dock, "_caption", ""), "工时账本")
             self.assertTrue(int(getattr(dock, "hwnd", 0) or 0))
+            self.assertTrue(dock._shown)
+            host._esc_hidden = True
+            host._place_worklog_dock()
+            self.assertFalse(dock._shown)
+            self.assertTrue(host._worklog_docked)
+            host._esc_hidden = False
+            host._place_worklog_dock()
+            self.assertTrue(dock._shown)
             a = host._timer_anchor()
             self.assertLessEqual(a.y, 500)
             self.assertGreaterEqual(a.y + a.h, 500 + 92)

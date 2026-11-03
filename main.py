@@ -1030,6 +1030,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._esc_hidden = False
         self._last_key = ""
         self._force_surface_sample = True
+        self._place_worklog_dock()
 
     def _on_request_show(self) -> None:
         """快捷方式/再次启动唤起：同步清掉 Ctrl 隐藏状态，避免窗可见但主循环仍挂起。"""
@@ -1040,6 +1041,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self.win.keep_topmost()
             self._last_key = ""
             self._force_surface_sample = True
+            self._place_worklog_dock()
 
     def _hide_key_companions(self) -> None:
         """隐藏键先收账本和贴条，再藏计时器，避免账本慢半拍。"""
@@ -2354,6 +2356,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     except Exception as e:  # noqa: BLE001
                         store.log_exception("trail-warm", e)
                 self._worklog_tick()
+                self._place_worklog_dock(follow_only=True)
                 asleep = self.win.screen_asleep
                 if asleep:
                     # 锁屏或关屏：倒计时和工时照走，画面不画、桌面不截。醒来补一帧
