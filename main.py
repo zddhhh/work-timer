@@ -611,7 +611,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
     def _silent_check_update(self) -> None:
         def _run() -> None:
             try:
-                kind, info = updater.check_update(self.cfg)
+                # 静默检查有本地节流，6 小时内不重复打网；手动检查不受限。
+                kind, info = updater.check_update(self.cfg, force=False)
                 if kind == "available" and info is not None:
                     self._update_info = info
                     self._update_available = True

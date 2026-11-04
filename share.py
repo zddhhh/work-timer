@@ -6,7 +6,6 @@ import os
 import shutil
 import struct
 import time
-import urllib.parse
 import urllib.request
 from ctypes import wintypes
 from pathlib import Path
@@ -25,14 +24,7 @@ GMEM_MOVEABLE = 0x0002
 
 def public_download_url(repo: str, version: str, asset: str) -> str:
     """公开仓库的安装包直链。不带令牌，打开不用登录。"""
-    owner, name = updater.parse_repo(repo)
-    ver = (version or "").strip().lstrip("vV")
-    asset = (asset or "").strip()
-    if not ver or not asset:
-        return f"https://gitcode.com/{owner}/{name}/releases"
-    tag = urllib.parse.quote(f"v{ver}", safe="")
-    filename = urllib.parse.quote(asset, safe="")
-    return f"https://gitcode.com/{owner}/{name}/releases/download/{tag}/{filename}"
+    return updater.public_download_url(repo, version, asset)
 
 
 def landing_url(cfg: dict | None = None) -> str:

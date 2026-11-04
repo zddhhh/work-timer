@@ -103,8 +103,14 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时盘口到点喝水会闪「该喝水了」，点一下即可，倒计时不再卡住"
+    "- 检查更新改读静态清单，不再挤爆 GitCode 接口；限流时也不会再报 429"
 )
+
+# 订阅页同站：客户端优先读这里，不打 api.gitcode.com
+PAGES_OWNER = "zddhhh"
+PAGES_REPO = "worktimer-subscribe"
+PAGES_FILE = "latest.json"
+PUBLIC_DOWNLOAD = f"https://gitcode.com/{OWNER}/{REPO}/releases/download"
 
 
 def sha256_of(path: Path) -> str:
@@ -143,6 +149,69 @@ def ensure_new_version(tok: str, ver: str) -> None:
         raise SystemExit(f"线上已有 {', '.join(taken)}，不比 {ver} 旧。先 git pull，再把版本号改大。")
 
 
+def build_latest_manifest(ver: str, tag: str, body: str, digests: dict[str, str]) -> dict:
+    assets = []
+    for name, digest in digests.items():
+        assets.append(
+            {
+                "name": name,
+                "sha256": digest,
+                "url": f"{PUBLIC_DOWNLOAD}/{urllib.parse.quote(tag, safe='')}/{urllib.parse.quote(name, safe='')}",
+            }
+        )
+    return {
+        "version": ver,
+        "tag": tag,
+        "body": body,
+        "assets": assets,
+        "downloads": {
+            "main": next((a["url"] for a in assets if a["name"] == "WorkTimer-Setup.exe"), ""),
+            "win7": next((a["url"] for a in assets if a["name"] == "WorkTimer-Win7-Setup.exe"), ""),
+        },
+    }
+
+
+def publish_latest_json(manifest: dict) -> None:
+    """把 latest.json 推到 GitHub Pages，客户端检查更新优先读这里。"""
+    import base64
+    import tempfile
+
+    payload = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+    content_b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
+    api_path = f"repos/{PAGES_OWNER}/{PAGES_REPO}/contents/{PAGES_FILE}"
+    sha = ""
+    try:
+        raw = subprocess.check_output(
+            ["gh", "api", api_path, "--jq", ".sha"],
+            text=True,
+            encoding="utf-8",
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        sha = raw
+    except subprocess.CalledProcessError:
+        sha = ""
+    body = {
+        "message": f"WorkTimer {manifest.get('version')} latest.json",
+        "content": content_b64,
+        "branch": "main",
+    }
+    if sha:
+        body["sha"] = sha
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as tmp:
+        json.dump(body, tmp, ensure_ascii=False)
+        tmp_path = tmp.name
+    try:
+        subprocess.check_call(["gh", "api", "--method", "PUT", api_path, "--input", tmp_path])
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise SystemExit(f"上传 GitHub Pages {PAGES_FILE} 失败：{e}") from e
+    finally:
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+    print(f"清单已更新: https://{PAGES_OWNER}.github.io/{PAGES_REPO}/{PAGES_FILE}")
+
+
 def main() -> None:
     tok = token()
     ensure_release_tree()
@@ -173,6 +242,7 @@ def main() -> None:
 
     for p in setups:
         upload_asset(tok, tag, p)
+    publish_latest_json(build_latest_manifest(ver, tag, body, digests))
     print(f"完成：https://gitcode.com/{OWNER}/{REPO}/releases")
 
 

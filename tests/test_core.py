@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 import urllib.error
 from datetime import date, datetime, timedelta
@@ -1465,9 +1466,10 @@ class FxTests(unittest.TestCase):
             self.assertEqual(updater.friendly_error(raw)[0], head, raw)
         self.assertFalse(updater._retryable(urllib.error.URLError(TimeoutError("timed out"))))
         busy = urllib.error.HTTPError("https://example.test", 429, "Too Many", None, None)
-        self.assertTrue(updater._retryable(busy))
+        self.assertFalse(updater._retryable(busy))
         self.assertTrue(updater.is_busy_error("HTTP 429"))
         self.assertFalse(updater.is_network_error("HTTP 429"))
+        self.assertTrue(updater._retryable(urllib.error.HTTPError("https://example.test", 503, "Busy", None, None)))
         self.assertTrue(updater.is_busy_error("网络错误：[WinError 10054] 远程主机强迫关闭了一个现有的连接"))
         self.assertFalse(updater.is_network_error("网络错误：[WinError 10054] 远程主机强迫关闭了一个现有的连接"))
         reset = updater._safe_error(urllib.error.URLError(OSError(10054, "forcibly closed")))
@@ -1476,6 +1478,94 @@ class FxTests(unittest.TestCase):
         head, hint = updater.friendly_error("something exploded")
         self.assertEqual(head, "这次没更新成功")
         self.assertNotIn("exploded", hint)
+
+    def test_manifest_preferred_and_public_download(self):
+        """检查更新优先读静态清单，下载走公开链接，不打 attach_files。"""
+        digest = "a" * 64
+        payload = {
+            "version": "9.9.9",
+            "tag": "v9.9.9",
+            "body": "WorkTimer 9.9.9\n",
+            "assets": [
+                {
+                    "name": "WorkTimer-Setup.exe",
+                    "sha256": digest,
+                    "url": "https://gitcode.com/mdslanruo/work-timer/releases/download/v9.9.9/WorkTimer-Setup.exe",
+                },
+                {
+                    "name": "WorkTimer-Win7-Setup.exe",
+                    "sha256": digest,
+                    "url": "https://gitcode.com/mdslanruo/work-timer/releases/download/v9.9.9/WorkTimer-Win7-Setup.exe",
+                },
+            ],
+        }
+        info = updater.release_from_manifest(payload, asset_name="WorkTimer-Setup.exe")
+        self.assertEqual(info.version, "9.9.9")
+        self.assertIn("/releases/download/", info.download_url)
+        self.assertNotIn("api.gitcode.com", info.download_url)
+        self.assertIn(f"sha256(WorkTimer-Setup.exe): {digest}", info.body)
+        pub = updater.public_download_url(
+            "https://gitcode.com/mdslanruo/work-timer", "1.4.28", "WorkTimer-Setup.exe",
+        )
+        self.assertEqual(
+            pub,
+            "https://gitcode.com/mdslanruo/work-timer/releases/download/v1.4.28/WorkTimer-Setup.exe",
+        )
+        self.assertEqual(
+            updater.manifest_url({"subscribe_url": "https://zddhhh.github.io/worktimer-subscribe/"}),
+            "https://zddhhh.github.io/worktimer-subscribe/latest.json",
+        )
+        self.assertEqual(updater.manifest_url({}), updater.DEFAULT_MANIFEST_URL)
+
+        with mock.patch.object(updater, "fetch_from_manifest", return_value=info) as m_manifest, \
+                mock.patch.object(updater, "fetch_from_gitcode_api") as m_api:
+            got = updater.fetch_latest_release(
+                "mdslanruo/work-timer",
+                manifest="https://example.test/latest.json",
+                asset_name="WorkTimer-Setup.exe",
+            )
+            self.assertEqual(got.version, "9.9.9")
+            m_manifest.assert_called_once()
+            m_api.assert_not_called()
+
+        with mock.patch.object(updater, "fetch_from_manifest", side_effect=RuntimeError("cdn down")), \
+                mock.patch.object(updater, "fetch_from_gitcode_api", return_value=info) as m_api2:
+            got = updater.fetch_latest_release(
+                "mdslanruo/work-timer",
+                manifest="https://example.test/latest.json",
+                asset_name="WorkTimer-Setup.exe",
+            )
+            self.assertEqual(got.version, "9.9.9")
+            m_api2.assert_called_once()
+
+    def test_silent_check_throttle_uses_cache(self):
+        """启动静默检查 6 小时内不打网，仍能从缓存提示有新版本。"""
+        info = updater.ReleaseInfo(
+            tag="v9.9.8",
+            version="9.9.8",
+            name="v9.9.8",
+            body="",
+            download_url="https://gitcode.com/mdslanruo/work-timer/releases/download/v9.9.8/WorkTimer-Setup.exe",
+            asset_name="WorkTimer-Setup.exe",
+        )
+        updater.save_cached_check(info, checked_at=time.time())
+        self.assertFalse(updater.silent_check_due())
+        with mock.patch.object(updater, "fetch_latest_release") as fetch:
+            kind, got = updater.check_update(
+                {"gitcode_repo": "mdslanruo/work-timer", "subscribe_url": updater.DEFAULT_MANIFEST_URL},
+                force=False,
+            )
+            fetch.assert_not_called()
+        self.assertEqual(kind, "available")
+        self.assertEqual(got.version, "9.9.8")
+        # 手动检查仍会打网
+        with mock.patch.object(updater, "fetch_latest_release", return_value=info) as fetch:
+            kind, got = updater.check_update(
+                {"gitcode_repo": "mdslanruo/work-timer"},
+                force=True,
+            )
+            fetch.assert_called_once()
+        self.assertEqual(kind, "available")
 
     def test_menu_sections_cover_catalog(self):
         secs = themes.menu_sections()

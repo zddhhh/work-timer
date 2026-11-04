@@ -20,6 +20,9 @@ import store
 from version import APP_VERSION, ASSET_NAME
 
 API_BASE = "https://api.gitcode.com/api/v5"
+DEFAULT_MANIFEST_URL = "https://zddhhh.github.io/worktimer-subscribe/latest.json"
+# 启动静默检查：6 小时内不重复打网；手动「检查更新」不受限。
+SILENT_GAP_S = 6 * 3600
 
 
 class DownloadCancelled(Exception):
@@ -95,9 +98,10 @@ def patch_legacy_proxy() -> None:
 
 
 def _retryable(exc: BaseException) -> bool:
-    """断网那种别连着重试；刚恢复网络时的连接被掐断、服务繁忙，再试一次。"""
+    """断网那种别连着重试；刚恢复网络时的连接被掐断、服务繁忙，再试一次。
+    429 绝不重试：连着重试只会把限流拖得更久。"""
     if isinstance(exc, urllib.error.HTTPError):
-        return exc.code in (429, 502, 503, 504)
+        return exc.code in (502, 503, 504)
     if isinstance(exc, urllib.error.URLError):
         low = str(getattr(exc, "reason", exc)).lower()
         offline = ("getaddrinfo", "timed out", "timeout", "unreachable", "10051", "10065", "network is unreachable")
@@ -119,10 +123,7 @@ def _urlopen(req: urllib.request.Request, timeout: float):
                     pass
             if attempt >= 2 or not _retryable(e):
                 raise
-            wait = 2.0 if attempt == 0 else 5.0
-            if isinstance(e, urllib.error.HTTPError) and e.code == 429:
-                wait = 4.0 if attempt == 0 else 8.0
-            time.sleep(wait)
+            time.sleep(2.0 if attempt == 0 else 5.0)
     raise last  # pragma: no cover
 
 
@@ -186,12 +187,164 @@ def _pick_asset(assets: list[dict], want: str) -> dict | None:
     return None
 
 
-def fetch_latest_release(
+def public_download_url(repo: str, version: str, asset: str) -> str:
+    """公开仓库的安装包直链。不带令牌，打开不用登录，也不走 api 限流。"""
+    owner, name = parse_repo(repo)
+    ver = (version or "").strip().lstrip("vV")
+    asset = (asset or "").strip()
+    if not ver or not asset:
+        return f"https://gitcode.com/{owner}/{name}/releases"
+    tag = urllib.parse.quote(f"v{ver}", safe="")
+    filename = urllib.parse.quote(asset, safe="")
+    return f"https://gitcode.com/{owner}/{name}/releases/download/{tag}/{filename}"
+
+
+def manifest_url(cfg: dict | None = None) -> str:
+    """检查更新优先读的静态清单。和订阅页同站。"""
+    base = str((cfg or {}).get("subscribe_url") or "").strip().rstrip("/")
+    if not base:
+        return DEFAULT_MANIFEST_URL
+    return f"{base}/latest.json"
+
+
+def _cache_path() -> Path:
+    return store.user_data_dir() / "update_check.json"
+
+
+def _release_to_dict(info: ReleaseInfo) -> dict:
+    return {
+        "tag": info.tag,
+        "version": info.version,
+        "name": info.name,
+        "body": info.body,
+        "download_url": info.download_url,
+        "asset_name": info.asset_name,
+    }
+
+
+def _release_from_dict(raw: dict) -> ReleaseInfo | None:
+    if not isinstance(raw, dict):
+        return None
+    version = str(raw.get("version") or "").strip()
+    download_url = str(raw.get("download_url") or "").strip()
+    asset_name = str(raw.get("asset_name") or "").strip()
+    if not version or not download_url or not asset_name:
+        return None
+    tag = str(raw.get("tag") or f"v{version}").strip()
+    return ReleaseInfo(
+        tag=tag,
+        version=version,
+        name=str(raw.get("name") or tag),
+        body=str(raw.get("body") or ""),
+        download_url=download_url,
+        asset_name=asset_name,
+    )
+
+
+def load_cached_check() -> tuple[float, ReleaseInfo | None]:
+    """返回 (上次成功检查的 monotonic 无关墙钟秒, 缓存的 Release)。缺文件则 (0, None)。"""
+    path = _cache_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return 0.0, None
+    if not isinstance(data, dict):
+        return 0.0, None
+    try:
+        checked_at = float(data.get("checked_at") or 0)
+    except (TypeError, ValueError):
+        checked_at = 0.0
+    return checked_at, _release_from_dict(data.get("release") or {})
+
+
+def save_cached_check(info: ReleaseInfo, *, checked_at: float | None = None) -> None:
+    payload = {
+        "checked_at": float(checked_at if checked_at is not None else time.time()),
+        "release": _release_to_dict(info),
+    }
+    path = _cache_path()
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def silent_check_due(*, now: float | None = None, gap_s: float = SILENT_GAP_S) -> bool:
+    """启动静默检查是否该打网。"""
+    checked_at, _ = load_cached_check()
+    if checked_at <= 0:
+        return True
+    return float(now if now is not None else time.time()) - checked_at >= float(gap_s)
+
+
+def _body_with_digests(body: str, assets: list[dict]) -> str:
+    """清单里的 sha256 写进 body，复用现有下载校验。"""
+    text = body or ""
+    lines = []
+    for item in assets:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        digest = str(item.get("sha256") or "").strip()
+        if name and len(digest) == 64:
+            marker = f"sha256({name})"
+            if marker.lower() not in text.lower():
+                lines.append(f"# sha256({name}): {digest}")
+    if not lines:
+        return text
+    extra = "\n".join(lines)
+    return f"{text.rstrip()}\n\n{extra}\n" if text.strip() else f"{extra}\n"
+
+
+def release_from_manifest(data: object, *, asset_name: str, repo: str = "") -> ReleaseInfo:
+    """解析 GitHub Pages 上的 latest.json。"""
+    if not isinstance(data, dict):
+        raise RuntimeError("更新清单格式不对")
+    version = str(data.get("version") or "").strip().lstrip("vV")
+    if not version:
+        raise RuntimeError("更新清单没有版本号")
+    tag = str(data.get("tag") or f"v{version}").strip()
+    body = str(data.get("body") or "")
+    assets = data.get("assets")
+    if not isinstance(assets, list):
+        assets = []
+    asset = _pick_asset(assets, asset_name)
+    aname = str((asset or {}).get("name") or asset_name)
+    download_url = str((asset or {}).get("url") or "").strip()
+    if not download_url and isinstance(data.get("downloads"), dict):
+        # 订阅页 meta 形态：main / win7
+        key = "win7" if "win7" in aname.lower() else "main"
+        download_url = str(data["downloads"].get(key) or "").strip()
+    if not download_url and repo:
+        download_url = public_download_url(repo, version, aname)
+    if not download_url:
+        raise RuntimeError(f"更新清单缺少 {aname} 下载地址")
+    if asset is None and is_newer(version, APP_VERSION):
+        # 清单有版本但缺本系统安装包
+        raise RuntimeError(f"新版本 {version} 还没有上传 {asset_name}")
+    body = _body_with_digests(body, assets if isinstance(assets, list) else [])
+    return ReleaseInfo(
+        tag=tag,
+        version=version,
+        name=str(data.get("name") or tag),
+        body=body,
+        download_url=download_url,
+        asset_name=aname,
+    )
+
+
+def fetch_from_manifest(url: str, *, asset_name: str = ASSET_NAME, repo: str = "") -> ReleaseInfo:
+    data = _http_get_json(url, token="", timeout=10.0)
+    return release_from_manifest(data, asset_name=asset_name, repo=repo)
+
+
+def fetch_from_gitcode_api(
     repo: str,
     *,
     token: str = "",
     asset_name: str = ASSET_NAME,
 ) -> ReleaseInfo:
+    """API 兜底。下载地址仍用公开 releases/download，少打一次 attach_files。"""
     owner, name = parse_repo(repo)
     q = urllib.parse.urlencode({"direction": "desc", "page": 1, "per_page": 10})
     url = f"{API_BASE}/repos/{owner}/{name}/releases?{q}"
@@ -215,11 +368,7 @@ def fetch_latest_release(
     if asset is None and is_newer(version, APP_VERSION):
         raise RuntimeError(f"新版本 {version} 还没有上传 {asset_name}")
     aname = str((asset or {}).get("name") or asset_name)
-
-    download_url = (
-        f"{API_BASE}/repos/{owner}/{name}/releases/"
-        f"{urllib.parse.quote(tag)}/attach_files/{urllib.parse.quote(aname)}/download"
-    )
+    download_url = public_download_url(repo, version, aname)
 
     return ReleaseInfo(
         tag=tag,
@@ -229,6 +378,28 @@ def fetch_latest_release(
         download_url=download_url,
         asset_name=aname,
     )
+
+
+def fetch_latest_release(
+    repo: str,
+    *,
+    token: str = "",
+    asset_name: str = ASSET_NAME,
+    manifest: str = "",
+) -> ReleaseInfo:
+    """先读静态清单，失败再回落 GitCode API。"""
+    errors: list[str] = []
+    if manifest:
+        try:
+            return fetch_from_manifest(manifest, asset_name=asset_name, repo=repo)
+        except Exception as e:  # noqa: BLE001
+            errors.append(_safe_error(e))
+    try:
+        return fetch_from_gitcode_api(repo, token=token, asset_name=asset_name)
+    except Exception as e:  # noqa: BLE001
+        if errors:
+            raise RuntimeError(f"{_safe_error(e)}（清单：{errors[0]}）") from e
+        raise
 
 
 _BUSY_TRANSPORT = (
@@ -316,19 +487,31 @@ def friendly_error(msg: str) -> tuple[str, str]:
     return "这次没更新成功", "再试一次，还不行就到官网下安装包"
 
 
-def check_update(cfg: dict) -> tuple[str, ReleaseInfo | None]:
+def check_update(cfg: dict, *, force: bool = True) -> tuple[str, ReleaseInfo | None]:
+    """查最新版。force=False 用于启动静默检查：未到节流间隔则用本地缓存。"""
     repo = (cfg.get("gitcode_repo") or "").strip()
     if not repo:
         return "no_repo", None
+    checked_at, cached = load_cached_check()
+    if not force and not silent_check_due(now=time.time()):
+        if cached is not None and is_newer(cached.version, APP_VERSION):
+            return "available", cached
+        return "latest", cached
+
     try:
         info = fetch_latest_release(
             repo,
             token=(cfg.get("gitcode_token") or "").strip(),
             # 不读 cfg["asset_name"]：老配置里存着单文件版的 WorkTimer.exe
             asset_name=ASSET_NAME,
+            manifest=manifest_url(cfg),
         )
     except Exception as e:  # noqa: BLE001
+        # 短暂失败时：缓存里有更新，静默/手动都能先提示有新版本
+        if cached is not None and is_newer(cached.version, APP_VERSION):
+            return "available", cached
         return f"error:{_safe_error(e)}", None
+    save_cached_check(info, checked_at=time.time())
     if is_newer(info.version, APP_VERSION):
         return "available", info
     return "latest", info
@@ -434,6 +617,9 @@ def download_update(
 ) -> Path:
     cleanup_update_artifacts()
     token = (cfg.get("gitcode_token") or "").strip()
+    # 公开 download 链接不带令牌；API 附件下载才需要。
+    if "api.gitcode.com" not in (info.download_url or "").lower():
+        token = ""
     # 每次独立文件名，取消后旧线程占着文件也不会挡住下一次下载
     tmp = (
         Path(tempfile.gettempdir())
