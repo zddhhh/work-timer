@@ -3419,6 +3419,40 @@ class ActivityTests(unittest.TestCase):
         activity.ensure_fields(cfg, today=now.date())
         self.assertTrue(activity.chart_open(cfg))
 
+    def test_untrusted_keymap_is_dropped_totals_stay(self):
+        import activity
+        import keyboard_heat
+
+        cfg = {}
+        activity.set_enabled(cfg, True)
+        now = datetime(2026, 11, 4, 10, 0)
+        day = now.date()
+        item = activity._day(cfg, day)
+        item["keys"] = 93
+        item["keymap"] = {"25": 80, "45": 13}
+        cfg["activity"]["heat_zones"] = ["nav"]
+        counted = activity.counts(cfg, day)
+        self.assertEqual(counted["keys"], 93)
+        self.assertEqual(counted["keymap"], {})
+        _img, _hits, summary = keyboard_heat.render(
+            counted["keymap"], enabled=True, legacy=counted["keys"],
+            focus=day, today=day,
+        )
+        self.assertIn("总次数", summary)
+        activity.ensure_fields(cfg, today=day)
+        stored = cfg["activity"]["days"][day.isoformat()]
+        self.assertEqual(stored.get("keymap") or {}, {})
+        self.assertNotIn("nav", activity.heat_zones(cfg))
+        activity.note(cfg, "key", now, key="45")
+        counted = activity.counts(cfg, day)
+        self.assertEqual(counted["keys"], 94)
+        self.assertEqual(counted["keymap"], {"45": 1})
+        self.assertNotIn("25", counted["keymap"])
+        stored = cfg["activity"]["days"][day.isoformat()]
+        self.assertEqual(stored["keymap"], {"45": 1})
+        self.assertEqual(stored["keymap_ver"], activity.KEYMAP_VER)
+        self.assertEqual(stored["keys"], 94)
+
     def test_key_id_follows_scan_not_numlock(self):
         import activity
 

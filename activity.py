@@ -60,6 +60,8 @@ CARD_CHOICES = (
 _CARD_LABEL = dict(CARD_CHOICES)
 _CARD_ID = {label: key for key, label in CARD_CHOICES}
 CHART_VIEWS = ("counts", "avg", "inst")
+# 1.4.21 起按物理扫描码记键。更早的 keymap 键号可能是错的，不能接着累。
+KEYMAP_VER = 2
 # 还没停手的那一段。只放内存，换一段或退出时才写进账。
 _OPEN: dict[int, dict] = {}
 _KEY = "activity"
@@ -213,7 +215,7 @@ def ensure_fields(cfg: dict, *, today: date | None = None) -> None:
     book["days"] = cleaned
     book["on"] = bool(book.get("on"))
     book["on_card"] = bool(book.get("on")) and bool(book.get("on_card"))
-    zones = set(z for z in (book.get("heat_zones") or []) if z in ("nav", "num", "extra"))
+    zones = set()
     for item in cleaned.values():
         for ident in item.get("keymap") or {}:
             z = key_zone(str(ident))
@@ -340,8 +342,10 @@ def _clean_day(v: dict, *, inst: bool = True) -> dict:
         "clicks_ms": _hours24(v.get("clicks_ms")),
         "wheels_ms": _hours24(v.get("wheels_ms")),
         "travel_ms": _hours24(v.get("travel_ms")),
-        "keymap": _clean_keymap(v.get("keymap")),
+        "keymap": _clean_keymap(v.get("keymap")) if _keymap_trusted(v) else {},
     }
+    if _keymap_trusted(v):
+        item["keymap_ver"] = KEYMAP_VER
     for key in _LAST_KEYS:
         item[key] = _hours24(v.get(key))
     if inst:
@@ -847,6 +851,15 @@ def key_id(buf: bytes) -> str | None:
     return f"{vk:02X}"
 
 
+def _keymap_trusted(item: dict | None) -> bool:
+    if not isinstance(item, dict):
+        return False
+    try:
+        return int(item.get("keymap_ver") or 0) >= KEYMAP_VER
+    except (TypeError, ValueError):
+        return False
+
+
 def _clean_keymap(raw) -> dict:
     """只留键号和次数。顺序、时间都不在这里。"""
     if not isinstance(raw, dict):
@@ -921,6 +934,9 @@ def note(cfg: dict, kind: str, now: datetime | None = None, key: str | None = No
     field = {"key": "keys", "click": "clicks", "wheel": "wheels"}[kind]
     item[field] = _n(item.get(field)) + 1
     if kind == "key" and key:
+        if not _keymap_trusted(item):
+            item["keymap"] = {}
+            item["keymap_ver"] = KEYMAP_VER
         board = item.get("keymap")
         if not isinstance(board, dict):
             board = {}
@@ -928,6 +944,7 @@ def note(cfg: dict, kind: str, now: datetime | None = None, key: str | None = No
         ident = str(key)
         if ident == "numenter" or (len(ident) == 2 and all(c in "0123456789ABCDEF" for c in ident)):
             board[ident] = _n(board.get(ident)) + 1
+            item["keymap_ver"] = KEYMAP_VER
             _note_zone(cfg, ident)
     h = now.hour
     if 0 <= h < 24:

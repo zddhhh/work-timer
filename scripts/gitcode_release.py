@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 键盘按物理位置记，关 NumLock 不再记错；热力图最高档改成红色"
+    "- 热力图按新规则重记每个键，以前记错的键位作废；总次数和工时还在"
 )
 
 
