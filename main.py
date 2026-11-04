@@ -1319,7 +1319,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
 
     def _open_share(self) -> None:
         url, text = share.current_share(self.cfg)
-        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=420, height=280)
+        dlg = _card_dialog(self._tk_root(), near=self._dialog_near(), width=420, height=360)
         bar = tk.Frame(dlg, bg=_CARD_BG)
         bar.pack(side="bottom", fill="x", pady=(8, 16))
         body = tk.Frame(dlg, bg=_CARD_BG)
@@ -1330,12 +1330,16 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         ).pack(pady=(16, 6), anchor="w")
         tk.Label(
             body,
-            text="打不开网页的，把安装包贴到企业微信。打得开的，发下面的地址，不用登录。",
+            text="优先发下载地址，对方打开后自己选 Windows 版本。不确定对方电脑，不要直接发安装包。",
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
             wraplength=380, justify="left",
         ).pack(anchor="w")
         tk.Label(
             body, text=url, fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=380, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+        tk.Label(
+            body, text=share.file_share_hint(), fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
             wraplength=380, justify="left",
         ).pack(anchor="w", pady=(8, 0))
         tk.Label(
@@ -1350,7 +1354,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             except (OSError, ctypes.ArgumentError):
                 status.set("剪贴板没放进去，再试一次。")
                 return
-            status.set("已复制下载地址。")
+            status.set("已复制下载页地址，对方打开后自己选系统。")
 
         def finish_file(path) -> None:
             try:
@@ -1358,10 +1362,18 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             except (OSError, ctypes.ArgumentError):
                 status.set("安装包没复制上。改点「复制下载地址」。")
                 return
-            status.set("已复制安装包，贴到企业微信发给同事。")
+            status.set("已复制安装包。请确认对方电脑系统对得上。")
 
         def copy_setup() -> None:
             if pull["job"] is not None:
+                return
+            ok = messagebox.askyesno(
+                "复制安装包",
+                share.file_share_hint() + "\n\n仍然复制这个安装包？不确定就发下载地址。",
+                parent=dlg,
+            )
+            if not ok:
+                status.set("已取消。改发下载地址更稳。")
                 return
             found = share.cached_setup(share.ASSET_NAME)
             if found is not None:
@@ -1413,8 +1425,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 pass
             finish_file(path)
 
-        _card_btn(bar, "复制安装包", copy_setup, accent=True).pack(side="left", padx=(18, 8))
-        _card_btn(bar, "复制下载地址", copy_link).pack(side="left", padx=8)
+        _card_btn(bar, "复制下载地址", copy_link, accent=True).pack(side="left", padx=(18, 8))
+        _card_btn(bar, "复制安装包", copy_setup).pack(side="left", padx=8)
         _card_btn(bar, "好", dlg.destroy).pack(side="right", padx=(8, 18))
         _reveal_card(dlg, min_w=360, min_h=220, near=self._dialog_near())
         try:

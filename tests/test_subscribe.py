@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import unittest
 import urllib.error
 from pathlib import Path
@@ -32,6 +33,28 @@ class SubscribeTests(unittest.TestCase):
         self.assertIn("Windows 7、8", html)
         self.assertNotIn('value="win81"', html)
         self.assertNotIn('value="win8"', html)
+
+    def test_form_and_page_offer_direct_download(self):
+        fn = _fn()
+        fn._latest_release = lambda: {"version": "1.4.22", "tag": "v1.4.22"}
+        html = fn._form()
+        self.assertIn("选系统，下载安装包", html)
+        self.assertIn("WorkTimer-Setup.exe", html)
+        self.assertIn("WorkTimer-Win7-Setup.exe", html)
+        page = (ROOT / "scf" / "subscribe" / "page" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("选系统，下载安装包", page)
+        self.assertIn('id="dl"', page)
+        self.assertIn("WorkTimer-Win7-Setup.exe", page)
+        self.assertIn("寄到邮箱", page)
+
+    def test_meta_lists_both_setups(self):
+        fn = _fn()
+        fn._latest_release = lambda: {"version": "1.4.22", "tag": "v1.4.22"}
+        fn._env = lambda name: "mdslanruo/work-timer" if name == "GITCODE_REPO" else ""
+        payload = json.loads(fn._meta()["body"])
+        self.assertEqual(payload["version"], "1.4.22")
+        self.assertIn("WorkTimer-Setup.exe", payload["downloads"]["main"])
+        self.assertIn("WorkTimer-Win7-Setup.exe", payload["downloads"]["win7"])
 
     def test_flow_over_limit_pauses_until_tomorrow(self):
         import smtplib

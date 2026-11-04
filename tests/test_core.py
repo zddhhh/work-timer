@@ -3885,8 +3885,22 @@ class ShareTests(unittest.TestCase):
         self.assertNotIn("token", url.lower())
         text = share.share_text("1.3.72", url)
         self.assertIn("下班倒计时", text)
-        self.assertIn("不用登录", text)
+        self.assertIn("选自己的 Windows 版本", text)
         self.assertIn(url, text)
+
+    def test_share_link_goes_to_the_download_page(self):
+        import share
+
+        url, text = share.current_share({})
+        self.assertEqual(url, share.DEFAULT_LANDING)
+        self.assertIn("zddhhh.github.io/worktimer-subscribe", url)
+        self.assertIn("选自己的 Windows 版本", text)
+        self.assertIn(url, text)
+        other, _body = share.current_share({"subscribe_url": "https://example.test/dl/"})
+        self.assertEqual(other, "https://example.test/dl/")
+        self.assertIn("Windows 8.1", share.file_share_hint(win7=False))
+        self.assertIn("Windows 7", share.file_share_hint(win7=True))
+        self.assertIn("发下载地址", share.file_share_hint(win7=False))
 
     def test_remembered_setup_can_be_handed_on(self):
         import share

@@ -13,7 +13,9 @@ from pathlib import Path
 
 import store
 import updater
-from version import APP_VERSION, ASSET_NAME
+from version import APP_VERSION, ASSET_NAME, WIN7_BUILD
+
+DEFAULT_LANDING = "https://zddhhh.github.io/worktimer-subscribe/"
 
 _MIN_SETUP = 100 * 1024
 CF_UNICODETEXT = 13
@@ -33,8 +35,33 @@ def public_download_url(repo: str, version: str, asset: str) -> str:
     return f"https://gitcode.com/{owner}/{name}/releases/download/{tag}/{filename}"
 
 
+def landing_url(cfg: dict | None = None) -> str:
+    """发给同事的落地页：选系统下载，也可以填邮箱。"""
+    url = str((cfg or {}).get("subscribe_url") or "").strip()
+    return url or DEFAULT_LANDING
+
+
 def share_text(version: str, url: str) -> str:
-    return f"下班倒计时 {version}\n点这个安装，不用登录：\n{url}"
+    return (
+        f"下班倒计时 {version}\n"
+        f"打开后选自己的 Windows 版本下载，也可以填邮箱收链接：\n"
+        f"{url}"
+    )
+
+
+def file_share_hint(*, win7: bool | None = None) -> str:
+    """复制安装包前说明对方电脑要什么系统。"""
+    if win7 is None:
+        win7 = WIN7_BUILD
+    if win7:
+        return (
+            "这个安装包给 Windows 7、8 用。同事是 Windows 8.1 / 10 / 11 的话装不上。"
+            "不确定对方系统，发下载地址让他自己选。"
+        )
+    return (
+        "这个安装包给 Windows 8.1、10、11 用。同事是 Windows 7 的话装不上。"
+        "不确定对方系统，发下载地址让他自己选。"
+    )
 
 
 def cache_path(asset: str, root: Path | None = None) -> Path:
@@ -254,6 +281,5 @@ def copy_file(path: Path) -> None:
 
 
 def current_share(cfg: dict) -> tuple[str, str]:
-    repo = str((cfg or {}).get("gitcode_repo") or "").strip() or "mdslanruo/work-timer"
-    url = public_download_url(repo, APP_VERSION, ASSET_NAME)
+    url = landing_url(cfg)
     return url, share_text(APP_VERSION, url)

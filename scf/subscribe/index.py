@@ -359,17 +359,34 @@ def _form_values(event: dict) -> dict[str, str]:
 
 def _form(error: str = "", sender: str = "") -> str:
     warn = f"<p class='err'>{_esc(error)}</p>" if error else ""
+    main_url, win7_url, version = "", "", ""
+    try:
+        release = _latest_release()
+        version = str(release.get("version") or "")
+        tag = str(release.get("tag") or "")
+        repo = _env("GITCODE_REPO") or "mdslanruo/work-timer"
+        main_url = download_link(repo, tag, ASSET)
+        win7_url = download_link(repo, tag, WIN7_ASSET)
+    except Exception as e:  # noqa: BLE001
+        _log_error(e)
     if sender:
         lead = (
-            f"下载地址由 {_esc(sender)} 寄出，请认准这个发件人。"
+            f"也可让 {_esc(sender)} 把地址寄到邮箱。请认准这个发件人。"
             "两类分开寄，互不影响。同一类的同一个版本只寄一次。"
         )
     else:
-        lead = "电脑连不上更新时，先选自己的系统，下载地址寄到邮箱。"
+        lead = "先选自己的系统再下载。也可以填邮箱收链接。"
+    ver = f"<p>最新版本：{_esc(version)}</p>" if version else ""
+    dl = ""
+    if main_url and win7_url:
+        dl = (
+            f"<p><a href='{_esc(main_url)}'>下载 Windows 8.1、10、11 安装包</a></p>"
+            f"<p><a href='{_esc(win7_url)}'>下载 Windows 7、8 安装包</a></p>"
+        )
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>用邮箱收 WorkTimer</title>
+<title>下载 WorkTimer</title>
 <style>
 body {{ margin:0; font:16px/1.5 "Microsoft YaHei",sans-serif; background:#f6f1e8; color:#3a241c; }}
 main {{ max-width:420px; margin:24px auto; padding:0 16px 32px; }}
@@ -379,8 +396,10 @@ input[type=email] {{ width:100%; box-sizing:border-box; padding:10px; font-size:
 button {{ margin-top:8px; padding:10px 18px; font-size:16px; background:#b02a24; color:#fff; border:0; border-radius:8px; }}
 .err {{ color:#b02a24; }}
 </style></head><body><main>
-<h1>用邮箱收下载地址</h1>
+<h1>选系统，下载安装包</h1>
+{ver}
 <p>{lead}</p>
+{dl}
 {warn}
 <form method="post">
 <label>邮箱<br><input type="email" name="email" required placeholder="name@example.com"></label>
@@ -389,7 +408,7 @@ button {{ margin-top:8px; padding:10px 18px; font-size:16px; background:#b02a24;
 <label><input type="radio" name="os" value="win7"> Windows 7、8</label>
 <label><input type="radio" name="mode" value="once" checked> 只要这一版</label>
 <label><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
-<button type="submit">寄给我</button>
+<button type="submit">寄到邮箱</button>
 </form>
 </main></body></html>"""
 
@@ -459,11 +478,22 @@ def query_params(event: dict) -> dict[str, str]:
 
 def _meta() -> dict:
     version = ""
+    downloads: dict[str, str] = {}
     try:
-        version = str(_latest_release().get("version") or "")
+        release = _latest_release()
+        version = str(release.get("version") or "")
+        tag = str(release.get("tag") or "")
+        repo = _env("GITCODE_REPO") or "mdslanruo/work-timer"
+        downloads = {
+            "main": download_link(repo, tag, ASSET),
+            "win7": download_link(repo, tag, WIN7_ASSET),
+        }
     except Exception as e:  # noqa: BLE001
         _log_error(e)
-    body = json.dumps({"version": version, "sender": _sender()}, ensure_ascii=False)
+    body = json.dumps(
+        {"version": version, "sender": _sender(), "downloads": downloads},
+        ensure_ascii=False,
+    )
     return _json(200, body)
 
 
