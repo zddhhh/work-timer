@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 检查更新改读静态清单，不再挤爆 GitCode 接口；限流时也不会再报 429"
+    "- 检查更新改读静态清单，并带 raw 备用；不再挤爆 GitCode，也不会再报 429"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

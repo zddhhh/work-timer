@@ -21,6 +21,8 @@ from version import APP_VERSION, ASSET_NAME
 
 API_BASE = "https://api.gitcode.com/api/v5"
 DEFAULT_MANIFEST_URL = "https://zddhhh.github.io/worktimer-subscribe/latest.json"
+# Pages CDN 偶发落后，raw 立刻可读，先 Pages 再 raw，最后才打 GitCode API。
+RAW_MANIFEST_URL = "https://raw.githubusercontent.com/zddhhh/worktimer-subscribe/main/latest.json"
 # 启动静默检查：6 小时内不重复打网；手动「检查更新」不受限。
 SILENT_GAP_S = 6 * 3600
 
@@ -207,6 +209,16 @@ def manifest_url(cfg: dict | None = None) -> str:
     return f"{base}/latest.json"
 
 
+def manifest_urls(cfg: dict | None = None) -> list[str]:
+    """静态清单候选：Pages → raw。去重后保序。"""
+    out: list[str] = []
+    for url in (manifest_url(cfg), RAW_MANIFEST_URL, DEFAULT_MANIFEST_URL):
+        u = (url or "").strip()
+        if u and u not in out:
+            out.append(u)
+    return out
+
+
 def _cache_path() -> Path:
     return store.user_data_dir() / "update_check.json"
 
@@ -386,12 +398,21 @@ def fetch_latest_release(
     token: str = "",
     asset_name: str = ASSET_NAME,
     manifest: str = "",
+    manifests: list[str] | None = None,
 ) -> ReleaseInfo:
-    """先读静态清单，失败再回落 GitCode API。"""
+    """先读静态清单（可多个），失败再回落 GitCode API。"""
     errors: list[str] = []
-    if manifest:
+    urls: list[str] = []
+    if manifests:
+        urls.extend(manifests)
+    elif manifest:
+        urls.append(manifest)
+    for url in urls:
+        u = (url or "").strip()
+        if not u:
+            continue
         try:
-            return fetch_from_manifest(manifest, asset_name=asset_name, repo=repo)
+            return fetch_from_manifest(u, asset_name=asset_name, repo=repo)
         except Exception as e:  # noqa: BLE001
             errors.append(_safe_error(e))
     try:
@@ -504,7 +525,7 @@ def check_update(cfg: dict, *, force: bool = True) -> tuple[str, ReleaseInfo | N
             token=(cfg.get("gitcode_token") or "").strip(),
             # 不读 cfg["asset_name"]：老配置里存着单文件版的 WorkTimer.exe
             asset_name=ASSET_NAME,
-            manifest=manifest_url(cfg),
+            manifests=manifest_urls(cfg),
         )
     except Exception as e:  # noqa: BLE001
         # 短暂失败时：缓存里有更新，静默/手动都能先提示有新版本

@@ -1516,27 +1516,44 @@ class FxTests(unittest.TestCase):
             "https://zddhhh.github.io/worktimer-subscribe/latest.json",
         )
         self.assertEqual(updater.manifest_url({}), updater.DEFAULT_MANIFEST_URL)
+        urls = updater.manifest_urls({})
+        self.assertEqual(urls[0], updater.DEFAULT_MANIFEST_URL)
+        self.assertIn(updater.RAW_MANIFEST_URL, urls)
 
         with mock.patch.object(updater, "fetch_from_manifest", return_value=info) as m_manifest, \
                 mock.patch.object(updater, "fetch_from_gitcode_api") as m_api:
             got = updater.fetch_latest_release(
                 "mdslanruo/work-timer",
-                manifest="https://example.test/latest.json",
+                manifests=["https://example.test/latest.json"],
                 asset_name="WorkTimer-Setup.exe",
             )
             self.assertEqual(got.version, "9.9.9")
             m_manifest.assert_called_once()
             m_api.assert_not_called()
 
-        with mock.patch.object(updater, "fetch_from_manifest", side_effect=RuntimeError("cdn down")), \
-                mock.patch.object(updater, "fetch_from_gitcode_api", return_value=info) as m_api2:
+        with mock.patch.object(
+            updater,
+            "fetch_from_manifest",
+            side_effect=[RuntimeError("pages 404"), info],
+        ) as m_manifest2, mock.patch.object(updater, "fetch_from_gitcode_api") as m_api2:
             got = updater.fetch_latest_release(
                 "mdslanruo/work-timer",
-                manifest="https://example.test/latest.json",
+                manifests=["https://example.test/a.json", "https://example.test/b.json"],
                 asset_name="WorkTimer-Setup.exe",
             )
             self.assertEqual(got.version, "9.9.9")
-            m_api2.assert_called_once()
+            self.assertEqual(m_manifest2.call_count, 2)
+            m_api2.assert_not_called()
+
+        with mock.patch.object(updater, "fetch_from_manifest", side_effect=RuntimeError("cdn down")), \
+                mock.patch.object(updater, "fetch_from_gitcode_api", return_value=info) as m_api3:
+            got = updater.fetch_latest_release(
+                "mdslanruo/work-timer",
+                manifests=["https://example.test/latest.json"],
+                asset_name="WorkTimer-Setup.exe",
+            )
+            self.assertEqual(got.version, "9.9.9")
+            m_api3.assert_called_once()
 
     def test_silent_check_throttle_uses_cache(self):
         """启动静默检查 6 小时内不打网，仍能从缓存提示有新版本。"""
