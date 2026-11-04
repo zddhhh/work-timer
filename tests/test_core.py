@@ -433,13 +433,39 @@ class TickerTests(unittest.TestCase):
 
         ticker.reset()
         t = 0.0
-        rate = 3.0
         for i in range(12):
-            rate = max(0.2, rate + (1.5 if i % 2 == 0 else -0.8))
-            ticker.observe(t, rate)
-            t += ticker.CANDLE_S
+            rate = 3.0 + (1.2 if i % 2 == 0 else -0.6)
+            end = t + ticker.CANDLE_S
+            while t < end:
+                ticker.observe(t, max(0.2, rate))
+                t += 0.05
         self.assertGreaterEqual(len(ticker.bars()), 5)
         self.assertIsNotNone(ticker.forming())
+
+    def test_index_grinds_up_and_only_dips_on_pause(self):
+        import ticker
+
+        ticker.reset()
+        t = 0.0
+        while t < 12.0:
+            ticker.observe(t, 6.0)
+            t += 0.05
+        after_work = ticker.forming().c
+        pct = ticker.change_pct()
+        self.assertGreater(after_work, ticker.INDEX0)
+        self.assertGreater(pct, 0.2)
+        peak = after_work
+        while t < 18.0:
+            ticker.observe(t, 0.0)
+            t += 0.05
+        after_pause = ticker.forming().c
+        self.assertLess(after_pause, peak)
+        self.assertGreater(after_pause, ticker.INDEX0)
+        self.assertGreater(ticker.change_pct(), 0.0)
+        bars = ticker.bars()
+        self.assertGreaterEqual(len(bars), 2)
+        self.assertAlmostEqual(bars[1].o, bars[0].c, places=4)
+        self.assertTrue(any(bar.c >= bar.o for bar in bars))
 
     def test_paint_card_ticker(self):
         import ticker

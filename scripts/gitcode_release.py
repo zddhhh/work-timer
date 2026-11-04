@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 装错系统的安装包会停下来，问要不要打开下载页自己选一份"
+    "- 工时盘口改成往上累的长牛，停手只回一小截，不再按瞬时速度乱跳"
 )
 
 
