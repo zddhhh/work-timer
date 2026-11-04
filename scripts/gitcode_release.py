@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 检查更新碰到 GitCode 限流时不再说成没网；输入法选词不会再记成方向键"
+    "- 工时盘口到点喝水会闪「该喝水了」，点一下即可，倒计时不再卡住"
 )
 
 

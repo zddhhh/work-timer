@@ -225,8 +225,9 @@ def paint_face(
     stage: str,
     now: float,
     top: int,
+    nudge: str = "",
 ) -> None:
-    """标题行、毫秒读数、底部 K 线。top 是 tally 让开之后的起点。"""
+    """标题行、毫秒读数、底部 K 线。top 是 tally 让开之后的起点。nudge 是喝水这类短提示。"""
     x0, y0, x1, y1 = (int(v) for v in box)
     w = max(8, x1 - x0)
     h = max(8, y1 - top)
@@ -258,12 +259,18 @@ def paint_face(
         title_fill = (255, 150, 140, 255)
     elif stage == "warn":
         title_fill = (255, 186, 130, 250)
+    if nudge:
+        title_fill = RED if int(now * 2) % 2 == 0 else (255, 186, 130, 250)
     d.text((x0 + 5, top), "OFF", font=code_font, fill=(168, 186, 178, 230))
     tx = x0 + max(28, int(w * 0.14))
     d.text((tx, top), title, font=title_font, fill=title_fill)
-    pw = int(d.textlength(pct_text, font=pct_font))
-    if x1 - 6 - pw > tx + 20:
-        d.text((x1 - 6 - pw, top), pct_text, font=pct_font, fill=pct_fill)
+    right = (nudge or pct_text).strip()
+    right_font = title_font if nudge else pct_font
+    right_fill = title_fill if nudge else pct_fill
+    pw = int(d.textlength(right, font=right_font)) if right else 0
+    title_w = int(d.textlength(title, font=title_font)) if title else 0
+    if right and x1 - 6 - pw > tx + title_w + 6:
+        d.text((x1 - 6 - pw, top), right, font=right_font, fill=right_fill)
 
     clock_h = max(14, clock_bot - clock_top)
     clock_font = (

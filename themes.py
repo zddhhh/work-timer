@@ -831,6 +831,7 @@ def paint_card(
             stage=stage,
             now=now,
             top=top,
+            nudge=sub or "",
         )
         if kind == "ghost" and ghost_ptr is not None:
             _paint_ghost_grips(d, w, h, ghost_ptr, title_fill)

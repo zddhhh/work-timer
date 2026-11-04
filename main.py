@@ -2107,11 +2107,14 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 shown_title, hint, sub = hydrate.card_copy(self.cfg)
                 accent = theme.warn if blink else theme.big
                 if theme.kind == ticker.KIND:
-                    # 盘口大字必须是倒计时。中文塞进等宽英文字体会变成方框。
+                    # 盘口大字必须是倒计时。中文走标题和右侧「点一下」，不能整卡换成 hydrate 缓存键，
+                    # 否则毫秒钟和 K 线会按 2Hz 一顿一顿跳。
                     big = ticker.format_clock(signed, idle=idle)
+                    sub = hint
+                    key = f"{key}-hydrate-{int(blink)}"
                 else:
                     big = hint
-                key = f"hydrate-wait-{int(blink)}-{theme.id}-{w}x{h}"
+                    key = f"hydrate-wait-{int(blink)}-{theme.id}-{w}x{h}"
 
             hz = fps
             if kinetic.playing(self._kinetic, phase):

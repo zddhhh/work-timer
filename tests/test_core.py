@@ -482,6 +482,13 @@ class TickerTests(unittest.TestCase):
             stage="run", now=1.0, top=2,
         )
         self.assertGreater(max(img.getchannel("A").getdata()), 80)
+        nudged = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        ticker.paint_face(
+            nudged, (0, 0, 248, 92),
+            title="该喝水了", clock="02:14:33.847",
+            stage="run", now=1.0, top=2, nudge="点一下",
+        )
+        self.assertGreater(max(nudged.getchannel("A").getdata()), 80)
 
     def test_paint_card_ticker(self):
         import ticker
