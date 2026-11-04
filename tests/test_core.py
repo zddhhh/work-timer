@@ -3902,6 +3902,14 @@ class ShareTests(unittest.TestCase):
         self.assertIn("Windows 7", share.file_share_hint(win7=True))
         self.assertIn("发下载地址", share.file_share_hint(win7=False))
 
+    def test_wrong_os_setup_points_at_the_download_page(self):
+        import share
+
+        iss = (ROOT / "installer" / "WorkTimer.iss").read_text(encoding="utf-8")
+        self.assertIn(share.DEFAULT_LANDING, iss)
+        self.assertIn("打开下载页自己选", iss)
+        self.assertIn("OfferRightSetup", iss)
+
     def test_remembered_setup_can_be_handed_on(self):
         import share
 

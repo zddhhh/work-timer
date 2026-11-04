@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 发给同事改成下载页，对方自己选系统；复制安装包会提醒系统对不对"
+    "- 装错系统的安装包会停下来，问要不要打开下载页自己选一份"
 )
 
 

@@ -20,6 +20,7 @@
 #ifndef OutputName
   #define OutputName "WorkTimer-Setup"
 #endif
+#define DownloadPage "https://zddhhh.github.io/worktimer-subscribe/"
 
 #define AppExe "WorkTimer.exe"
 ; 下面两项只在本地装测试包时用 /D 换掉，免得改到本机真正装着的那份
@@ -72,11 +73,9 @@ SetupLogging=yes
 ; 进程等待在 [Code] 里自己做：OTA 时老进程正在退出，Inno 自带的检测在静默模式下会直接失败
 CloseApplications=no
 RestartApplications=no
-#ifdef Win7
+; 两种包都先让安装程序跑起来，再在 InitializeSetup 里按系统分流到下载页。
+; 若这里用 6.3，Win7 打开主包会直接被 Inno 拦掉，看不到下载地址。
 MinVersion=6.1sp1
-#else
-MinVersion=6.3
-#endif
 
 [Languages]
 Name: "chs"; MessagesFile: "ChineseSimplified.isl"
@@ -86,9 +85,7 @@ chs.WizardSelectDir=安装到哪里
 chs.SelectDirDesc=可以改成你想放的文件夹。以后检查更新还会装回这里。
 chs.SelectDirLabel3=默认装在当前用户自己的目录，不需要管理员。请不要选「程序文件」或 Program Files（那个要管理员权限）。
 chs.SelectDirBrowseLabel=用这个位置就点「下一步」，想换地方点「浏览」。
-#ifndef Win7
-chs.WindowsVersionNotSupported=这个安装包需要 Windows 8.1 或更高版本。%n%nWindows 7 请到发布页下载 WorkTimer-Win7-Setup.exe。
-#endif
+chs.WindowsVersionNotSupported=这个安装包需要 Windows 7 SP1（64 位）或更高版本。%n%n请打开 {#DownloadPage} 选一份合适的安装包。
 
 [Files]
 ; 先放到旁边。正在用的 WorkTimer.exe / WorkTimer.bin.exe / _internal 这里不动。
@@ -353,15 +350,54 @@ begin
   end;
 end;
 
+function OsIsWin81OrNewer: Boolean;
+var
+  Info: TWindowsVersion;
+begin
+  GetWindowsVersionEx(Info);
+  Result := (Info.Major > 6) or ((Info.Major = 6) and (Info.Minor >= 3));
+end;
+
+function OfferRightSetup: Boolean;
+var
+  Url, Hint: String;
+  Code: Integer;
+begin
+#ifdef Win7
+  if not OsIsWin81OrNewer then
+  begin
+    Result := True;
+    Exit;
+  end;
+  Hint := '这个安装包给 Windows 7、8 用。你这台电脑要用 Windows 8.1 / 10 / 11 那一份。';
+#else
+  if OsIsWin81OrNewer then
+  begin
+    Result := True;
+    Exit;
+  end;
+  Hint := '这个安装包给 Windows 8.1、10、11 用。你这台电脑要用 Windows 7、8 那一份。';
+#endif
+  Result := False;
+  Url := '{#DownloadPage}';
+  Log('wrong Windows edition, download page: ' + Url);
+  if WizardSilent then
+    Exit;
+  if MsgBox(Hint + #13#10#13#10 + '打开下载页自己选？' + #13#10 + Url, mbError, MB_YESNO) = IDYES then
+    ShellExec('open', Url, '', '', SW_SHOWNORMAL, ewNoWait, Code);
+end;
+
 function InitializeSetup: Boolean;
 begin
+  Result := OfferRightSetup;
+  if not Result then
+    Exit;
   try
     Log('previous install dir: ' + PreviousDir);
     HealNames;
   except
     Log('HealNames: ' + GetExceptionMessage);
   end;
-  Result := True;
   LegacyTarget := LegacyLaunchTarget;
   LegacyMode := LegacyTarget <> '';
   if not LegacyMode then
