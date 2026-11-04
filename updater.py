@@ -119,7 +119,10 @@ def _urlopen(req: urllib.request.Request, timeout: float):
                     pass
             if attempt >= 2 or not _retryable(e):
                 raise
-            time.sleep(1.0 if attempt == 0 else 2.0)
+            wait = 2.0 if attempt == 0 else 5.0
+            if isinstance(e, urllib.error.HTTPError) and e.code == 429:
+                wait = 4.0 if attempt == 0 else 8.0
+            time.sleep(wait)
     raise last  # pragma: no cover
 
 
@@ -197,14 +200,13 @@ def fetch_latest_release(
     if not isinstance(data, list) or not data:
         raise RuntimeError("仓库还没有 Release，请先在 GitCode 发布并上传 exe")
 
-    release = None
-    for item in data:
-        if item.get("prerelease"):
-            continue
-        release = item
-        break
-    if release is None:
+    stable = [item for item in data if isinstance(item, dict) and not item.get("prerelease")]
+    if not stable:
         raise RuntimeError("仓库暂无正式版 Release（只有预发布），稍后再试")
+    release = max(
+        stable,
+        key=lambda item: parse_version(str(item.get("tag_name") or item.get("name") or "")),
+    )
 
     tag = str(release.get("tag_name") or "")
     version = tag.lstrip("vV") or str(release.get("name") or "")
@@ -229,13 +231,41 @@ def fetch_latest_release(
     )
 
 
+_BUSY_TRANSPORT = (
+    "10054", "10053", "10060", "forcibly closed", "connection reset",
+    "remote end closed", "broken pipe", "timed out", "timeout", "ssl",
+    "eof occurred", "unexpected_eof", "连接超时",
+)
+_OFFLINE_MARKS = (
+    "getaddrinfo", "10051", "10065", "network is unreachable", "nameresolution",
+)
+
+
+def _reason_text(reason: object) -> str:
+    return str(reason or "")
+
+
+def _looks_busy_transport(text: str) -> bool:
+    low = (text or "").lower()
+    return any(k in low for k in _BUSY_TRANSPORT)
+
+
+def _looks_offline(text: str) -> bool:
+    low = (text or "").lower()
+    return any(k in low for k in _OFFLINE_MARKS)
+
+
 def _safe_error(e: BaseException) -> str:
     """给 UI 看的错误：不带 URL、不带 token。"""
     if isinstance(e, urllib.error.HTTPError):
         return f"HTTP {e.code}"
     if isinstance(e, urllib.error.URLError):
-        reason = getattr(e, "reason", None)
-        return f"网络错误：{reason}" if reason else "网络错误"
+        reason = _reason_text(getattr(e, "reason", None) or e)
+        if _looks_busy_transport(reason):
+            return "HTTP 503"
+        if reason:
+            return f"网络错误：{reason}"[:160]
+        return "网络错误"
     if isinstance(e, TimeoutError):
         return "连接超时"
     text = str(e) or e.__class__.__name__
@@ -243,18 +273,23 @@ def _safe_error(e: BaseException) -> str:
 
 
 def is_busy_error(msg: str) -> bool:
-    """更新接口次数用完了。网络是通的，过一会儿就能查。"""
+    """更新接口次数用完了，或 GitCode 把连接掐了。网是通的，过一会儿就能查。"""
     low = (msg or "").lower()
-    return "http 429" in low or "too many requests" in low or "invokes this api is too large" in low
+    if "http 429" in low or "too many requests" in low or "invokes this api is too large" in low:
+        return True
+    if "http 5" in low:
+        return True
+    return _looks_busy_transport(msg or "")
 
 
 def is_network_error(msg: str) -> bool:
-    """检查更新连不上：内网、断网、超时都算。"""
+    """本机真的解析不了域名、或网不通。GitCode 忙、被掐、SSL 抖动不算没网。"""
+    if is_busy_error(msg):
+        return False
     low = (msg or "").lower()
-    return any(
-        k in low
-        for k in ("网络", "超时", "timeout", "timed out", "urlopen", "getaddrinfo", "ssl", "unreachable")
-    )
+    if _looks_offline(msg or ""):
+        return True
+    return "网络" in low or "urlopen" in low or "unreachable" in low
 
 
 def friendly_error(msg: str) -> tuple[str, str]:
@@ -266,8 +301,8 @@ def friendly_error(msg: str) -> tuple[str, str]:
         return "暂时还没有新版本", "过一会儿再试试"
     if "http 401" in low or "http 403" in low:
         return "现在没法更新", "过几分钟再试，还不行就到官网下安装包"
-    if "http 5" in low or is_busy_error(msg):
-        return "更新这边有点忙", "过几分钟再试一次"
+    if is_busy_error(msg):
+        return "更新这边有点忙", "不是电脑没网。过几分钟再试一次"
     if is_network_error(msg):
         return "现在连不上网", "检查一下网络，再试一次"
     if "prerelease" in low or "预发布" in msg or "no stable" in low:

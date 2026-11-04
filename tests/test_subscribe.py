@@ -254,8 +254,11 @@ class SubscribeTests(unittest.TestCase):
     def test_network_error_shows_subscribe_case(self):
         import updater
 
-        self.assertTrue(updater.is_network_error("网络错误：timed out"))
+        self.assertTrue(updater.is_network_error("网络错误：[Errno 11001] getaddrinfo failed"))
+        self.assertFalse(updater.is_network_error("网络错误：timed out"))
+        self.assertTrue(updater.is_busy_error("网络错误：timed out"))
         self.assertFalse(updater.is_network_error("HTTP 404"))
+        self.assertFalse(updater.is_network_error("HTTP 429"))
 
     def test_qr_encodes_url(self):
         import qrcode

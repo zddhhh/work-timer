@@ -1450,7 +1450,7 @@ class FxTests(unittest.TestCase):
             "HTTP 502": "更新这边有点忙",
             "HTTP 429": "更新这边有点忙",
             "网络错误：[Errno 11001] getaddrinfo failed": "现在连不上网",
-            "连接超时": "现在连不上网",
+            "连接超时": "更新这边有点忙",
             "sha256 校验失败": "下载的文件不完整",
             "新版本 1.3.37 还没有上传 WorkTimer-Win7-Setup.exe": "新版本还在准备",
         }
@@ -1461,6 +1461,11 @@ class FxTests(unittest.TestCase):
         self.assertTrue(updater._retryable(busy))
         self.assertTrue(updater.is_busy_error("HTTP 429"))
         self.assertFalse(updater.is_network_error("HTTP 429"))
+        self.assertTrue(updater.is_busy_error("网络错误：[WinError 10054] 远程主机强迫关闭了一个现有的连接"))
+        self.assertFalse(updater.is_network_error("网络错误：[WinError 10054] 远程主机强迫关闭了一个现有的连接"))
+        reset = updater._safe_error(urllib.error.URLError(OSError(10054, "forcibly closed")))
+        self.assertEqual(reset, "HTTP 503")
+        self.assertEqual(updater.friendly_error("HTTP 429")[1], "不是电脑没网。过几分钟再试一次")
         head, hint = updater.friendly_error("something exploded")
         self.assertEqual(head, "这次没更新成功")
         self.assertNotIn("exploded", hint)
@@ -3511,6 +3516,17 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(activity.key_id(packet(0x25, 0x4B)), "64")
         activity.reset_key_state()
         self.assertEqual(activity.key_id(packet(0x25, 0x4B, 2)), "25")
+        activity.reset_key_state()
+        # 输入法选词：扫描码 0、VKey 是方向，不能记成方向键
+        self.assertIsNone(activity.key_id(packet(0x25, 0)))
+        activity.reset_key_state()
+        self.assertIsNone(activity.key_id(packet(0x26, 0)))
+        activity.reset_key_state()
+        self.assertIsNone(activity.key_id(packet(0x27, 0)))
+        activity.reset_key_state()
+        self.assertIsNone(activity.key_id(packet(0x28, 0)))
+        activity.reset_key_state()
+        self.assertIsNone(activity.key_id(packet(0x25, 0, 2)))
         activity.reset_key_state()
         self.assertIsNone(activity.key_id(packet(0xA0, 0x2A, 2)))
         e1 = packet(0x11, 0x1D, 4)

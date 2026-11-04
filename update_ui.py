@@ -166,13 +166,6 @@ class UpdateDialogMixin:
             if url and updater.is_network_error(msg):
                 finish_subscribe(head, url)
                 return
-            if url and updater.is_busy_error(msg):
-                finish_subscribe(
-                    head,
-                    url,
-                    "这会儿有点忙。过几分钟再试，或扫下面的码。",
-                )
-                return
             finish_idle(head, hint, error=True)
 
         def finish_subscribe(head: str, url: str, detail_text: str = "") -> None:

@@ -114,6 +114,8 @@ _SCAN_E0 = {
 }
 # PrintScreen / 小键盘会夹带的假 Shift，不是人按的。
 _FAKE_E0 = frozenset({0x2A, 0x36})
+# 方向 / Home 这类导航键必须带 E0 扫描码。输入法选词常注入 MakeCode=0 的 VKey。
+_NAV_VK = frozenset({0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E})
 _down: set[int] = set()
 _e1 = False
 
@@ -832,13 +834,16 @@ def key_id(buf: bytes) -> str | None:
     mapped = _id_from_scan(token)
     if mapped:
         return mapped
+    # 导航键只认 E0 扫描码。输入法选词会注入 MakeCode=0 的左/右/上/下。
+    if vk in _NAV_VK:
+        return None
     # 0 / 0xFF 没有键；0xE5 是输入法占位；0xE7 是直接塞进来的字符。
     # 0x10 / 0x11 / 0x12 分不出左右，隐藏键设成 Ctrl 时就会对不上图上的键。
     if vk in (0, 0xFF, 0xE5, 0xE7, 0x10, 0x11, 0x12):
         mapped_vk = _vk_from_make(make, flags)
-        if mapped_vk and mapped_vk not in (0, 0xFF, 0xE5, 0xE7):
+        if mapped_vk and mapped_vk not in (0, 0xFF, 0xE5, 0xE7) and mapped_vk not in _NAV_VK:
             vk = mapped_vk
-    if vk <= 0 or vk >= 256 or vk in (0xE5, 0xE7):
+    if vk <= 0 or vk >= 256 or vk in (0xE5, 0xE7) or vk in _NAV_VK:
         return None
     if vk == 0x0D and flags & 2:
         return "numenter"
