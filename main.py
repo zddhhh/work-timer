@@ -41,6 +41,7 @@ import skin_settings
 import store
 import suofen
 import themes
+import ticker
 import uninstall
 import updater
 import worklog
@@ -765,6 +766,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._worklog_dirty = True
 
     def _on_raw_input(self, buf: bytes) -> None:
+        activity.track_key(buf)
         delta = activity.mouse_delta(buf)
         kind = activity.parse_raw(buf)
         evidence = activity.physical_input(buf)
@@ -785,6 +787,10 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         if delta is not None and activity.add_travel(self.cfg, delta[0], delta[1], now):
             self._activity_dirty = True
         key = activity.key_id(buf) if kind == "key" else None
+        if kind == "key" and evidence is None:
+            # 输入法、SendInput 没有硬件设备，热力图上会凭空多出空格、回车。
+            kind = None
+            key = None
         if kind and activity.note(self.cfg, kind, now, key=key):
             self._activity_dirty = True
 
@@ -821,6 +827,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_key = ""
         elif kind == suofen.KIND:
             suofen.poke(now)
+            self._last_key = ""
+        elif kind == ticker.KIND:
+            ticker.poke(now)
             self._last_key = ""
         elif kind == "neonflow":
             rr = min(self._theme().radius, max(8, self._win_h // 5))
@@ -1827,6 +1836,22 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         title = schedules.schedule_countdown_title(str(item.get("title") or "日程"), done=done)
         return title, left, done, False
 
+    def _ticker_seconds(self, now: datetime, total: int, done: bool, idle: bool) -> float:
+        if idle:
+            return 0.0
+        aid = schedules.active_id(self.cfg)
+        if aid == schedules.OFFWORK_ID:
+            off = self._off_hm()
+            if off is None:
+                return 0.0
+            return flex_time.remaining_to(now, off[0], off[1]).total_seconds()
+        item = schedules.find_schedule(self.cfg, aid) if aid else None
+        if item is not None and str(item.get("kind") or "") == "clock":
+            target = schedules.schedule_target(item)
+            if target is not None:
+                return (target - now).total_seconds()
+        return -float(total) if done else float(total)
+
     def _handle_menu(self, sx: int, sy: int) -> None:
         op = self.win.popup_menu(
             sx,
@@ -1985,6 +2010,11 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             if env is not None and ornaments.uses_env(theme.kind):
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
             shown_title = title if not idle else "距离下班"
+            if theme.kind == ticker.KIND:
+                signed = self._ticker_seconds(now, total, done, idle)
+                big = ticker.format_clock(signed, idle=idle)
+                shown_title = ticker.header_title(stage, idle=idle)
+                ticker.observe(phase, activity.live_intensity(self.cfg, now))
             meow_on = theme.kind == meow.KIND
             drinking = meow_on and self._hydrate_showing and kinetic.playing(self._kinetic, phase)
             if meow_on:
@@ -2002,6 +2032,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     bg_hz = self._meow.fps(stage, phase, drinking=drinking)
                 elif theme.kind == suofen.KIND:
                     bg_hz = suofen.fps(stage, phase)
+                elif theme.kind == ticker.KIND:
+                    bg_hz = ticker.fps(stage, phase)
                 elif themes.use_flip_display(theme.kind, big, self.cfg, h=h):
                     if ornaments.drift_only(theme.kind) and not ornaments.sweeping(stage, phase):
                         bg_hz = 10

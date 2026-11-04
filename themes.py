@@ -19,24 +19,28 @@ import meow
 import ornaments
 import store
 import tally_bubble
+import ticker
 
 DEFAULT_THEME_ID = "ghost"
 
 
 def use_flip_display(kind: str, big: str, cfg: dict | None = None, *, h: int = 92) -> bool:
     """含数字的剩余时间一律翻牌渲染（「点我开始」等纯文案仍走大字）。cfg/h 保留兼容旧调用。"""
+    if kind == ticker.KIND:
+        return False
     return bool(big) and fx._flip_text_has_digits(big)
 
 
-INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow", "suofen"})
+INTERACTIVE_SKINS = frozenset({"thunder", "inkpulse", "neonflow", "suofen", ticker.KIND})
 # 底图里画着点击反馈或落雷，必须每帧现画
 _LIVE_BG_KINDS = frozenset({"thunder", "neonflow"})
 _BG_CACHE: dict = {}
+THEME_CAP = 18
 _KINDS = frozenset(
     {
         "ghost", "glass", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
         "midautumn", "nationalday", "neonflow", "inkpulse", "thunder",         "flipclock", meow.KIND,
-        "huajing", "suofen",
+        "huajing", "suofen", ticker.KIND,
     }
 )
 # 新 kind 的皮写在代码里、不进在线 themes.json：旧版不认识的 kind 会回落成玻璃皮
@@ -82,6 +86,20 @@ _BUILTIN_EXTRA: tuple[dict, ...] = (
         "warn": [196, 88, 20, 255],
         "done": [176, 32, 28, 255],
         "radius": 16,
+    },
+    {
+        "id": "ticker",
+        "name": "工时盘口",
+        "kind": ticker.KIND,
+        "fill": [8, 10, 14, 245],
+        "outline": [48, 62, 72, 140],
+        "title": [186, 196, 188, 230],
+        "big": [248, 250, 252, 255],
+        "sub": [160, 176, 168, 220],
+        "idle": [168, 176, 184, 255],
+        "warn": [255, 168, 96, 255],
+        "done": [255, 136, 120, 255],
+        "radius": 10,
     },
 )
 # 已下架的皮：即便旧缓存 / 旧在线目录里还有，也不再显示；配置里存着的回落到淡影
@@ -183,6 +201,8 @@ def _skin_base_rgba(
         return (8, 12, 18, 235)
     if kind == "suofen":
         return (255, 236, 214, 250)
+    if kind == ticker.KIND:
+        return (8, 10, 14, 245)
     if kind == "glass":
         return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
     return (252, 253, 255, 95) if skin_light else (12, 14, 20, 42)
@@ -396,7 +416,7 @@ def _bundled_themes() -> list[Theme]:
     have = {t.id for t in items}
     for raw in _BUILTIN_EXTRA:
         th = _parse_theme(raw)
-        if th is not None and th.id not in have and len(items) < 17:
+        if th is not None and th.id not in have and len(items) < THEME_CAP:
             items.append(th)
             have.add(th.id)
     return items
@@ -495,13 +515,13 @@ _PREFER_BUNDLED = frozenset(
     {
         "ghost", "midnight", "frost", "neon", "terminal", "aurora", "inkgold", "warmglow",
         "midautumn", "nationalday", "neonflow", "inkpulse", "thunder", "flipclock",         "meow",
-        "huajing", "suofen",
+        "huajing", "suofen", "ticker",
     }
 )
 
 
 def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme]:
-    """在线/缓存目录 + 内置目录合并：内置皮以内置为准，远端缺的内置皮补回来，上限 17。"""
+    """在线/缓存目录 + 内置目录合并：内置皮以内置为准，远端缺的内置皮补回来，上限 THEME_CAP。"""
     if not remote:
         return list(bundled)
     bmap = {t.id: t for t in bundled}
@@ -515,11 +535,11 @@ def _merge_with_bundled(remote: list[Theme], bundled: list[Theme]) -> list[Theme
     for t in bundled:
         if t.id in seen:
             continue
-        if len(items) >= 17:
+        if len(items) >= THEME_CAP:
             break
         items.append(t)
         seen.add(t.id)
-    return items[:17]
+    return items[:THEME_CAP]
 
 
 def load_local_catalog() -> None:
@@ -729,7 +749,7 @@ def paint_card(
                 elif large_chrome:
                     oa = min(oa, 14)
                 d.rounded_rectangle(box, radius=r, outline=(*theme.outline[:3], oa), width=1)
-            if not compact_chrome and kind not in ("huajing", "suofen"):
+            if not compact_chrome and kind not in ("huajing", "suofen", ticker.KIND):
                 inset = 2
                 ibox = (box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset)
                 pale_rim = ctx.card_light and kind not in ("midautumn", "nationalday", "thunder")
@@ -774,7 +794,8 @@ def paint_card(
 
     ghost = kind == "ghost"
     compact_text = h < 72
-    show_flip = use_flip_display(kind, big, h=h)
+    ticker_on = kind == ticker.KIND
+    show_flip = use_flip_display(kind, big, h=h) and not ticker_on
     # 仪仗队皮：底部留给小猫，标题和数字整体上移
     meow_lay = meow.layout(box) if kind == meow.KIND else None
     if meow_lay is not None:
@@ -795,6 +816,25 @@ def paint_card(
             text_w, h, title_h=title_h, has_sub=bool(sub),
         )
     title_x = None
+    if ticker_on:
+        top = int(box[1]) + 2
+        if tally is not None:
+            shift = tally_bubble.paint_top(
+                img, (2, box[1], max(50, text_w - 2), box[3]), tally, light=False, still=still,
+            )
+            if shift:
+                top += int(shift)
+        ticker.paint_face(
+            img, box,
+            title=title or "距离下班",
+            clock=big or "--:--:--.---",
+            stage=stage,
+            now=now,
+            top=top,
+        )
+        if kind == "ghost" and ghost_ptr is not None:
+            _paint_ghost_grips(d, w, h, ghost_ptr, title_fill)
+        return
     if tally is not None and meow_lay is not None:
         # 仪仗队顶上已经贴着标题，次数跟标题同一行，倒计时不再往下压到猫头
         title_w = int(d.textlength(title, font=font_title)) if title else 0

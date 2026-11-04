@@ -38,7 +38,7 @@ _SKIN_LAYERS: dict[str, tuple[str, str | None]] = {
     "huajing": ("skin_huajing.png", None),
 }
 # 不用生图、逐帧程序化绘制的皮
-_PROC_KINDS = frozenset({"neonflow", "inkpulse", "thunder", "flipclock", meow.KIND, "suofen"})
+_PROC_KINDS = frozenset({"neonflow", "inkpulse", "thunder", "flipclock", meow.KIND, "suofen", "ticker"})
 
 
 def asset_path(name: str) -> Path:
@@ -524,6 +524,10 @@ def paste_skin(
             import suofen
 
             suofen.paint(layer, phase, stage=stage)
+        elif kind == "ticker":
+            import ticker
+
+            ticker.paint(layer, phase, stage=stage, radius=int(radius))
         img.alpha_composite(_round_mask(layer, radius), (x0, y0))
         return True
 

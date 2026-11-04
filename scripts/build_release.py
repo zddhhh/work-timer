@@ -22,7 +22,7 @@ HIDDEN_IMPORTS = [
     "themes", "changelog", "backdrop", "boot_ok", "ornaments", "schedules", "memos", "worklog", "attachments",
     "PIL.ImageTk", "autostart", "desktop_shortcut", "single_instance", "key_hide", "uninstall", "store",
     "layered_win", "festival", "kinetic", "meow", "mines", "golf", "pool", "flex_time", "hydrate", "activity", "activity_chart", "feedback", "updater", "win_drop", "tkinterdnd2",
-    "suofen", "tally_bubble", "card_ui", "worklog_ui", "schedule_ui", "update_ui", "PIL.ImageStat",
+    "suofen", "ticker", "tally_bubble", "card_ui", "worklog_ui", "schedule_ui", "update_ui", "PIL.ImageStat",
     "qrcode", "qrcode.image.pil",
     "version", "share",
 ]

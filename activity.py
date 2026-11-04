@@ -74,6 +74,46 @@ _BUTTON_FLAGS_AT = _HDR + 4
 _DX_AT = _HDR + 12
 _DY_AT = _HDR + 16
 _MOUSE_ABS = 0x01
+# Set 1 扫描码 → 图上的键号。按物理键记，不跟 NumLock、输入法走。
+# 小键盘 4 永远是 64，不会在关 NumLock 时记成左方向。
+_SCAN = {
+    0x01: "1B",
+    0x02: "31", 0x03: "32", 0x04: "33", 0x05: "34", 0x06: "35",
+    0x07: "36", 0x08: "37", 0x09: "38", 0x0A: "39", 0x0B: "30",
+    0x0C: "BD", 0x0D: "BB", 0x0E: "08", 0x0F: "09",
+    0x10: "51", 0x11: "57", 0x12: "45", 0x13: "52", 0x14: "54",
+    0x15: "59", 0x16: "55", 0x17: "49", 0x18: "4F", 0x19: "50",
+    0x1A: "DB", 0x1B: "DD", 0x1C: "0D", 0x1D: "A2",
+    0x1E: "41", 0x1F: "53", 0x20: "44", 0x21: "46", 0x22: "47",
+    0x23: "48", 0x24: "4A", 0x25: "4B", 0x26: "4C",
+    0x27: "BA", 0x28: "DE", 0x29: "C0", 0x2A: "A0", 0x2B: "DC",
+    0x2C: "5A", 0x2D: "58", 0x2E: "43", 0x2F: "56", 0x30: "42",
+    0x31: "4E", 0x32: "4D", 0x33: "BC", 0x34: "BE", 0x35: "BF",
+    0x36: "A1", 0x37: "6A", 0x38: "A4", 0x39: "20", 0x3A: "14",
+    0x3B: "70", 0x3C: "71", 0x3D: "72", 0x3E: "73", 0x3F: "74",
+    0x40: "75", 0x41: "76", 0x42: "77", 0x43: "78", 0x44: "79",
+    0x45: "90", 0x46: "91",
+    0x47: "67", 0x48: "68", 0x49: "69", 0x4A: "6D",
+    0x4B: "64", 0x4C: "65", 0x4D: "66", 0x4E: "6B",
+    0x4F: "61", 0x50: "62", 0x51: "63", 0x52: "60", 0x53: "6E",
+    0x57: "7A", 0x58: "7B",
+}
+_SCAN_E0 = {
+    0x1C: "numenter",
+    0x1D: "A3",
+    0x35: "6F",
+    0x37: "2C",
+    0x38: "A5",
+    0x47: "24", 0x48: "26", 0x49: "21",
+    0x4B: "25", 0x4D: "27",
+    0x4F: "23", 0x50: "28", 0x51: "22",
+    0x52: "2D", 0x53: "2E",
+    0x5B: "5B", 0x5C: "5C", 0x5D: "5D",
+}
+# PrintScreen / 小键盘会夹带的假 Shift，不是人按的。
+_FAKE_E0 = frozenset({0x2A, 0x36})
+_down: set[int] = set()
+_e1 = False
 
 
 def enabled(cfg: dict) -> bool:
@@ -585,6 +625,17 @@ def _live_pair(cfg: dict, kind: str, now: datetime) -> tuple[int, int]:
     return _window_pair(burst, now)
 
 
+def live_intensity(cfg: dict, now: datetime | None = None) -> float:
+    """这一秒键+点+滚的合计次数/秒。停手是 0。给盘口 K 线用。"""
+    now = now or datetime.now()
+    total = 0.0
+    for kind in ("key", "click", "wheel"):
+        n, ms = _live_pair(cfg, kind, now)
+        if n > 0 and ms > 0:
+            total += n * 1000.0 / ms
+    return total
+
+
 def speed_snapshot(cfg: dict, now: datetime | None = None) -> dict:
     """主界面用的瞬时和当前小时平均。调用前应先 settle。"""
     now = now or datetime.now()
@@ -698,6 +749,46 @@ def fmt_speed_line(
     )
 
 
+def reset_key_state() -> None:
+    """测试或重开监听时清掉按住状态。"""
+    global _down, _e1
+    _down = set()
+    _e1 = False
+
+
+def _scan_token(make: int, flags: int) -> int:
+    scan = int(make) & 0xFF
+    return (0xE000 | scan) if flags & 2 else scan
+
+
+def track_key(buf: bytes) -> None:
+    """松开时清掉按住。连发、Pause 的半截包都靠这个认。"""
+    global _e1
+    if len(buf) < _KEY_VK_AT + 2 or int.from_bytes(buf[0:4], "little") != 1:
+        return
+    flags = int.from_bytes(buf[_KEY_FLAGS_AT:_KEY_FLAGS_AT + 2], "little")
+    make = int.from_bytes(buf[_HDR:_HDR + 2], "little")
+    token = _scan_token(make, flags)
+    if flags & 4:
+        _e1 = True
+        return
+    if flags & 1:
+        _down.discard(token)
+        if _e1:
+            _e1 = False
+
+
+def _id_from_scan(token: int) -> str | None:
+    if token & 0xE000:
+        scan = token & 0xFF
+        if scan in _FAKE_E0:
+            return None
+        got = _SCAN_E0.get(scan)
+        return str(got) if got else None
+    got = _SCAN.get(token)
+    return str(got) if got else None
+
+
 def _vk_from_make(make: int, flags: int) -> int:
     """扫描码换成左右能分开的虚拟键。输入法占住时，原始键号会变成「正在处理」。"""
     scan = int(make) & 0xFF
@@ -710,18 +801,39 @@ def _vk_from_make(make: int, flags: int) -> int:
 
 
 def key_id(buf: bytes) -> str | None:
-    """键盘按下时的键号。松开、说不清的键不记。小键盘回车和主键回车分开。"""
-    if parse_raw(buf) != "key" or len(buf) < _KEY_VK_AT + 2:
+    """键盘按下时的键号。按物理扫描码记，不跟 NumLock。松开、连发、假 Shift 不记。"""
+    global _e1
+    if len(buf) < _KEY_VK_AT + 2 or int.from_bytes(buf[0:4], "little") != 1:
         return None
     flags = int.from_bytes(buf[_KEY_FLAGS_AT:_KEY_FLAGS_AT + 2], "little")
     vk = int.from_bytes(buf[_KEY_VK_AT:_KEY_VK_AT + 2], "little")
     make = int.from_bytes(buf[_HDR:_HDR + 2], "little")
+    token = _scan_token(make, flags)
+    if flags & 1:
+        return None
+    if flags & 4:
+        return None
+    if _e1:
+        _e1 = False
+        if token in _down:
+            return None
+        _down.add(token)
+        return "13"
+    if flags & 2 and (make & 0xFF) in _FAKE_E0:
+        return None
+    if token and token in _down:
+        return None
+    if token:
+        _down.add(token)
+    mapped = _id_from_scan(token)
+    if mapped:
+        return mapped
     # 0 / 0xFF 没有键；0xE5 是输入法占位；0xE7 是直接塞进来的字符。
     # 0x10 / 0x11 / 0x12 分不出左右，隐藏键设成 Ctrl 时就会对不上图上的键。
     if vk in (0, 0xFF, 0xE5, 0xE7, 0x10, 0x11, 0x12):
-        mapped = _vk_from_make(make, flags)
-        if mapped and mapped not in (0, 0xFF, 0xE5, 0xE7):
-            vk = mapped
+        mapped_vk = _vk_from_make(make, flags)
+        if mapped_vk and mapped_vk not in (0, 0xFF, 0xE5, 0xE7):
+            vk = mapped_vk
     if vk <= 0 or vk >= 256 or vk in (0xE5, 0xE7):
         return None
     if vk == 0x0D and flags & 2:

@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 装在微信文件夹里时，更新会改到用户目录，减少 360 拦截"
+    "- 键盘按物理位置记，关 NumLock 不再记错；热力图最高档改成红色"
 )
 
 

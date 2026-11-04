@@ -17,20 +17,22 @@ _RANK = 52
 _FOLD = {"10": "A0", "11": "A2", "12": "A4"}
 _FONT: dict[tuple, ImageFont.ImageFont] = {}
 
-_DECK = (16, 20, 30, 255)
-_IDLE = (27, 33, 46, 255)
-_EDGE = (58, 68, 86, 255)
-_INK = (214, 222, 234, 255)
+_DECK = (14, 17, 26, 255)
+_IDLE = (24, 30, 42, 255)
+_EDGE = (52, 62, 80, 255)
+_INK = (226, 232, 242, 255)
 _DIM = (132, 142, 160, 255)
 _QUIET = (96, 106, 124, 255)
-# 次数对峰值开 1.85 次方：只有很接近最高的键才进暖色，常用键不会一片金黄。
+# 次数对峰值开 1.85 次方：只有很接近最高的键才进红，常用键停在蓝绿。
 _GAMMA = 1.85
 _STOPS = (
-    (0.0, (32, 52, 78)),
-    (0.28, (38, 92, 148)),
-    (0.58, (72, 168, 206)),
-    (0.88, (186, 214, 168)),
-    (1.0, (255, 196, 112)),
+    (0.0, (30, 48, 86)),
+    (0.18, (28, 92, 176)),
+    (0.36, (24, 168, 186)),
+    (0.52, (64, 196, 118)),
+    (0.68, (232, 196, 58)),
+    (0.84, (255, 122, 48)),
+    (1.0, (228, 48, 58)),
 )
 
 
@@ -270,6 +272,25 @@ def _heat(t: float) -> tuple[int, int, int, int]:
     return _STOPS[-1][1][0], _STOPS[-1][1][1], _STOPS[-1][1][2], 255
 
 
+def _keycap(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    fill: tuple[int, int, int, int],
+    edge: tuple[int, int, int, int],
+    *,
+    hot: bool,
+) -> None:
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle(box, radius=6, fill=fill, outline=edge)
+    if x1 - x0 < 10 or y1 - y0 < 10:
+        return
+    lift = 28 if hot else 14
+    sheen = tuple(min(255, c + lift) for c in fill[:3]) + (fill[3],)
+    draw.line((x0 + 3, y0 + 2, x1 - 3, y0 + 2), fill=sheen)
+    shade = tuple(max(0, c - 22) for c in fill[:3]) + (fill[3],)
+    draw.line((x0 + 3, y1 - 2, x1 - 3, y1 - 2), fill=shade)
+
+
 def _ink(fill: tuple[int, int, int, int], hot: bool) -> tuple[int, int, int, int]:
     if not hot:
         return _DIM
@@ -422,7 +443,7 @@ def render(
         except AttributeError:
             tw = meta_font.getsize(count)[0]
         draw.text((width - 18 - tw, 14), count, font=meta_font, fill=_DIM)
-        _legend(draw, width - 18 - tw - 78, 16)
+        _legend(draw, width - 18 - tw - 112, 15)
     elif enabled and legacy > 0:
         draw.text((width - 196, 14), "只有总次数", font=meta_font, fill=_QUIET)
 
@@ -436,15 +457,15 @@ def render(
         count = board.get(ident, 0) if enabled else 0
         hot = enabled and count > 0 and peak > 0
         if not enabled:
-            fill = (24, 29, 40, 255)
-            edge = (42, 48, 62, 255)
+            fill = (22, 26, 36, 255)
+            edge = (40, 46, 58, 255)
         elif not hot:
             fill = _IDLE
             edge = _EDGE
         else:
             fill = _heat(_tone(count, peak))
-            edge = tuple(min(255, c + 24) for c in fill[:3]) + (255,)
-        draw.rounded_rectangle(box, radius=6, fill=fill, outline=edge)
+            edge = tuple(min(255, c + 28) for c in fill[:3]) + (255,)
+        _keycap(draw, box, fill, edge, hot=hot)
         if ident in (_hx(0x46), _hx(0x4A)):
             notch = (box[0] + (box[2] - box[0] - 10) // 2, box[3] - 5, box[0] + (box[2] - box[0] + 10) // 2, box[3] - 3)
             draw.rounded_rectangle(notch, radius=1, fill=_QUIET if not hot else _ink(fill, True))
@@ -482,6 +503,7 @@ def _rank(draw: ImageDraw.ImageDraw, ranked: list[tuple[str, int]], width: int, 
         draw.text(((width - tw) / 2, top + 12), note, font=font, fill=_QUIET)
         return
     chips = []
+    peak = ranked[0][1] if ranked else 1
     for ident, count in ranked:
         name = _shown(ident)
         times = f"按了 {activity.fmt_count(count)} 次"
@@ -492,14 +514,16 @@ def _rank(draw: ImageDraw.ImageDraw, ranked: list[tuple[str, int]], width: int, 
             nw = font.getsize(name)[0]
             cw = font.getsize(times)[0]
         cap = max(28, nw + 16)
-        chips.append((name, times, cap, cap + 8 + cw))
+        fill = _heat(_tone(count, peak))
+        chips.append((name, times, cap, cap + 8 + cw, fill))
     gap = 28
     total_w = sum(item[3] for item in chips) + gap * (len(chips) - 1)
     x = max(16, (width - total_w) / 2)
-    for name, times, cap, whole in chips:
+    for name, times, cap, whole, fill in chips:
         y0, y1 = top + 8, top + 36
-        draw.rounded_rectangle((x, y0, x + cap, y1), radius=6, fill=(36, 64, 96, 255), outline=_EDGE)
-        _center(draw, (int(x), y0, int(x + cap), y1), name, font, _INK)
+        edge = tuple(min(255, c + 24) for c in fill[:3]) + (255,)
+        draw.rounded_rectangle((x, y0, x + cap, y1), radius=6, fill=fill, outline=edge)
+        _center(draw, (int(x), y0, int(x + cap), y1), name, font, _ink(fill, True))
         draw.text((x + cap + 8, top + 14), times, font=font, fill=_INK)
         x += whole + gap
 
@@ -610,9 +634,13 @@ def render_rank(
 
 
 def _legend(draw: ImageDraw.ImageDraw, x: int, y: int) -> None:
-    for i in range(4):
-        fill = _heat(i / 3)
-        draw.rounded_rectangle((x + i * 12, y, x + i * 12 + 8, y + 8), radius=2, fill=fill)
+    font = _font(9)
+    draw.text((x, y - 1), "少", font=font, fill=_QUIET)
+    left = x + 16
+    for i in range(6):
+        fill = _heat(i / 5)
+        draw.rounded_rectangle((left + i * 11, y, left + i * 11 + 8, y + 8), radius=2, fill=fill)
+    draw.text((left + 6 * 11 + 2, y - 1), "多", font=font, fill=_QUIET)
 
 
 def hit_text(hits: list[dict], x: int, y: int) -> str:

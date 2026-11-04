@@ -290,11 +290,14 @@ class MeowTests(unittest.TestCase):
         self.assertIn("meow", [t.id for t in themes._bundled_themes()])
         # 老版本不认识 meow 会退成玻璃，所以只写在代码里
         self.assertNotIn("meow", [t.id for t in themes._load_json_file(ROOT / "themes.json")])
-        self.assertLessEqual(len(themes._bundled_themes()), 17)
+        self.assertLessEqual(len(themes._bundled_themes()), themes.THEME_CAP)
         self.assertIn("meow", [t.id for t in themes.menu_sections()["fancy"]])
         self.assertIn("suofen", [t.id for t in themes._bundled_themes()])
         self.assertNotIn("suofen", [t.id for t in themes._load_json_file(ROOT / "themes.json")])
         self.assertIn("发激励啦", [t.name for t in themes.menu_sections()["fancy"]])
+        self.assertIn("ticker", [t.id for t in themes._bundled_themes()])
+        self.assertNotIn("ticker", [t.id for t in themes._load_json_file(ROOT / "themes.json")])
+        self.assertIn("工时盘口", [t.name for t in themes.menu_sections()["fancy"]])
 
     def test_suofen_poke_pays_a_bundle(self):
         import suofen
@@ -410,6 +413,55 @@ class MeowTests(unittest.TestCase):
         # 定格后姿势不变，二十来个尺寸只落到少数几档，不会一只猫一个尺寸各画一张
         self.assertLess(len(t._cache) - before, 20)
         t.resizing(False, 9.0)
+
+
+class TickerTests(unittest.TestCase):
+    def tearDown(self):
+        import ticker
+
+        ticker.reset()
+
+    def test_clock_has_milliseconds(self):
+        import ticker
+
+        self.assertEqual(ticker.format_clock(2 * 3600 + 14 * 60 + 33.847), "02:14:33.847")
+        self.assertTrue(ticker.format_clock(-12.5).startswith("+"))
+        self.assertEqual(ticker.format_clock(0, idle=True), "--:--:--.---")
+
+    def test_observe_closes_candles(self):
+        import ticker
+
+        ticker.reset()
+        t = 0.0
+        rate = 3.0
+        for i in range(12):
+            rate = max(0.2, rate + (1.5 if i % 2 == 0 else -0.8))
+            ticker.observe(t, rate)
+            t += ticker.CANDLE_S
+        self.assertGreaterEqual(len(ticker.bars()), 5)
+        self.assertIsNotNone(ticker.forming())
+
+    def test_paint_card_ticker(self):
+        import ticker
+
+        ticker.reset()
+        t = 0.0
+        for i in range(20):
+            ticker.observe(t, 2.0 + (i % 5))
+            t += ticker.CANDLE_S / 2
+        theme = next(th for th in themes._bundled_themes() if th.id == "ticker")
+        from PIL import ImageFont
+
+        f = ImageFont.load_default()
+        for w, h in ((148, 55), (248, 92), (360, 120)):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            themes.paint_card(
+                img, w, h, theme, "距离下班", "02:14:33.847", "",
+                theme.big, f, f, f, stage="run",
+            )
+            self.assertGreater(max(img.getchannel("A").getdata()), 80)
+        self.assertTrue(ornaments.has_skin(ticker.KIND))
+        self.assertIn("ticker", themes.INTERACTIVE_SKINS)
 
 
 class RenderTests(unittest.TestCase):
@@ -1387,7 +1439,9 @@ class FxTests(unittest.TestCase):
         self.assertTrue(themes.use_flip_display("ghost", "1时30分"))
         self.assertFalse(themes.use_flip_display("ghost", "点我开始"))
         self.assertTrue(themes.use_flip_display("neon", "11566秒", h=48))
+        self.assertFalse(themes.use_flip_display("ticker", "02:14:33.847"))
         self.assertIn("neonflow", themes.INTERACTIVE_SKINS)
+        self.assertIn("ticker", themes.INTERACTIVE_SKINS)
 
     def test_flip_row_larger_than_before(self):
         import fx
@@ -2786,6 +2840,11 @@ class BuildReleaseTests(unittest.TestCase):
 
 
 class ActivityTests(unittest.TestCase):
+    def setUp(self):
+        import activity
+
+        activity.reset_key_state()
+
     def test_counts_and_report_without_storing_keys(self):
         import activity
 
@@ -3278,6 +3337,7 @@ class ActivityTests(unittest.TestCase):
         held[activity._KEY_VK_AT] = 0xE5
         held[activity._HDR] = 0x1D  # 左 Ctrl 的扫描码
         self.assertEqual(activity.key_id(bytes(held)), "A2")
+        activity.reset_key_state()
         generic = bytearray(buf)
         generic[activity._KEY_VK_AT] = 0x11
         generic[activity._HDR] = 0x1D
@@ -3312,11 +3372,13 @@ class ActivityTests(unittest.TestCase):
         mid, mid_hits, _mid_sum = keyboard_heat.render({"45": 100, "52": 70, "5A": 5}, enabled=True)
         mid_e = next(hit for hit in mid_hits if hit["text"].startswith("E "))
         mid_r = next(hit for hit in mid_hits if hit["text"].startswith("R "))
-        self.assertGreater(sum(mid.getpixel((mid_e["x0"] + 8, mid_e["y0"] + 7))[:3]),
-                           sum(mid.getpixel((mid_r["x0"] + 8, mid_r["y0"] + 7))[:3]))
+        e_px = mid.getpixel((mid_e["x0"] + 8, mid_e["y0"] + 7))
+        r_px = mid.getpixel((mid_r["x0"] + 8, mid_r["y0"] + 7))
+        self.assertGreater(e_px[0] - e_px[1], r_px[0] - r_px[1])
         gold = keyboard_heat._heat(1.0)
         almost = keyboard_heat._heat(keyboard_heat._tone(70, 100))
         self.assertGreater(gold[0] - almost[0], 40)
+        self.assertGreater(gold[0], gold[1] + 40)
         self.assertIn("按了", summary)
         self.assertIn("次", summary)
         self.assertIn("80", hot["text"])
@@ -3356,6 +3418,37 @@ class ActivityTests(unittest.TestCase):
         activity.set_chart_open(cfg, True)
         activity.ensure_fields(cfg, today=now.date())
         self.assertTrue(activity.chart_open(cfg))
+
+    def test_key_id_follows_scan_not_numlock(self):
+        import activity
+
+        def packet(vk: int, make: int, flags: int = 0) -> bytes:
+            buf = bytearray(activity._HDR + 24)
+            buf[0] = 1
+            buf[activity._KEY_VK_AT] = vk
+            buf[activity._HDR] = make
+            buf[activity._KEY_FLAGS_AT] = flags
+            return bytes(buf)
+
+        activity.reset_key_state()
+        # 关 NumLock 时小键盘 4 的 VKey 是左方向，按位置仍记小键盘 4
+        self.assertEqual(activity.key_id(packet(0x25, 0x4B)), "64")
+        activity.reset_key_state()
+        self.assertEqual(activity.key_id(packet(0x25, 0x4B, 2)), "25")
+        activity.reset_key_state()
+        self.assertIsNone(activity.key_id(packet(0xA0, 0x2A, 2)))
+        e1 = packet(0x11, 0x1D, 4)
+        activity.track_key(e1)
+        self.assertIsNone(activity.key_id(e1))
+        self.assertEqual(activity.key_id(packet(0x90, 0x45)), "13")
+        activity.reset_key_state()
+        first = packet(0x45, 0x12)
+        self.assertEqual(activity.key_id(first), "45")
+        self.assertIsNone(activity.key_id(first))
+        up = bytearray(first)
+        up[activity._KEY_FLAGS_AT] = 1
+        activity.track_key(bytes(up))
+        self.assertEqual(activity.key_id(first), "45")
 
     def test_parse_raw_ignores_key_up(self):
         import activity
