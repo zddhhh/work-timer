@@ -2104,8 +2104,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 key = f"{key}-gh{gx // 16}-{gy // 16}"
             if self._hydrate_waiting:
                 blink = int(phase * 2) % 2 == 0
-                shown_title, big, sub = hydrate.card_copy(self.cfg)
+                shown_title, hint, sub = hydrate.card_copy(self.cfg)
                 accent = theme.warn if blink else theme.big
+                if theme.kind == ticker.KIND:
+                    # 盘口大字必须是倒计时。中文塞进等宽英文字体会变成方框。
+                    big = ticker.format_clock(signed, idle=idle)
+                else:
+                    big = hint
                 key = f"hydrate-wait-{int(blink)}-{theme.id}-{w}x{h}"
 
             hz = fps

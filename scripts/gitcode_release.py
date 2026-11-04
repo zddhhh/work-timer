@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时盘口改成往上累的长牛，停手只回一小截，不再按瞬时速度乱跳"
+    "- 工时盘口喝水提醒不再乱码，标题能看清「该喝水了」"
 )
 
 

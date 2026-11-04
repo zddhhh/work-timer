@@ -260,19 +260,22 @@ def paint_face(
         title_fill = (255, 186, 130, 250)
     d.text((x0 + 5, top), "OFF", font=code_font, fill=(168, 186, 178, 230))
     tx = x0 + max(28, int(w * 0.14))
-    shown = title if not compact else title[:4]
-    d.text((tx, top), shown, font=title_font, fill=title_fill)
+    d.text((tx, top), title, font=title_font, fill=title_fill)
     pw = int(d.textlength(pct_text, font=pct_font))
     if x1 - 6 - pw > tx + 20:
         d.text((x1 - 6 - pw, top), pct_text, font=pct_font, fill=pct_fill)
 
     clock_h = max(14, clock_bot - clock_top)
-    clock_font = _mono_fit(d, clock, max(40, w - 16), clock_h)
+    clock_font = (
+        _mono_fit(d, clock, max(40, w - 16), clock_h)
+        if _is_clock_text(clock)
+        else _ui_fit(d, clock, max(40, w - 16), clock_h)
+    )
     bb = d.textbbox((0, 0), clock, font=clock_font)
     cw, ch = bb[2] - bb[0], bb[3] - bb[1]
     cx = x0 + max(0, (w - cw) // 2) - bb[0]
     cy = clock_top + max(0, (clock_h - ch) // 2) - bb[1]
-    body, frac = _split_clock(clock)
+    body, frac = _split_clock(clock) if _is_clock_text(clock) else (clock, "")
     if frac:
         body_w = int(d.textlength(body, font=clock_font))
         fill_body = (248, 250, 252, 255)
@@ -383,6 +386,26 @@ def _paint_kline(
             d.rectangle((x_l, top, x_r, bot), fill=col)
 
 
+def _is_clock_text(text: str) -> bool:
+    """倒计时才走等宽字。中文提醒不能塞进 Consolas，否则变成方框。"""
+    return bool(text) and all(ch in "0123456789:+- .d" for ch in text)
+
+
+def _ui_fit(d: ImageDraw.ImageDraw, text: str, max_w: int, max_h: int) -> ImageFont.ImageFont:
+    lo, hi = 10, max(12, min(28, int(max_h * 0.86)))
+    best = _font("ui", lo)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        font = _font("ui", mid)
+        bb = d.textbbox((0, 0), text, font=font)
+        if bb[2] - bb[0] <= max_w and bb[3] - bb[1] <= max_h:
+            best = font
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
 def _mono_fit(d: ImageDraw.ImageDraw, text: str, max_w: int, max_h: int) -> ImageFont.ImageFont:
     lo, hi = 10, max(12, min(34, int(max_h * 0.92)))
     best = _font("mono", lo)
@@ -408,13 +431,16 @@ def _font(kind: str, size: int) -> ImageFont.ImageFont:
     names = {
         "mono": ("consola.ttf", "CascadiaMono.ttf", "cascadiamono.ttf", "cour.ttf", "msyh.ttc"),
         "label": ("consola.ttf", "msyhbd.ttc", "msyh.ttc"),
-        "ui": ("msyh.ttc", "msyh.ttf", "simhei.ttf"),
+        "ui": ("msyhbd.ttc", "msyh.ttc", "msyh.ttf", "simhei.ttf"),
     }[kind]
     font: ImageFont.ImageFont | None = None
     for name in names:
         path = windir / name
         try:
-            font = ImageFont.truetype(str(path), size)
+            if path.suffix.lower() == ".ttc":
+                font = ImageFont.truetype(str(path), size, index=0)
+            else:
+                font = ImageFont.truetype(str(path), size)
             break
         except OSError:
             continue

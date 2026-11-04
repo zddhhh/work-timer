@@ -467,6 +467,22 @@ class TickerTests(unittest.TestCase):
         self.assertAlmostEqual(bars[1].o, bars[0].c, places=4)
         self.assertTrue(any(bar.c >= bar.o for bar in bars))
 
+    def test_chinese_prompt_uses_ui_font_not_consolas(self):
+        import ticker
+
+        self.assertTrue(ticker._is_clock_text("02:14:33.847"))
+        self.assertTrue(ticker._is_clock_text("--:--:--.---"))
+        self.assertFalse(ticker._is_clock_text("点一下"))
+        self.assertFalse(ticker._is_clock_text("该喝水了"))
+        ticker.reset()
+        img = Image.new("RGBA", (248, 92), (0, 0, 0, 0))
+        ticker.paint_face(
+            img, (0, 0, 248, 92),
+            title="该喝水了", clock="点一下",
+            stage="run", now=1.0, top=2,
+        )
+        self.assertGreater(max(img.getchannel("A").getdata()), 80)
+
     def test_paint_card_ticker(self):
         import ticker
 
