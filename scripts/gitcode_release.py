@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修账本最小化后再也打不开；跨版本「更新好了」不再空白"
+    "- 缩窗口恢复实时预览；防卡死兜底还在"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

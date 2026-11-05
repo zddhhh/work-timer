@@ -946,17 +946,6 @@ class LayeredPetWindow:
             if not moved:
                 user32.MsgWaitForMultipleObjects(0, None, False, 8, QS_ALLINPUT)
 
-    def _track_resize(self) -> None:
-        """缩放也跟拖动一样看按键状态，丢了 LBUTTONUP 也不会永远卡在 resizing。"""
-        while self._lbutton_down():
-            pt = POINT()
-            user32.GetCursorPos(ctypes.byref(pt))
-            moved = self._apply_resize_at(pt.x, pt.y)
-            if self._drain_drag_messages():
-                break
-            if not moved:
-                user32.MsgWaitForMultipleObjects(0, None, False, 8, QS_ALLINPUT)
-
     def release_stuck_pointer(self) -> None:
         """主循环兜底：Capture 丢了、键抬起了，别一直占着拖/缩状态。"""
         if not (self._dragging or self._resizing):
@@ -1136,6 +1125,8 @@ class LayeredPetWindow:
             self.keep_topmost()
             user32.SetCapture(hwnd)
             if any((left, right, top, bottom)):
+                # 缩放不能像拖动那样堵在消息里：主循环要边缩边重画，才有实时预览。
+                # 卡死靠 release_stuck_pointer / 移动时看左键兜底。
                 self._resizing = True
                 self._drag_moved = False
                 self._resize_left, self._resize_right = left, right
@@ -1144,10 +1135,6 @@ class LayeredPetWindow:
                 self._resize_ow, self._resize_oh = self.width, self.height
                 self._resize_opx, self._resize_opy = pt.x, pt.y
                 self._set_edge_cursor(left, right, top, bottom)
-                try:
-                    self._track_resize()
-                finally:
-                    self._finish_resize()
                 return 0
             self._dragging = True
             self._drag_moved = False
