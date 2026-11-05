@@ -92,3 +92,21 @@ def notes_after(from_ver: str, to_ver: str, *, text: str | None = None) -> list[
         if updater.is_newer(ver, from_ver) and not updater.is_newer(ver, to_ver):
             out.append((ver, body))
     return out
+
+
+def notes_for_popup(
+    from_ver: str,
+    to_ver: str,
+    *,
+    text: str | None = None,
+    limit: int = 8,
+) -> list[tuple[str, str]]:
+    """弹窗用：跨很多版本时只留最近几条，避免一屏空白/滚动条异常。"""
+    secs = notes_after(from_ver, to_ver, text=text)
+    limit = max(1, int(limit))
+    if len(secs) <= limit:
+        return secs
+    kept = secs[:limit]
+    older = len(secs) - limit
+    kept.append(("", f"……还有更早 {older} 个版本的改动"))
+    return kept

@@ -878,6 +878,70 @@ class GameDialogTests(unittest.TestCase):
         self.assertTrue(dlg._parked_min)
         root.destroy()
 
+    def test_fit_card_recovers_when_state_reports_iconic(self):
+        import tkinter as tk
+
+        import card_ui
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(80, 80), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(80, 80))
+        # override-redirect 卡片不能 wm iconify；用假 state 验证恢复路径会 deiconify。
+        saw = []
+        real_state = dlg.state
+        real_deiconify = dlg.deiconify
+        flips = {"left": 2}
+
+        def fake_state():
+            if flips["left"] > 0:
+                flips["left"] -= 1
+                return "iconic"
+            return real_state()
+
+        def fake_deiconify():
+            saw.append("deiconify")
+            return real_deiconify()
+
+        dlg.state = fake_state  # type: ignore[method-assign]
+        dlg.deiconify = fake_deiconify  # type: ignore[method-assign]
+        self.assertTrue(card_ui._card_needs_reveal(dlg))
+        card_ui._fit_card(dlg, min_w=200, min_h=80, near=(80, 80))
+        self.assertIn("deiconify", saw)
+        self.assertGreaterEqual(float(dlg.attributes("-alpha")), 0.99)
+        root.destroy()
+
+    def test_pack_full_text_long_jump_keeps_readable_body(self):
+        import tkinter as tk
+
+        import card_ui
+        import changelog
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = card_ui._card_dialog(root, near=(80, 80), width=420, height=200)
+        tk.Label(dlg, text="更新好了", bg=card_ui._CARD_BG, fg=card_ui._CARD_FG).pack(anchor="w")
+        secs = changelog.notes_for_popup("1.4.19", "1.4.28")
+        card_ui._pack_full_text(dlg, secs, wrap_px=384, max_px=420)
+        card_ui._fit_card(dlg, min_w=420, min_h=120, near=(80, 80))
+        root.update()
+        texts = []
+        for w in dlg.winfo_children():
+            stack = [w]
+            while stack:
+                cur = stack.pop()
+                stack.extend(cur.winfo_children())
+                if cur.winfo_class() == "Text":
+                    texts.append(cur.get("1.0", "end"))
+                elif cur.winfo_class() == "Label":
+                    texts.append(str(cur.cget("text")))
+        blob = "\n".join(texts)
+        self.assertIn("1.4.28", blob)
+        self.assertTrue(any(len(t.strip()) > 8 for t in texts))
+        root.destroy()
+
     def test_dismiss_popup_is_safe_without_a_menu(self):
         import layered_win
 
@@ -1841,6 +1905,21 @@ class ChangelogTests(unittest.TestCase):
         self.assertEqual(got, [("1.1.5", "墨水加实。")])
         jump = changelog.notes_after("1.1.3", "1.1.5", text=md)
         self.assertEqual([v for v, _ in jump], ["1.1.5", "1.1.4"])
+
+    def test_notes_for_popup_caps_long_jumps(self):
+        import changelog
+
+        lines = ["# x\n"]
+        for i in range(20, 0, -1):
+            lines.append(f"## 1.0.{i}\n\n改动 {i}。\n\n")
+        md = "".join(lines)
+        full = changelog.notes_after("1.0.0", "1.0.20", text=md)
+        self.assertEqual(len(full), 20)
+        got = changelog.notes_for_popup("1.0.0", "1.0.20", text=md, limit=5)
+        self.assertEqual(len(got), 6)
+        self.assertEqual([v for v, _ in got[:5]], [f"1.0.{i}" for i in range(20, 15, -1)])
+        self.assertEqual(got[-1][0], "")
+        self.assertIn("15", got[-1][1])
 
     def test_bundled_notes_include_current_version(self):
         import changelog

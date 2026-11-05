@@ -628,7 +628,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         sections: list[tuple[str, str]] = []
         try:
             if from_ver and updater.is_newer(APP_VERSION, from_ver):
-                sections = changelog.notes_after(from_ver, APP_VERSION)
+                sections = changelog.notes_for_popup(from_ver, APP_VERSION)
             elif not last:
                 # 手动换 exe / 本机从没记过版本：只展示当前这一版，避免把历史全倒出来
                 sections = [

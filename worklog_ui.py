@@ -168,6 +168,16 @@ class WorklogDock:
         return layered_win.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _ensure(self) -> bool:
+        # 句柄还在但窗口已被系统毁掉时，要重建，否则贴条「没了」再也点不开账本。
+        if self.hwnd and not layered_win.user32.IsWindow(self.hwnd):
+            self.hwnd = 0
+            self._shown = False
+            self._sig = None
+            self._hbmp = 0
+            self._bits = None
+            self._old = 0
+            self._hdc_mem = 0
+            self._hdc_screen = 0
         if self.hwnd:
             return True
         wc = layered_win.WNDCLASSW()
@@ -1036,8 +1046,15 @@ class WorklogDialogMixin:
 
     def _ensure_worklog_dock(self) -> WorklogDock | None:
         dock = getattr(self, "_worklog_dock", None)
-        if dock is not None and int(getattr(dock, "hwnd", 0) or 0):
+        hwnd = int(getattr(dock, "hwnd", 0) or 0) if dock is not None else 0
+        if dock is not None and hwnd and layered_win.user32.IsWindow(hwnd):
             return dock
+        if dock is not None:
+            try:
+                dock.destroy()
+            except Exception:
+                pass
+            self._worklog_dock = None
         dock = WorklogDock(on_click=self._on_worklog_dock_click)
         if not dock._ensure():
             return None
@@ -1074,12 +1091,22 @@ class WorklogDialogMixin:
         if win is not None and getattr(win, "_popup_open", False):
             return
         back = self._dock_should_stay_back()
-        if follow_only and dock is not None and dock._shown:
+        # 贴条被系统藏掉后 _shown 仍可能是 True；可见性不对就整段重 show。
+        alive = (
+            dock is not None
+            and dock._shown
+            and int(dock.hwnd or 0)
+            and layered_win.user32.IsWindow(dock.hwnd)
+            and layered_win.user32.IsWindowVisible(dock.hwnd)
+        )
+        if follow_only and alive:
             dock.follow(self._worklog_card_rect())
             return
         dock = self._ensure_worklog_dock()
         if dock is None:
             return
+        if not alive:
+            dock._shown = False
         fill, outline, ink = self._dock_colors()
         dock.show(
             fill, outline, ink, self._worklog_card_rect(),
@@ -2125,8 +2152,9 @@ class WorklogDialogMixin:
         ui["err"].set("")
         ui["anchor"] = date.today()
         ui["chart_day"] = date.today()
-        if ui.get("live"):
-            if self._worklog_needs_reveal(ui):
+        # 最小化后再打开：无论 live 是否还在，先把账本亮出来。
+        if ui.get("minimized") or ui.get("live"):
+            if self._worklog_needs_reveal(ui) or ui.get("minimized"):
                 self._restore_worklog(ui)
             else:
                 try:
@@ -2135,6 +2163,16 @@ class WorklogDialogMixin:
                     ui["dlg"].focus_force()
                 except tk.TclError:
                     pass
+            if ui.get("live"):
+                return
+            ui["live"] = True
+            ui["stop"] = False
+            try:
+                _run_card_modal(ui["dlg"], self.win, on_frame=self._card_frame, stop=lambda: ui["stop"])
+            finally:
+                ui["live"] = False
+                if ui.get("minimized"):
+                    ui["stop"] = False
             return
         ui["live"] = True
         ui["stop"] = False

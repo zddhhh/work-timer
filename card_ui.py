@@ -148,8 +148,11 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     已经亮着时，尺寸没变就只刷新；要变高变宽就先透明，避免改尺寸那一帧闪出空底板。
     """
     try:
+        # 系统/「显示桌面」会把映射中的 Tk 卡最小化；以前这里直接 return，
+        # 工时账本最小化后再点贴条就再也打不开。
         if dlg.state() == "iconic":
-            return
+            dlg.deiconify()
+            dlg.update_idletasks()
         withdrawn = dlg.state() == "withdrawn"
         visible = not withdrawn and _alpha(dlg) >= 0.99
     except tk.TclError:
@@ -242,6 +245,8 @@ def _card_needs_reveal(dlg: tk.Toplevel) -> bool:
     if getattr(dlg, "_key_hidden", False) or getattr(dlg, "_parked_min", False):
         return True
     try:
+        if dlg.state() == "iconic":
+            return True
         if float(dlg.attributes("-alpha")) < 0.9:
             return True
         if int(dlg.winfo_x()) < -500 or int(dlg.winfo_y()) < -500:
@@ -334,77 +339,84 @@ def _pack_full_text(
     wrap_px: int = 400,
     max_px: int = 420,
 ) -> None:
-    """更新说明正文：先量高度再决定直铺还是滚动。
-
-    正文 Frame 不能挂在 Canvas 上当 parent——那样 create_window 之前 winfo_reqheight
-    量不准，canvas 高度又按 max_px 撑开，用户就看到「只有标题、下面一大片空白」。
-    """
+    """更新说明正文：短文直铺 Label；跨很多版本时用 Text+滚动，避免 Canvas 嵌套量高失败留下空白。"""
     wrap_px = max(160, int(wrap_px))
     max_px = max(80, int(max_px))
     slot = tk.Frame(parent, bg=_CARD_BG)
     slot.pack(fill="x", padx=18, pady=(10, 0))
 
-    content = tk.Frame(slot, bg=_CARD_BG)
     f_head = ("Microsoft YaHei UI", 11, "bold")
     f_body = ("Microsoft YaHei UI", 10)
-    for i, (ver, body) in enumerate(sections):
-        if i:
-            tk.Frame(content, bg=_CARD_BG, height=12).pack(fill="x")
-        tk.Label(
-            content,
-            text=ver,
-            fg=_CARD_FG,
-            bg=_CARD_BG,
-            font=f_head,
-            anchor="w",
-            justify="left",
-        ).pack(anchor="w", fill="x")
-        txt = (body or "").strip()
-        if txt:
-            tk.Label(
-                content,
-                text=txt,
-                fg="#c8ceda",
-                bg=_CARD_BG,
-                font=f_body,
-                wraplength=wrap_px,
-                justify="left",
-                anchor="nw",
-            ).pack(anchor="w", fill="x", pady=(4, 0))
-
-    content.update_idletasks()
-    need = max(1, int(content.winfo_reqheight()))
-    if need <= max_px:
+    # 段落少：继续用 Label，窗口贴着文字走。
+    if len(sections) <= 4:
+        content = tk.Frame(slot, bg=_CARD_BG)
         content.pack(anchor="nw", fill="x")
+        for i, (ver, body) in enumerate(sections):
+            if i:
+                tk.Frame(content, bg=_CARD_BG, height=12).pack(fill="x")
+            if ver:
+                tk.Label(
+                    content,
+                    text=ver,
+                    fg=_CARD_FG,
+                    bg=_CARD_BG,
+                    font=f_head,
+                    anchor="w",
+                    justify="left",
+                ).pack(anchor="w", fill="x")
+            txt = (body or "").strip()
+            if txt:
+                tk.Label(
+                    content,
+                    text=txt,
+                    fg="#c8ceda",
+                    bg=_CARD_BG,
+                    font=f_body,
+                    wraplength=wrap_px,
+                    justify="left",
+                    anchor="nw",
+                ).pack(anchor="w", fill="x", pady=(4, 0))
         return
 
     outer = tk.Frame(slot, bg=_CARD_BG)
     outer.pack(fill="x")
-    canvas = tk.Canvas(
-        outer, bg=_CARD_BG, highlightthickness=0, bd=0, relief="flat", width=wrap_px, height=max_px
+    text = tk.Text(
+        outer,
+        bg=_CARD_BG,
+        fg="#c8ceda",
+        font=f_body,
+        wrap="word",
+        relief="flat",
+        bd=0,
+        highlightthickness=0,
+        padx=0,
+        pady=0,
+        width=max(20, wrap_px // 8),
+        height=max(6, max_px // 22),
+        cursor="arrow",
     )
-    sb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview, width=10)
-    canvas.configure(yscrollcommand=sb.set)
+    sb = tk.Scrollbar(outer, orient="vertical", command=text.yview, width=10)
+    text.configure(yscrollcommand=sb.set)
     sb.pack(side="right", fill="y", padx=(4, 0))
-    canvas.pack(side="left", fill="x", expand=True)
-    step = max(1, int(need / 24))
+    text.pack(side="left", fill="both", expand=True)
+    text.tag_configure("ver", foreground=_CARD_FG, font=f_head, spacing1=10, spacing3=2)
+    text.tag_configure("body", foreground="#c8ceda", font=f_body, spacing3=4)
+    text.tag_configure("gap", font=f_body)
+    for i, (ver, body) in enumerate(sections):
+        if i:
+            text.insert("end", "\n", ("gap",))
+        if ver:
+            text.insert("end", f"{ver}\n", ("ver",))
+        txt = (body or "").strip()
+        if txt:
+            text.insert("end", f"{txt}\n", ("body",))
+    text.configure(state="disabled")
 
-    def _wheel(event) -> None:
-        canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+    def _wheel(event) -> str:
+        text.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
 
-    canvas.configure(yscrollincrement=step)
-    canvas.bind_all("<MouseWheel>", _wheel, add="+")
-    canvas.bind("<Destroy>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-
-    win_id = canvas.create_window((0, 0), window=content, anchor="nw", width=wrap_px)
-
-    def _sync(_event=None) -> None:
-        canvas.itemconfigure(win_id, width=max(wrap_px, int(canvas.winfo_width()) or wrap_px))
-        canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, wrap_px, need))
-
-    content.bind("<Configure>", _sync)
-    canvas.bind("<Configure>", _sync)
-    _sync()
+    text.bind("<MouseWheel>", _wheel)
 
 
 def _card_dialog(
