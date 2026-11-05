@@ -461,12 +461,24 @@ class TickerTests(unittest.TestCase):
             t += 0.05
         after_pause = ticker.forming().c
         self.assertLess(after_pause, peak)
-        self.assertGreater(after_pause, ticker.INDEX0)
-        self.assertGreater(ticker.change_pct(), 0.0)
+        self.assertGreaterEqual(after_pause, ticker.INDEX0)
+        self.assertGreaterEqual(ticker.change_pct(), 0.0)
         bars = ticker.bars()
         self.assertGreaterEqual(len(bars), 2)
         self.assertAlmostEqual(bars[1].o, bars[0].c, places=4)
         self.assertTrue(any(bar.c >= bar.o for bar in bars))
+        # 打快再放慢时，短线振幅要够大，K 线才看得出红绿
+        ticker.reset()
+        t = 0.0
+        while t < 6.0:
+            ticker.observe(t, 12.0)
+            t += 0.05
+        high = ticker.forming().c
+        while t < 10.0:
+            ticker.observe(t, 0.0)
+            t += 0.05
+        low = ticker.forming().c
+        self.assertGreater(high - low, 1.2)
 
     def test_chinese_prompt_uses_ui_font_not_consolas(self):
         import ticker

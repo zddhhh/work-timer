@@ -1,7 +1,7 @@
 """工时盘口：等宽毫秒倒计时，底下跟手的迷你 K 线。
 
 指数从 100 开盘。键鼠次数往上累，像长牛；停手、放慢只回一小截，不是归零。
-涨跌幅对比开盘。红涨绿跌按 A 股习惯。毫秒位是真的；不是微秒。
+短线跟手：打快/停手时 K 线红绿要看得见。涨跌幅对比开盘。红涨绿跌按 A 股习惯。
 """
 from __future__ import annotations
 
@@ -14,15 +14,16 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 KIND = "ticker"
-CANDLE_S = 5.0
+CANDLE_S = 4.0
 MAX_BARS = 36
 FPS = 36
 INDEX0 = 100.0
 TREND_GAIN = 9.0
 TREND_TAU = 380.0
-FAST_TAU = 0.55
-SLOW_TAU = 16.0
-OSC_AMP = 0.014
+FAST_TAU = 0.40
+SLOW_TAU = 11.0
+OSC_AMP = 0.042
+OSC_SCALE = 2.0
 DT_MAX = 0.28
 # A 股：红涨绿跌
 RED = (236, 64, 64, 255)
@@ -141,8 +142,10 @@ def _quote(rate: float, dt: float) -> float:
     _fast = _ema(_fast, live, dt, FAST_TAU)
     _slow = _ema(_slow, live, dt, SLOW_TAU)
     trend = INDEX0 + TREND_GAIN * math.log1p(_cum / TREND_TAU)
-    osc = OSC_AMP * math.tanh((_fast - _slow) / 3.5)
-    _px = max(INDEX0 * 0.92, trend * (1.0 + osc))
+    # 短线振幅要够大，K 线才跟得上打字快慢；长线仍由 cum 托着。
+    # 停手可以回撤，但不砸穿开盘价——长牛底还在。
+    osc = OSC_AMP * math.tanh((_fast - _slow) / OSC_SCALE)
+    _px = max(INDEX0, trend * (1.0 + osc))
     return _px
 
 
@@ -172,11 +175,11 @@ def observe(now: float, rate: float) -> None:
     _forming.l = min(_forming.l, px)
     _forming.c = px
     _forming.v += live * dt
-    if px > _last_px + 0.08:
-        _flash_until = now + 0.18
+    if px > _last_px + 0.05:
+        _flash_until = now + 0.22
         _flash_up = True
-    elif px + 0.08 < _last_px:
-        _flash_until = now + 0.18
+    elif px + 0.05 < _last_px:
+        _flash_until = now + 0.22
         _flash_up = False
     _last_px = px
     _chg = (px - INDEX0) / INDEX0 * 100.0
@@ -357,11 +360,12 @@ def _paint_kline(
         body_w += 1
     hi = max(c.h for c in seq)
     lo = min(c.l for c in seq)
-    if hi - lo < 0.8:
+    # 纵轴别垫太厚，否则真实小波动被「撑开的空白」吃掉，看起来像死盘。
+    if hi - lo < 0.35:
         mid = 0.5 * (hi + lo)
-        hi = mid + 0.5
-        lo = mid - 0.5
-    pad = (hi - lo) * 0.12
+        hi = mid + 0.22
+        lo = mid - 0.22
+    pad = (hi - lo) * 0.08
     hi += pad
     lo -= pad
     span = hi - lo if hi > lo else 1.0

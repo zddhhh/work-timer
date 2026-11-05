@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 缩窗口恢复实时预览；防卡死兜底还在"
+    "- 工时盘口短线更跟手，打快停手 K 线更明显"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com
