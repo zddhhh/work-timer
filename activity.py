@@ -61,7 +61,8 @@ _CARD_LABEL = dict(CARD_CHOICES)
 _CARD_ID = {label: key for key, label in CARD_CHOICES}
 CHART_VIEWS = ("counts", "avg", "inst")
 # 1.4.21 起按物理扫描码记键。更早的 keymap 键号可能是错的，不能接着累。
-KEYMAP_VER = 2
+# 1.4.31：导航键不再进热力图，并收紧注入过滤；旧图作废重记。
+KEYMAP_VER = 3
 # 还没停手的那一段。只放内存，换一段或退出时才写进账。
 _OPEN: dict[int, dict] = {}
 _KEY = "activity"
@@ -114,10 +115,24 @@ _SCAN_E0 = {
 }
 # PrintScreen / 小键盘会夹带的假 Shift，不是人按的。
 _FAKE_E0 = frozenset({0x2A, 0x36})
+# 键盘缓冲溢出时硬件会报这个扫描码。
+_OVERRUN_MAKE = 0xFF
 # 方向 / Home 这类导航键必须带 E0 扫描码。输入法选词常注入 MakeCode=0 的 VKey。
 _NAV_VK = frozenset({0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E})
+# 热力图上的导航键号 → 应对上的 VKey。对不上或输入法占位就不认。
+_NAV_EXPECT_VK = {
+    "21": 0x21, "22": 0x22, "23": 0x23, "24": 0x24,
+    "25": 0x25, "26": 0x26, "27": 0x27, "28": 0x28,
+    "2D": 0x2D, "2E": 0x2E,
+}
+# 这些设备名多半是远程桌面、虚拟键、输入法通道，不是桌上那块键盘。
+_UNTRUSTED_DEV = (
+    "\\root\\", "root#", "virtual", "rdp", "terminal", "ts_kb",
+    "kbdhid#vid_0000", "vid_0000&pid_0000", "ime", "input_method",
+)
 _down: set[int] = set()
 _e1 = False
+_device_ok: dict[int, bool] = {}
 
 
 def enabled(cfg: dict) -> bool:
@@ -757,9 +772,10 @@ def fmt_speed_line(
 
 def reset_key_state() -> None:
     """测试或重开监听时清掉按住状态。"""
-    global _down, _e1
+    global _down, _e1, _device_ok
     _down = set()
     _e1 = False
+    _device_ok = {}
 
 
 def _scan_token(make: int, flags: int) -> int:
@@ -806,18 +822,64 @@ def _vk_from_make(make: int, flags: int) -> int:
         return 0
 
 
+def _device_handle(buf: bytes) -> int:
+    if len(buf) < _DEVICE_AT + _DEVICE_SIZE:
+        return 0
+    return int.from_bytes(buf[_DEVICE_AT:_DEVICE_AT + _DEVICE_SIZE], "little")
+
+
+def _device_name(handle: int) -> str:
+    """取原始输入设备名。失败就空串。"""
+    if handle <= 0:
+        return ""
+    try:
+        user32 = ctypes.windll.user32
+        size = ctypes.c_uint(0)
+        # RIDI_DEVICENAME = 0x20000007
+        user32.GetRawInputDeviceInfoW(handle, 0x20000007, None, ctypes.byref(size))
+        n = int(size.value or 0)
+        if n <= 0 or n > 1024:
+            return ""
+        buf = ctypes.create_unicode_buffer(n)
+        size.value = n
+        if user32.GetRawInputDeviceInfoW(handle, 0x20000007, buf, ctypes.byref(size)) == 0xFFFFFFFF:
+            return ""
+        return str(buf.value or "")
+    except Exception:
+        return ""
+
+
+def device_trusted(buf: bytes) -> bool:
+    """SendInput 常见 hDevice=0；远程桌面 / 虚拟键 / 部分输入法通道名字里带标记。"""
+    handle = _device_handle(buf)
+    if handle == 0:
+        return False
+    cached = _device_ok.get(handle)
+    if cached is not None:
+        return cached
+    name = _device_name(handle).lower().replace("/", "\\")
+    ok = True
+    if name:
+        ok = not any(mark in name for mark in _UNTRUSTED_DEV)
+    _device_ok[handle] = ok
+    return ok
+
+
 def key_id(buf: bytes) -> str | None:
-    """键盘按下时的键号。按物理扫描码记，不跟 NumLock。松开、连发、假 Shift 不记。"""
+    """键盘按下时的键号。按物理扫描码记，不跟 NumLock。松开、连发、假 Shift、导航键不记。"""
     global _e1
     if len(buf) < _KEY_VK_AT + 2 or int.from_bytes(buf[0:4], "little") != 1:
         return None
     flags = int.from_bytes(buf[_KEY_FLAGS_AT:_KEY_FLAGS_AT + 2], "little")
     vk = int.from_bytes(buf[_KEY_VK_AT:_KEY_VK_AT + 2], "little")
-    make = int.from_bytes(buf[_HDR:_HDR + 2], "little")
+    make = int.from_bytes(buf[_HDR:_HDR + 2], "little") & 0xFF
     token = _scan_token(make, flags)
     if flags & 1:
         return None
     if flags & 4:
+        return None
+    # 硬件溢出、未映射到任何 VK 的包。
+    if make == _OVERRUN_MAKE or vk >= 0xFF:
         return None
     if _e1:
         _e1 = False
@@ -825,7 +887,7 @@ def key_id(buf: bytes) -> str | None:
             return None
         _down.add(token)
         return "13"
-    if flags & 2 and (make & 0xFF) in _FAKE_E0:
+    if flags & 2 and make in _FAKE_E0:
         return None
     if token and token in _down:
         return None
@@ -833,13 +895,16 @@ def key_id(buf: bytes) -> str | None:
         _down.add(token)
     mapped = _id_from_scan(token)
     if mapped:
+        # 方向 / Home / PgUp 不进热力图：输入法选词真按和注入无法可靠区分。
+        if mapped in _NAV_EXPECT_VK:
+            return None
+        # 输入法占住时 VKey 会变成 0xE5，字母和 Ctrl 仍按扫描码认。
         return mapped
-    # 导航键只认 E0 扫描码。输入法选词会注入 MakeCode=0 的左/右/上/下。
-    if vk in _NAV_VK:
+    # 扫描码认不出时：导航键、输入法占位、直接塞字符都不进图。
+    if vk in _NAV_VK or vk in (0xE5, 0xE7):
         return None
-    # 0 / 0xFF 没有键；0xE5 是输入法占位；0xE7 是直接塞进来的字符。
-    # 0x10 / 0x11 / 0x12 分不出左右，隐藏键设成 Ctrl 时就会对不上图上的键。
-    if vk in (0, 0xFF, 0xE5, 0xE7, 0x10, 0x11, 0x12):
+    # 0 没有键；0x10 / 0x11 / 0x12 分不出左右，隐藏键设成 Ctrl 时就会对不上图上的键。
+    if vk in (0, 0x10, 0x11, 0x12):
         mapped_vk = _vk_from_make(make, flags)
         if mapped_vk and mapped_vk not in (0, 0xFF, 0xE5, 0xE7) and mapped_vk not in _NAV_VK:
             vk = mapped_vk
@@ -998,12 +1063,10 @@ def parse_raw(buf: bytes) -> str | None:
 
 
 def physical_input(buf: bytes) -> str | None:
-    """认出一次有意义的硬件输入；不读键码，也不把 SendInput 当成人在操作。"""
+    """认出一次有意义的硬件输入；不读键码，也不把 SendInput / 虚拟键当成人在操作。"""
     if len(buf) < _DEVICE_AT + _DEVICE_SIZE:
         return None
-    # RAWINPUTHEADER.hDevice 为 0 时没有可确认的硬件来源，常见于 SendInput 注入。
-    device = int.from_bytes(buf[_DEVICE_AT:_DEVICE_AT + _DEVICE_SIZE], "little")
-    if device == 0:
+    if not device_trusted(buf):
         return None
     kind = parse_raw(buf)
     if kind is not None:

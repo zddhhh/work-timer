@@ -3629,9 +3629,12 @@ class ActivityTests(unittest.TestCase):
         # 关 NumLock 时小键盘 4 的 VKey 是左方向，按位置仍记小键盘 4
         self.assertEqual(activity.key_id(packet(0x25, 0x4B)), "64")
         activity.reset_key_state()
-        self.assertEqual(activity.key_id(packet(0x25, 0x4B, 2)), "25")
+        # 方向键（含真按）不进热力图：输入法选词和注入无法可靠区分
+        self.assertIsNone(activity.key_id(packet(0x25, 0x4B, 2)))
         activity.reset_key_state()
-        # 输入法选词：扫描码 0、VKey 是方向，不能记成方向键
+        self.assertIsNone(activity.key_id(packet(0x26, 0x48, 2)))
+        activity.reset_key_state()
+        # 输入法选词：扫描码 0、VKey 是方向
         self.assertIsNone(activity.key_id(packet(0x25, 0)))
         activity.reset_key_state()
         self.assertIsNone(activity.key_id(packet(0x26, 0)))
@@ -3641,6 +3644,11 @@ class ActivityTests(unittest.TestCase):
         self.assertIsNone(activity.key_id(packet(0x28, 0)))
         activity.reset_key_state()
         self.assertIsNone(activity.key_id(packet(0x25, 0, 2)))
+        activity.reset_key_state()
+        # 输入法占位 VKey，即使扫描码像方向也不记
+        self.assertIsNone(activity.key_id(packet(0xE5, 0x4B, 2)))
+        activity.reset_key_state()
+        self.assertIsNone(activity.key_id(packet(0x45, 0xFF)))
         activity.reset_key_state()
         self.assertIsNone(activity.key_id(packet(0xA0, 0x2A, 2)))
         e1 = packet(0x11, 0x1D, 4)
@@ -3700,6 +3708,15 @@ class ActivityTests(unittest.TestCase):
             activity._DEVICE_SIZE
         )
         self.assertIsNone(activity.physical_input(bytes(injected)))
+
+        # 远程桌面 / 虚拟键设备名不可信
+        with mock.patch.object(activity, "_device_name", return_value=r"\\?\ROOT#RDP_KBD#0000#{...}"):
+            activity.reset_key_state()
+            self.assertFalse(activity.device_trusted(bytes(key)))
+            self.assertIsNone(activity.physical_input(bytes(key)))
+        with mock.patch.object(activity, "_device_name", return_value=r"\\?\HID#VID_046D&PID_C52B#..."):
+            activity.reset_key_state()
+            self.assertTrue(activity.device_trusted(bytes(key)))
 
 
 class MinesTests(unittest.TestCase):
