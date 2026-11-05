@@ -3629,10 +3629,17 @@ class ActivityTests(unittest.TestCase):
         # 关 NumLock 时小键盘 4 的 VKey 是左方向，按位置仍记小键盘 4
         self.assertEqual(activity.key_id(packet(0x25, 0x4B)), "64")
         activity.reset_key_state()
-        # 方向键（含真按）不进热力图：输入法选词和注入无法可靠区分
-        self.assertIsNone(activity.key_id(packet(0x25, 0x4B, 2)))
+        # 真方向键：E0 扫描码 + 对得上的 VKey
+        self.assertEqual(activity.key_id(packet(0x25, 0x4B, 2)), "25")
         activity.reset_key_state()
-        self.assertIsNone(activity.key_id(packet(0x26, 0x48, 2)))
+        self.assertEqual(activity.key_id(packet(0x26, 0x48, 2)), "26")
+        activity.reset_key_state()
+        # 输入法占住时 VKey 变成 0xE5，仍认物理方向扫描码
+        self.assertEqual(activity.key_id(packet(0xE5, 0x4B, 2)), "25")
+        activity.reset_key_state()
+        # 低级钩子标过注入的同键，Raw Input 随后到来也不记
+        activity.note_injected_key(vk=0x25, scan=0x4B, extended=True, key_up=False)
+        self.assertIsNone(activity.key_id(packet(0x25, 0x4B, 2)))
         activity.reset_key_state()
         # 输入法选词：扫描码 0、VKey 是方向
         self.assertIsNone(activity.key_id(packet(0x25, 0)))
@@ -3644,9 +3651,6 @@ class ActivityTests(unittest.TestCase):
         self.assertIsNone(activity.key_id(packet(0x28, 0)))
         activity.reset_key_state()
         self.assertIsNone(activity.key_id(packet(0x25, 0, 2)))
-        activity.reset_key_state()
-        # 输入法占位 VKey，即使扫描码像方向也不记
-        self.assertIsNone(activity.key_id(packet(0xE5, 0x4B, 2)))
         activity.reset_key_state()
         self.assertIsNone(activity.key_id(packet(0x45, 0xFF)))
         activity.reset_key_state()

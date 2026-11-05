@@ -44,6 +44,11 @@ WM_TIMER = 0x0113
 WM_INPUT = 0x00FF
 WM_CANCELMODE = 0x001F
 _LIVE_TIMER = 1
+WH_KEYBOARD_LL = 13
+LLKHF_EXTENDED = 0x01
+LLKHF_INJECTED = 0x10
+LLKHF_LOWER_IL_INJECTED = 0x02
+LLKHF_UP = 0x80
 RID_INPUT = 0x10000003
 RIDEV_INPUTSINK = 0x00000100
 RIDEV_REMOVE = 0x00000001
@@ -120,6 +125,7 @@ ID_HYDRATE_SETTINGS = 9
 ID_THEME_BASE = 20
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, ctypes.c_uint, WPARAM, LPARAM)
+HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, WPARAM, LPARAM)
 WINEVENTPROC = ctypes.WINFUNCTYPE(
     None,
     wintypes.HANDLE,
@@ -259,6 +265,26 @@ user32.GetRawInputData.argtypes = [
     wintypes.HANDLE, wintypes.UINT, ctypes.c_void_p, ctypes.POINTER(wintypes.UINT), wintypes.UINT,
 ]
 user32.GetRawInputData.restype = wintypes.UINT
+
+
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+user32.SetWindowsHookExW.argtypes = [
+    ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD,
+]
+user32.SetWindowsHookExW.restype = ctypes.c_void_p
+user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
+user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, WPARAM, LPARAM]
+user32.CallNextHookEx.restype = LRESULT
 
 
 class MONITORINFO(ctypes.Structure):
@@ -510,6 +536,8 @@ class LayeredPetWindow:
         self._need_topmost = True
         self._winevent_hooks: list = []
         self._winevent_proc = WINEVENTPROC(self._on_win_event)
+        self._ll_hook = None
+        self._ll_proc = HOOKPROC(self._on_ll_keyboard)
         self._locked = False
         self._display_off = False
         self._off_input = -1
@@ -684,6 +712,42 @@ class LayeredPetWindow:
         rid[1].hwndTarget = target
         if user32.RegisterRawInputDevices(rid, 2, ctypes.sizeof(RAWINPUTDEVICE)):
             self._raw_listening = bool(on)
+            self._set_ll_hook(bool(on))
+
+    def _on_ll_keyboard(self, nCode, wParam, lParam):
+        """低级钩子只看注入标记，不拦键；给 Raw Input 热力图当旁证。"""
+        if int(nCode) >= 0 and lParam:
+            try:
+                info = ctypes.cast(int(lParam), ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                flags = int(info.flags)
+                if flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED):
+                    import activity
+
+                    activity.note_injected_key(
+                        vk=int(info.vkCode),
+                        scan=int(info.scanCode),
+                        extended=bool(flags & LLKHF_EXTENDED),
+                        key_up=bool(flags & LLKHF_UP),
+                    )
+            except Exception:
+                pass
+        return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+    def _set_ll_hook(self, on: bool) -> None:
+        if on:
+            if self._ll_hook:
+                return
+            hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._ll_proc, self._hinst, 0)
+            if hook:
+                self._ll_hook = hook
+            return
+        if not self._ll_hook:
+            return
+        try:
+            user32.UnhookWindowsHookEx(self._ll_hook)
+        except OSError:
+            pass
+        self._ll_hook = None
 
     def set_request_show_handler(self, fn: Callable[[], None] | None) -> None:
         """单实例再次启动时唤起窗口（含 Ctrl 隐藏后的恢复）。"""
@@ -740,6 +804,7 @@ class LayeredPetWindow:
         self._display_off = off
 
     def destroy(self) -> None:
+        self._set_ll_hook(False)
         for hook in self._winevent_hooks:
             user32.UnhookWinEvent(hook)
         self._winevent_hooks.clear()

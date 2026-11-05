@@ -4,6 +4,7 @@ from __future__ import annotations
 import ctypes
 import math
 import sys
+import time
 from datetime import date, datetime, timedelta
 
 KEEP_PRESETS = (7, 30, 60, 90)
@@ -61,7 +62,7 @@ _CARD_LABEL = dict(CARD_CHOICES)
 _CARD_ID = {label: key for key, label in CARD_CHOICES}
 CHART_VIEWS = ("counts", "avg", "inst")
 # 1.4.21 起按物理扫描码记键。更早的 keymap 键号可能是错的，不能接着累。
-# 1.4.31：导航键不再进热力图，并收紧注入过滤；旧图作废重记。
+# 1.4.31：清掉误记的导航键图；1.4.32 起真方向键靠 LL 注入标记再记。
 KEYMAP_VER = 3
 # 还没停手的那一段。只放内存，换一段或退出时才写进账。
 _OPEN: dict[int, dict] = {}
@@ -130,9 +131,13 @@ _UNTRUSTED_DEV = (
     "\\root\\", "root#", "virtual", "rdp", "terminal", "ts_kb",
     "kbdhid#vid_0000", "vid_0000&pid_0000", "ime", "input_method",
 )
+# 低级钩子标过注入的键，短时间内 Raw Input 也别记（尤其方向键）。
+_INJECT_HOLD_S = 0.20
 _down: set[int] = set()
 _e1 = False
 _device_ok: dict[int, bool] = {}
+_injected_tokens: dict[int, float] = {}
+_injected_vks: dict[int, float] = {}
 
 
 def enabled(cfg: dict) -> bool:
@@ -772,10 +777,43 @@ def fmt_speed_line(
 
 def reset_key_state() -> None:
     """测试或重开监听时清掉按住状态。"""
-    global _down, _e1, _device_ok
+    global _down, _e1, _device_ok, _injected_tokens, _injected_vks
     _down = set()
     _e1 = False
     _device_ok = {}
+    _injected_tokens = {}
+    _injected_vks = {}
+
+
+def note_injected_key(*, vk: int, scan: int, extended: bool, key_up: bool) -> None:
+    """低级钩子看到 LLKHF_INJECTED 时调用。Raw Input 随后来的同键会跳过。"""
+    if key_up:
+        return
+    now = time.monotonic()
+    token = (0xE000 | (int(scan) & 0xFF)) if extended else (int(scan) & 0xFF)
+    if token:
+        _injected_tokens[token] = now + _INJECT_HOLD_S
+    vk_i = int(vk) & 0xFF
+    if 0 < vk_i < 0xFF:
+        _injected_vks[vk_i] = now + _INJECT_HOLD_S
+    _prune_injected(now)
+
+
+def _prune_injected(now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    for bag in (_injected_tokens, _injected_vks):
+        for key in [k for k, exp in bag.items() if exp <= now]:
+            del bag[key]
+
+
+def recently_injected(*, token: int = 0, vk: int = 0) -> bool:
+    now = time.monotonic()
+    _prune_injected(now)
+    if token and _injected_tokens.get(int(token), 0.0) > now:
+        return True
+    if vk and _injected_vks.get(int(vk) & 0xFF, 0.0) > now:
+        return True
+    return False
 
 
 def _scan_token(make: int, flags: int) -> int:
@@ -866,7 +904,7 @@ def device_trusted(buf: bytes) -> bool:
 
 
 def key_id(buf: bytes) -> str | None:
-    """键盘按下时的键号。按物理扫描码记，不跟 NumLock。松开、连发、假 Shift、导航键不记。"""
+    """键盘按下时的键号。按物理扫描码记，不跟 NumLock。松开、连发、假 Shift、注入不记。"""
     global _e1
     if len(buf) < _KEY_VK_AT + 2 or int.from_bytes(buf[0:4], "little") != 1:
         return None
@@ -895,13 +933,21 @@ def key_id(buf: bytes) -> str | None:
         _down.add(token)
     mapped = _id_from_scan(token)
     if mapped:
-        # 方向 / Home / PgUp 不进热力图：输入法选词真按和注入无法可靠区分。
-        if mapped in _NAV_EXPECT_VK:
-            return None
+        expect = _NAV_EXPECT_VK.get(mapped)
+        if expect is not None:
+            # 方向键：要有 E0 扫描码；刚被低级钩子标成注入的丢掉。
+            # 输入法占住时 VKey 可能是 0xE5，仍认扫描码，只要不是注入。
+            if recently_injected(token=token, vk=expect) or recently_injected(vk=vk):
+                return None
+            if vk not in (expect, 0xE5, 0):
+                return None
+            return mapped
         # 输入法占住时 VKey 会变成 0xE5，字母和 Ctrl 仍按扫描码认。
         return mapped
-    # 扫描码认不出时：导航键、输入法占位、直接塞字符都不进图。
+    # 没有扫描码的导航 VKey（选词注入常见）不进图。
     if vk in _NAV_VK or vk in (0xE5, 0xE7):
+        return None
+    if recently_injected(token=token, vk=vk):
         return None
     # 0 没有键；0x10 / 0x11 / 0x12 分不出左右，隐藏键设成 Ctrl 时就会对不上图上的键。
     if vk in (0, 0x10, 0x11, 0x12):
