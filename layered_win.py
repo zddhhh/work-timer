@@ -715,20 +715,22 @@ class LayeredPetWindow:
             self._set_ll_hook(bool(on))
 
     def _on_ll_keyboard(self, nCode, wParam, lParam):
-        """低级钩子只看注入标记，不拦键；给 Raw Input 热力图当旁证。"""
+        """低级钩子只看注入标记，不拦键；给 Raw Input 热力图当旁证。必须极快，否则整机键盘发涩。"""
         if int(nCode) >= 0 and lParam:
             try:
                 info = ctypes.cast(int(lParam), ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                 flags = int(info.flags)
-                if flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED):
-                    import activity
+                # 抬起、非注入：立刻放行，少碰 Python。
+                if (flags & LLKHF_UP) or not (flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)):
+                    return user32.CallNextHookEx(None, nCode, wParam, lParam)
+                import activity
 
-                    activity.note_injected_key(
-                        vk=int(info.vkCode),
-                        scan=int(info.scanCode),
-                        extended=bool(flags & LLKHF_EXTENDED),
-                        key_up=bool(flags & LLKHF_UP),
-                    )
+                activity.note_injected_key(
+                    vk=int(info.vkCode),
+                    scan=int(info.scanCode),
+                    extended=bool(flags & LLKHF_EXTENDED),
+                    key_up=False,
+                )
             except Exception:
                 pass
         return user32.CallNextHookEx(None, nCode, wParam, lParam)
@@ -883,9 +885,48 @@ class LayeredPetWindow:
             user32.SetWindowPos(self.hwnd, None, self.x, self.y, 0, 0, _MOVE_FLAGS)
         self._notify_geometry()
 
+    def _lbutton_down(self) -> bool:
+        return bool(user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000)
+
+    def _apply_resize_at(self, px: int, py: int) -> bool:
+        """按当前光标算一帧缩放。有变化返回 True。"""
+        dx = px - self._resize_opx
+        dy = py - self._resize_opy
+        ow, oh = self._resize_ow, self._resize_oh
+        raw_w = ow + dx if self._resize_right else ow - dx
+        raw_h = oh + dy if self._resize_bottom else oh - dy
+        sw = raw_w / max(1, ow)
+        sh = raw_h / max(1, oh)
+        scale = sw if abs(sw - 1.0) >= abs(sh - 1.0) else sh
+        nw = int(round(ow * scale))
+        nh = int(round(nw / ASPECT))
+        nw, nh = snap_size(nw, nh)
+        nx, ny = self._resize_ox, self._resize_oy
+        if self._resize_left:
+            nx = self._resize_ox + ow - nw
+        if self._resize_top:
+            ny = self._resize_oy + oh - nh
+        if abs(nw - self.width) < 2 and abs(nh - self.height) < 2 and nx == self.x and ny == self.y:
+            return False
+        self._drag_moved = True
+        self.resize(nw, nh, x=nx, y=ny)
+        return True
+
+    def _finish_resize(self) -> None:
+        if not self._resizing:
+            return
+        moved = self._drag_moved
+        self._resizing = False
+        self._drag_moved = False
+        user32.ReleaseCapture()
+        user32.SetCursor(user32.LoadCursorW(None, IDC_ARROW))
+        if moved:
+            self.ensure_visible()
+            self._just_resized = True
+
     def _track_drag(self) -> None:
         """按住期间只跟当前光标。积压的鼠标消息丢掉，避免窗口还在补刚才的位置。"""
-        while user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000:
+        while self._lbutton_down():
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
             moved = False
@@ -902,6 +943,34 @@ class LayeredPetWindow:
                 break
             if not moved:
                 user32.MsgWaitForMultipleObjects(0, None, False, 8, QS_ALLINPUT)
+
+    def _track_resize(self) -> None:
+        """缩放也跟拖动一样看按键状态，丢了 LBUTTONUP 也不会永远卡在 resizing。"""
+        while self._lbutton_down():
+            pt = POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            moved = self._apply_resize_at(pt.x, pt.y)
+            if self._drain_drag_messages():
+                break
+            if not moved:
+                user32.MsgWaitForMultipleObjects(0, None, False, 8, QS_ALLINPUT)
+
+    def release_stuck_pointer(self) -> None:
+        """主循环兜底：Capture 丢了、键抬起了，别一直占着拖/缩状态。"""
+        if not (self._dragging or self._resizing):
+            return
+        if self._lbutton_down():
+            return
+        if self._resizing:
+            self._finish_resize()
+            return
+        moved = self._drag_moved
+        self._dragging = False
+        self._drag_moved = False
+        user32.ReleaseCapture()
+        if moved:
+            self.ensure_visible()
+            self._just_moved = True
 
     def move(self, x: int, y: int) -> None:
         self._apply_pos(x, y)
@@ -1073,6 +1142,10 @@ class LayeredPetWindow:
                 self._resize_ow, self._resize_oh = self.width, self.height
                 self._resize_opx, self._resize_opy = pt.x, pt.y
                 self._set_edge_cursor(left, right, top, bottom)
+                try:
+                    self._track_resize()
+                finally:
+                    self._finish_resize()
                 return 0
             self._dragging = True
             self._drag_moved = False
@@ -1093,29 +1166,23 @@ class LayeredPetWindow:
                 self._on_left_click(int(end.x - self.x), int(end.y - self.y))
             return 0
         if msg == WM_MOUSEMOVE and self._resizing:
+            if not self._lbutton_down():
+                self._finish_resize()
+                return 0
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
-            dx = pt.x - self._resize_opx
-            dy = pt.y - self._resize_opy
-            ow, oh = self._resize_ow, self._resize_oh
-            raw_w = ow + dx if self._resize_right else ow - dx
-            raw_h = oh + dy if self._resize_bottom else oh - dy
-            sw = raw_w / max(1, ow)
-            sh = raw_h / max(1, oh)
-            scale = sw if abs(sw - 1.0) >= abs(sh - 1.0) else sh
-            nw = int(round(ow * scale))
-            nh = int(round(nw / ASPECT))
-            nw, nh = snap_size(nw, nh)
-            nx, ny = self._resize_ox, self._resize_oy
-            if self._resize_left:
-                nx = self._resize_ox + ow - nw
-            if self._resize_top:
-                ny = self._resize_oy + oh - nh
-            if abs(nw - self.width) >= 2 or abs(nh - self.height) >= 2 or nx != self.x or ny != self.y:
-                self._drag_moved = True
-                self.resize(nw, nh, x=nx, y=ny)
+            self._apply_resize_at(pt.x, pt.y)
             return 0
         if msg == WM_MOUSEMOVE and self._dragging:
+            if not self._lbutton_down():
+                moved = self._drag_moved
+                self._dragging = False
+                self._drag_moved = False
+                user32.ReleaseCapture()
+                if moved:
+                    self.ensure_visible()
+                    self._just_moved = True
+                return 0
             pt = POINT()
             user32.GetCursorPos(ctypes.byref(pt))
             if not self._drag_moved and abs(pt.x - self._press_x) <= 4 and abs(pt.y - self._press_y) <= 4:
@@ -1124,14 +1191,7 @@ class LayeredPetWindow:
             self._apply_pos(pt.x - self._drag_dx, pt.y - self._drag_dy)
             return 0
         if msg == WM_LBUTTONUP and self._resizing:
-            moved = self._drag_moved
-            self._resizing = False
-            self._drag_moved = False
-            user32.ReleaseCapture()
-            user32.SetCursor(user32.LoadCursorW(None, IDC_ARROW))
-            if moved:
-                self.ensure_visible()
-                self._just_resized = True
+            self._finish_resize()
             return 0
         if msg == WM_LBUTTONUP and self._dragging:
             moved = self._drag_moved
@@ -1384,6 +1444,7 @@ class LayeredPetWindow:
     def pump(self) -> None:
         if not self.hwnd:
             return
+        self.release_stuck_pointer()
         msg = MSG()
         while user32.PeekMessageW(ctypes.byref(msg), self.hwnd, 0, 0, PM_REMOVE):
             user32.TranslateMessage(ctypes.byref(msg))
@@ -1392,6 +1453,7 @@ class LayeredPetWindow:
         while user32.PeekMessageW(ctypes.byref(msg), wintypes.HWND(-1), 0, 0, PM_REMOVE):
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
+        self.release_stuck_pointer()
         if self._need_topmost:
             self._need_topmost = False
             self.keep_topmost()

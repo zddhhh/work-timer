@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime
@@ -128,21 +129,45 @@ def _subscribe_url(defaults: dict) -> str:
 _SAVE_MIN_GAP = 1.0  # 两次落盘最小间隔（秒）；期间的改动合并成一次
 _pending: dict | None = None
 _last_write = 0.0
+_write_thread: threading.Thread | None = None
+_write_lock = threading.Lock()
+
+
+def _config_text(cfg: dict) -> str:
+    # 不缩进：缩进会退回纯 Python 编码，键鼠采样多了一次要写好几秒。
+    # 后台线程写盘时嵌套 dict 可能正被主线程改，撞上就再浅拷一次重试。
+    last_err: BaseException | None = None
+    for _ in range(5):
+        try:
+            out = dict(cfg)
+            # 两个 token 都只从 update_defaults(.secret).json / 环境变量进内存，不落用户配置
+            out.pop("feedback_token", None)
+            out.pop("gitcode_token", None)
+            out.pop("subscribe_url", None)
+            return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+        except RuntimeError as e:
+            last_err = e
+            time.sleep(0.005)
+    if last_err is not None:
+        raise last_err
+    return "{}"
 
 
 def _write_config(cfg: dict) -> None:
     global _last_write
-    out = dict(cfg)
-    # 两个 token 都只从 update_defaults(.secret).json / 环境变量进内存，不落用户配置
-    out.pop("feedback_token", None)
-    out.pop("gitcode_token", None)
-    out.pop("subscribe_url", None)
     path = config_path()
     tmp = path.with_suffix(".json.tmp")
-    # 不缩进：缩进会退回纯 Python 编码，键鼠采样多了一次要写好几秒。
-    tmp.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    text = _config_text(cfg)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
     _last_write = time.monotonic()
+
+
+def _join_writer(timeout: float = 8.0) -> None:
+    global _write_thread
+    t = _write_thread
+    if t is not None and t.is_alive() and t is not threading.current_thread():
+        t.join(timeout=timeout)
 
 
 def save_config(cfg: dict, *, now: bool = False) -> None:
@@ -157,17 +182,33 @@ def save_config(cfg: dict, *, now: bool = False) -> None:
 
 
 def flush_pending(*, force: bool = False) -> bool:
-    """主循环每帧调用；到期或 force 时把挂起的配置写盘。"""
-    global _pending
+    """主循环每帧调用；到期或 force 时把挂起的配置丢给后台写盘，避免堵死 UI / 键盘钩子。"""
+    global _pending, _write_thread
     if _pending is None:
+        if force:
+            _join_writer()
         return False
     if not force and time.monotonic() - _last_write < _SAVE_MIN_GAP:
         return False
-    cfg, _pending = _pending, None
-    try:
-        _write_config(cfg)
-    except OSError:
-        pass
+    with _write_lock:
+        alive = _write_thread is not None and _write_thread.is_alive()
+        if alive and not force:
+            # 上一趟还在写：挂起保留，下一帧再试，别在 UI 线程干等。
+            return False
+        if alive:
+            _join_writer()
+        cfg, _pending = _pending, None
+
+        def job(target: dict = cfg) -> None:
+            try:
+                _write_config(target)
+            except OSError:
+                pass
+
+        _write_thread = threading.Thread(target=job, name="wt-save", daemon=True)
+        _write_thread.start()
+    if force:
+        _join_writer()
     return True
 
 

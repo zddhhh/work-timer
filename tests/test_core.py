@@ -930,8 +930,12 @@ class _TmpStore(unittest.TestCase):
         store.user_data_dir = lambda: tmp  # type: ignore[assignment]
         store._pending = None
         store._last_write = 0.0
+        store._join_writer()
+        store._write_thread = None
 
     def tearDown(self):
+        store._join_writer()
+        store._write_thread = None
         store.user_data_dir = self._orig  # type: ignore[assignment]
         store._pending = None
         self._tmp.cleanup()
@@ -940,7 +944,7 @@ class _TmpStore(unittest.TestCase):
 class StoreTests(_TmpStore):
     def test_tokens_not_persisted_and_debounce(self):
         cfg = {"theme": "ghost", "feedback_token": "f", "gitcode_token": "g"}
-        store.save_config(cfg)  # 首次立即落盘
+        store.save_config(cfg)  # 首次立即落盘（force 会等后台写完）
         text = store.config_path().read_text(encoding="utf-8")
         self.assertNotIn("_token", text)
         cfg["theme"] = "neon"

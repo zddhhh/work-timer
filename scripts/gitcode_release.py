@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 真按的上下左右重新进热力图；系统注入和输入法选词假方向键仍不记"
+    "- 修久跑后拖不动、点不了：缩放兜底、配置后台写、输入钩子减负"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

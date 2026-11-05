@@ -768,8 +768,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
 
     def _on_raw_input(self, buf: bytes) -> None:
         activity.track_key(buf)
-        delta = activity.mouse_delta(buf)
         kind = activity.parse_raw(buf)
+        # 没开键鼠统计时不必每帧解析位移，减轻 Raw Input 洪峰。
+        delta = activity.mouse_delta(buf) if activity.enabled(self.cfg) else None
         evidence = activity.physical_input(buf)
         if delta is None and kind is None and evidence is None:
             return
