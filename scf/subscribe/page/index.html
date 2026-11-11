@@ -151,8 +151,16 @@ body {
 @media (max-width: 380px) {
   .brand { font-size: clamp(24px, 7.6vw, 34px); letter-spacing: -0.05em; }
 }
-.lead {
+.sub {
   margin: 12px 0 0;
+  color: var(--ink);
+  font-size: clamp(16px, 4.2vw, 20px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+}
+.lead {
+  margin: 10px 0 0;
   color: var(--fog);
   font-size: 15px;
   line-height: 1.5;
@@ -370,7 +378,8 @@ button:disabled { opacity: 0.6; cursor: wait; }
     <header class="hero">
       <p class="kicker">Desktop timer</p>
       <h1 class="brand"><span>WorkTimer</span></h1>
-      <p class="lead">弹性下班计时器，桌面倒计时，下载安装即可用。</p>
+      <p class="sub">弹性下班计时器</p>
+      <p class="lead">桌面倒计时，下载安装即可用。</p>
       <p class="ver"><i></i><span id="ver">正在获取版本…</span></p>
     </header>
 
