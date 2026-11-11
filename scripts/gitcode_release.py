@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修隐藏后再开账本/日程列表打不开：窗口不再被拖回屏幕外"
+    "- 下班未优先且优先列表空：有时间继续倒计时，点击打开日程列表"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

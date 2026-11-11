@@ -1152,6 +1152,59 @@ class ScheduleFieldTests(unittest.TestCase):
         self.assertTrue(cfg["schedules"][0]["date"])
         self.assertEqual(cfg["schedules"][1]["date"], "")
 
+    def _idle_host(self, cfg: dict):
+        import main
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.cfg = cfg
+        host._need_dialog = False
+        host._need_schedule_list = False
+        host._esc_hidden = False
+        host._hydrate_waiting = False
+        host._kinetic = None
+        host._maybe_skin_interact = lambda *_a, **_k: None
+        host._session_stale = lambda: False
+        return host
+
+    def test_empty_pins_with_offwork_shows_countdown_not_idle(self):
+        import main
+
+        cfg = {
+            "schedules": [],
+            "pin_order": [],
+            "active_pin_id": None,
+            "time_mode": "direct",
+            "off_h": 18,
+            "off_m": 30,
+            "remember_offwork": True,
+        }
+        schedules.ensure_fields(cfg)
+        host = self._idle_host(cfg)
+        title, total, done, idle = host._active_view(datetime(2026, 11, 11, 10, 0, 0))
+        self.assertFalse(idle)
+        self.assertEqual(title, "距离您下班还有")
+        self.assertGreater(total, 0)
+        host._on_click(1, 1)
+        self.assertTrue(host._need_schedule_list)
+        self.assertFalse(host._need_dialog)
+
+    def test_empty_pins_without_offwork_stays_idle_and_opens_setup(self):
+        cfg = {
+            "schedules": [],
+            "pin_order": [],
+            "active_pin_id": None,
+            "time_mode": "direct",
+            "remember_offwork": True,
+        }
+        schedules.ensure_fields(cfg)
+        host = self._idle_host(cfg)
+        title, total, done, idle = host._active_view(datetime(2026, 11, 11, 10, 0, 0))
+        self.assertTrue(idle)
+        self.assertEqual(title, "距离下班")
+        host._on_click(1, 1)
+        self.assertTrue(host._need_dialog)
+        self.assertFalse(host._need_schedule_list)
+
 
 class _TmpStore(unittest.TestCase):
     def setUp(self):

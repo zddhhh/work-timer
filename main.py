@@ -170,6 +170,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._menu_pos: tuple[int, int] | None = None
         self._need_dialog = False
         self._need_worklog = False
+        self._need_schedule_list = False
         self._schedule_list_open = False
         self._need_close_schedule_list = False
         self._tk: tk.Tk | None = None
@@ -695,10 +696,14 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._maybe_skin_interact(lx, ly)
         schedules.ensure_fields(self.cfg)
         aid = schedules.active_id(self.cfg)
-        # 下班项空闲「点我开始」始终进设置，不要被多日程轮换抢走
-        if (aid is None or aid == schedules.OFFWORK_ID) and not self._has_target():
-            self._need_dialog = True
-            return
+        # 无优先项或当前是下班：未设下班 → 设置；优先列表被清空但已有下班 → 打开日程列表重设优先
+        if aid is None or aid == schedules.OFFWORK_ID:
+            if not self._has_target():
+                self._need_dialog = True
+                return
+            if aid is None:
+                self._need_schedule_list = True
+                return
         pins = self.cfg.get("pin_order") or []
         if isinstance(pins, list) and len(pins) >= 2:
             if schedules.cycle_active(self.cfg):
@@ -1879,20 +1884,25 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         sched["show_tab"]("schedules")
         _park_card(sched["dlg"], fg)
 
+    def _offwork_countdown(self, now: datetime) -> tuple[str, int, bool, bool] | None:
+        """已有下班时刻则返回倒计时视图；否则 None（调用方再当空闲）。"""
+        off = self._off_hm()
+        if off is None:
+            return None
+        td = flex_time.remaining_to(now, off[0], off[1])
+        total, done = flex_time.remaining_parts(td)
+        title = "已经到点" if done else "距离您下班还有"
+        return title, total, done, False
+
     def _active_view(self, now: datetime) -> tuple[str, int, bool, bool]:
         """当前主界面项：(标题, 剩余秒, 是否到点, 是否空闲未设)。"""
         schedules.ensure_fields(self.cfg)
         aid = schedules.active_id(self.cfg)
         if aid is None:
-            return "距离下班", 0, False, True
+            # 优先列表被清空时，有下班时间就回退显示倒计时，别装成「点我开始」却点不动
+            return self._offwork_countdown(now) or ("距离下班", 0, False, True)
         if aid == schedules.OFFWORK_ID:
-            off = self._off_hm()
-            if off is None:
-                return "距离下班", 0, False, True
-            td = flex_time.remaining_to(now, off[0], off[1])
-            total, done = flex_time.remaining_parts(td)
-            title = "已经到点" if done else "距离您下班还有"
-            return title, total, done, False
+            return self._offwork_countdown(now) or ("距离下班", 0, False, True)
         item = schedules.find_schedule(self.cfg, aid)
         if item is None:
             return "距离下班", 0, False, True
@@ -1904,7 +1914,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         if idle:
             return 0.0
         aid = schedules.active_id(self.cfg)
-        if aid == schedules.OFFWORK_ID:
+        # 与 _active_view 一致：无优先项时回退下班倒计时
+        if aid is None or aid == schedules.OFFWORK_ID:
             off = self._off_hm()
             if off is None:
                 return 0.0
@@ -2373,6 +2384,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 if self._need_dialog:
                     self._need_dialog = False
                     self._open_idle_dialog()
+                if self._need_schedule_list and not self._schedule_list_open:
+                    self._need_schedule_list = False
+                    self._open_schedule_list()
                 if self._need_worklog and not self._update_dialog_open:
                     self._need_worklog = False
                     self._open_worklog_dialog()
