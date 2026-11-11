@@ -890,6 +890,90 @@ class GameDialogTests(unittest.TestCase):
         self.assertTrue(dlg._parked_min)
         root.destroy()
 
+    def test_card_modal_stops_when_app_requests_quit(self):
+        import tkinter as tk
+
+        import card_ui
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(80, 80), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(80, 80))
+        n = {"v": 0}
+
+        class Win:
+            modal_should_stop = staticmethod(lambda: n["v"] >= 2)
+
+            def pump(self):
+                return None
+
+            def note_beat(self):
+                n["v"] += 1
+
+        card_ui._run_card_modal(dlg, Win())
+        self.assertGreaterEqual(n["v"], 2)
+        self.assertTrue(dlg.winfo_exists())
+        root.destroy()
+
+    def test_hide_key_minimizes_live_worklog_before_hiding(self):
+        import main
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.running = True
+        host._card_modal_abort = False
+        host._esc_hidden = False
+        host._key_hide_on = lambda: True
+        minimized = []
+
+        class Win:
+            def dismiss_popup(self):
+                return None
+
+            def hide(self):
+                return None
+
+        host.win = Win()
+        host._worklog_ui = {"live": True, "minimized": False, "stop": False}
+
+        def fake_min(ui):
+            minimized.append(True)
+            ui["stop"] = True
+            ui["minimized"] = True
+
+        host._minimize_worklog = fake_min
+        host._hide_key_companions = lambda: None
+        host._toggle_key_hide()
+        self.assertTrue(host._esc_hidden)
+        self.assertEqual(minimized, [True])
+        self.assertTrue(host._worklog_ui["stop"])
+        self.assertTrue(host._worklog_ui["minimized"])
+
+    def test_request_quit_aborts_card_modal_and_worklog(self):
+        import tkinter as tk
+
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(40, 40), width=160, height=80)
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.running = True
+        host._card_modal_abort = False
+        host._worklog_ui = {"stop": False, "live": True}
+
+        class Win:
+            _open_card = dlg
+
+        host.win = Win()
+        host._request_quit()
+        self.assertFalse(host.running)
+        self.assertTrue(host._card_modal_abort)
+        self.assertTrue(host._worklog_ui["stop"])
+        self.assertFalse(dlg.winfo_exists())
+        root.destroy()
+
     def test_fit_card_recovers_when_state_reports_iconic(self):
         import tkinter as tk
 

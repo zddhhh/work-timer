@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时盘口短线更跟手，打快停手 K 线更明显"
+    "- 修账本最小化后再多次隐藏：打不开、退不出、只能任务管理器强退"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

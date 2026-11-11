@@ -802,6 +802,19 @@ def _sync_open_card_hide(dlg: tk.Toplevel, win) -> None:
         _show_open_card(dlg)
 
 
+def _modal_aborted(win: layered_win.LayeredPetWindow | None) -> bool:
+    """退出菜单会把 running 清掉；循环必须跟着停，否则主循环回不去只能杀进程。"""
+    if win is None:
+        return False
+    fn = getattr(win, "modal_should_stop", None)
+    if fn is None:
+        return False
+    try:
+        return bool(fn())
+    except Exception:
+        return False
+
+
 def _run_card_modal(
     dlg: tk.Toplevel,
     win: layered_win.LayeredPetWindow | None = None,
@@ -821,10 +834,20 @@ def _run_card_modal(
         win._open_card = dlg
     if stop is None:
         dlg.bind("<Escape>", lambda _e: dlg.destroy())
+
+    def _tick_frame() -> None:
+        # on_frame 与 blocked_live 常是同一个方法的两个绑定，is 比不出来；只跑一个，避免菜单/停表处理两遍。
+        if on_frame is not None:
+            on_frame()
+        elif live is not None:
+            live()
+
     try:
         while True:
             try:
                 if stop is not None and stop():
+                    break
+                if _modal_aborted(win):
                     break
                 if not dlg.winfo_exists():
                     break
@@ -832,10 +855,7 @@ def _run_card_modal(
                     bool(getattr(win, "resizing", False)) or bool(getattr(win, "dragging", False))
                 ):
                     win.pump()
-                    if on_frame is not None:
-                        on_frame()
-                    elif live is not None:
-                        live()
+                    _tick_frame()
                     if note is not None:
                         note()
                     time.sleep(0.001)
@@ -844,12 +864,11 @@ def _run_card_modal(
                 dlg.update()
                 if stop is not None and stop():
                     break
+                if _modal_aborted(win):
+                    break
                 if win is not None:
                     win.pump()
-                if live is not None and on_frame is not live:
-                    live()
-                if on_frame is not None:
-                    on_frame()
+                _tick_frame()
                 if note is not None:
                     note()
             except Exception:

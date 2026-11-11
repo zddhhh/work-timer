@@ -257,9 +257,11 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._hydrate_showing = False
         self._hydrate_waiting = bool(hydrate.read(self.cfg).get("pending")) and hydrate.enabled(self.cfg)
         self._hydrate_paused_at: datetime | None = None
+        self._card_modal_abort = False
         self.win.blocked_live = self._card_frame
         self.win.note_beat = self._note_beat
         self.win.dialog_hidden = self._games_hide_state
+        self.win.modal_should_stop = lambda: (not self.running) or bool(self._card_modal_abort)
         self.win.set_live_timer(self._on_live_timer)
         self.win.set_raw_input_handler(self._on_raw_input)
         # 来和走始终看真实输入；次数统计开关只决定是否保存次数。
@@ -1077,10 +1079,33 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         if self._esc_hidden:
             self._show_after_esc()
             return
+        # 账本模态还在转时只藏窗、不退循环 → 主循环回不去，退出/再开账本都会假死。
+        # 隐藏前先最小化账本，让 stop 把模态打掉；显示后贴条还在，点一下即可恢复。
+        ui = getattr(self, "_worklog_ui", None)
+        if ui is not None and ui.get("live") and not ui.get("minimized"):
+            try:
+                self._minimize_worklog(ui)
+            except Exception:
+                ui["stop"] = True
         self.win.dismiss_popup()
         self._hide_key_companions()
         self.win.hide()
         self._esc_hidden = True
+
+    def _request_quit(self) -> None:
+        """退出必须能打断卡片模态；只改 running 的话会卡在 _run_card_modal 里。"""
+        self.running = False
+        self._card_modal_abort = True
+        ui = getattr(self, "_worklog_ui", None)
+        if ui is not None:
+            ui["stop"] = True
+        dlg = getattr(self.win, "_open_card", None) if self.win is not None else None
+        if dlg is not None:
+            try:
+                if dlg.winfo_exists():
+                    dlg.destroy()
+            except tk.TclError:
+                pass
 
     def _poll_key_hide(self) -> None:
         self._poll_clock_skew()
@@ -1303,6 +1328,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 sx, sy = self._menu_pos
                 self._menu_pos = None
                 self._handle_menu(sx, sy)
+            if self._need_worklog and not self._update_dialog_open:
+                # 主循环被卡片模态挡住时，贴条点击只会落到这里。
+                self._need_worklog = False
+                if ui is not None and ui.get("live"):
+                    self._restore_worklog(ui)
+                else:
+                    self._open_worklog_dialog()
             paint = True
             if ui is not None and time.monotonic() < float(ui.get("scroll_until") or 0):
                 # 账本正在滑。这一帧把 CPU 留给窗口挪动，倒计时晚几十毫秒再画。
@@ -1880,7 +1912,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             auto_start=self._auto_start_on(),
         )
         if op == "quit":
-            self.running = False
+            self._request_quit()
         elif op == "share":
             self._open_share()
         elif op == "update":
