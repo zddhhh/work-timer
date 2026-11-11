@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修账本最小化后再多次隐藏：打不开、退不出、只能任务管理器强退"
+    "- 修隐藏后再开账本/日程列表打不开：窗口不再被拖回屏幕外"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

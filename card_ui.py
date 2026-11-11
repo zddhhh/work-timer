@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import re
 import time
 import tkinter as tk
 from pathlib import Path
@@ -139,6 +140,27 @@ def _geom_wh(geom: str) -> tuple[int, int]:
     return int(w), int(h)
 
 
+def _geom_xy(geom: str) -> tuple[int, int] | None:
+    cut = len(geom)
+    for mark in ("+", "-"):
+        i = geom.find(mark)
+        if 0 < i < cut:
+            cut = i
+    rest = geom[cut:]
+    m = re.match(r"([+-]\d+)([+-]\d+)$", rest)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def _apply_card_bounds(dlg: tk.Toplevel, bounds: str) -> None:
+    """Tk geometry 和 SetWindowPos 都写一遍：隐藏键只挪 hwnd 时，单改 geometry 会亮在屏幕外。"""
+    dlg.geometry(bounds)
+    xy = _geom_xy(bounds)
+    if xy is not None:
+        _move_card_hwnd(dlg, xy[0], xy[1])
+
+
 def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     """按内容把卡片撑开；藏着的卡片在屏幕外画完，再挪回来亮出。
 
@@ -158,6 +180,7 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
     except tk.TclError:
         withdrawn, visible = True, False
     # 隐藏键会给卡片加上鼠标穿透。亮出来时必须摘掉，否则点得到计时器、点不到账本。
+    dlg._key_hidden = False
     _click_through(dlg, False)
     bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
     try:
@@ -167,27 +190,30 @@ def _fit_card(dlg: tk.Toplevel, *, min_w: int, min_h: int, near) -> None:
             except ValueError:
                 same = False
             if same:
+                xy = _geom_xy(bounds)
+                if xy is not None:
+                    _move_card_hwnd(dlg, xy[0], xy[1])
                 dlg.update()
                 return
             dlg.attributes("-alpha", 0.0)
             dlg.update()
-            dlg.geometry(bounds)
+            _apply_card_bounds(dlg, bounds)
             dlg.update()
             dlg.attributes("-alpha", 1.0)
             return
         dlg.attributes("-alpha", 0.0)
         # 已映射（换页时先透明、或 _park_card 收起的）别再 deiconify：Tk 会整窗重显
         if withdrawn:
-            dlg.geometry(_offscreen_bounds(bounds))
+            _apply_card_bounds(dlg, _offscreen_bounds(bounds))
             dlg.deiconify()
             dlg.update()
             dlg.attributes("-alpha", 0.0)
             bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
-            dlg.geometry(_offscreen_bounds(bounds))
+            _apply_card_bounds(dlg, _offscreen_bounds(bounds))
             dlg.update()
             bounds = _card_bounds(dlg, min_w=min_w, min_h=min_h, near=near)
         dlg.attributes("-alpha", 0.0)
-        dlg.geometry(bounds)
+        _apply_card_bounds(dlg, bounds)
         dlg.update()
         dlg.attributes("-alpha", 1.0)
         dlg.lift()
@@ -742,7 +768,12 @@ def _hide_open_card(dlg: tk.Toplevel) -> None:
     try:
         if getattr(dlg, "_key_hidden", False):
             return
+        # 已最小化/停在屏幕外：再藏只会把 _hide_xy 写成 -20000，下次打开拖回虚空。
+        if getattr(dlg, "_parked_min", False):
+            return
         xy = _card_screen_xy(dlg)
+        if xy is not None and (int(xy[0]) < -500 or int(xy[1]) < -500):
+            return
         dlg._hide_xy = xy
         dlg._key_hidden = True
         _move_card_hwnd(dlg, -20000, 0)
@@ -763,6 +794,11 @@ def _show_open_card(dlg: tk.Toplevel) -> None:
             return
         geom = getattr(dlg, "_hide_geom", None)
         xy = getattr(dlg, "_hide_xy", None)
+        # 隐藏时卡片已经停在屏幕外：_hide_xy 是垃圾坐标，不能再拖回去，留给 _fit_card 重摆。
+        if xy is not None and (int(xy[0]) < -500 or int(xy[1]) < -500):
+            dlg._key_hidden = False
+            dlg._hide_xy = None
+            return
         _click_through(dlg, False)
         if xy is not None:
             _move_card_hwnd(dlg, int(xy[0]), int(xy[1]))

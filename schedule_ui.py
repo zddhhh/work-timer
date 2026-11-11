@@ -328,6 +328,7 @@ class ScheduleDialogMixin:
         ui = self._ensure_schedule_ui()
         dlg, closed = ui["dlg"], ui["closed"]
         closed["v"] = False
+        dlg._key_hidden = False
         ui["fg"] = layered_win.user32.GetForegroundWindow()
         self._schedule_list_open = True
         self._need_close_schedule_list = False
@@ -354,6 +355,9 @@ class ScheduleDialogMixin:
                             break
                     _sync_open_card_hide(dlg, self.win)
                     dlg.update()
+                    if self._need_close_schedule_list:
+                        close()
+                        break
                     self.win.pump()
                     self._card_frame()
                     self._note_beat()

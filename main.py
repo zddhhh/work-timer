@@ -1057,17 +1057,32 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._place_worklog_dock()
 
     def _hide_key_companions(self) -> None:
-        """隐藏键先收账本和贴条，再藏计时器，避免账本慢半拍。"""
+        """隐藏键只收「正开着」的卡片和贴条。
+
+        预热后停在屏幕外的账本/日程不要再标 _key_hidden：否则再打开时
+        _show_open_card 会按屏幕外的 _hide_xy 把窗拖回去，看起来像打不开。
+        """
         dlg = getattr(self.win, "_open_card", None) if self.win is not None else None
         if dlg is not None:
             _hide_open_card(dlg)
         ui = getattr(self, "_worklog_ui", None)
         other = ui.get("dlg") if ui else None
-        if other is not None and other is not dlg:
+        if (
+            other is not None
+            and other is not dlg
+            and ui is not None
+            and ui.get("live")
+            and not ui.get("minimized")
+        ):
             _hide_open_card(other)
         sched = getattr(self, "_schedule_ui", None)
         sdlg = sched.get("dlg") if sched else None
-        if sdlg is not None and sdlg is not dlg and sdlg is not other:
+        if (
+            sdlg is not None
+            and sdlg is not dlg
+            and sdlg is not other
+            and getattr(self, "_schedule_list_open", False)
+        ):
             _hide_open_card(sdlg)
         dock = getattr(self, "_worklog_dock", None)
         if dock is not None:
@@ -1087,6 +1102,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._minimize_worklog(ui)
             except Exception:
                 ui["stop"] = True
+        # 日程列表同样：藏起来却不退循环，再开会卡在看不见的模态里。
+        if getattr(self, "_schedule_list_open", False):
+            self._need_close_schedule_list = True
         self.win.dismiss_popup()
         self._hide_key_companions()
         self.win.hide()

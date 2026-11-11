@@ -883,11 +883,82 @@ class GameDialogTests(unittest.TestCase):
         dlg._parked_min = True
         card_ui._park_card(dlg, 0)
         card_ui._hide_open_card(dlg)
-        self.assertTrue(dlg._key_hidden)
-        card_ui._show_open_card(dlg)
-        self.assertFalse(dlg._key_hidden)
+        # 已最小化的卡片不再二次标记 hidden，避免 _hide_xy 被写成屏幕外。
+        self.assertFalse(getattr(dlg, "_key_hidden", False))
         self.assertLess(float(dlg.attributes("-alpha")), 0.5)
         self.assertTrue(dlg._parked_min)
+        root.destroy()
+
+    def test_hide_companions_skips_parked_worklog_and_schedule(self):
+        import tkinter as tk
+
+        import card_ui
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        work = main._card_dialog(root, near=(40, 40), width=200, height=100)
+        sched = main._card_dialog(root, near=(60, 60), width=200, height=100)
+        card_ui._park_card(work, 0)
+        card_ui._park_card(sched, 0)
+
+        class Win:
+            _open_card = None
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.win = Win()
+        host._worklog_ui = {"dlg": work, "live": False, "minimized": False}
+        host._schedule_ui = {"dlg": sched}
+        host._schedule_list_open = False
+        host._worklog_dock = None
+        host._hide_key_companions()
+        self.assertFalse(getattr(work, "_key_hidden", False))
+        self.assertFalse(getattr(sched, "_key_hidden", False))
+        root.destroy()
+
+    def test_fit_card_after_hide_brings_hwnd_onscreen(self):
+        import tkinter as tk
+
+        import card_ui
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(120, 120), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(120, 120))
+        card_ui._park_card(dlg, 0)
+        # 旧逻辑会给已停靠卡片标 hidden，并把 _hide_xy 写成屏幕外。
+        dlg._key_hidden = True
+        dlg._hide_xy = (-20000, 0)
+        card_ui._fit_card(dlg, min_w=200, min_h=80, near=(120, 120))
+        self.assertFalse(getattr(dlg, "_key_hidden", False))
+        self.assertGreaterEqual(float(dlg.attributes("-alpha")), 0.9)
+        xy = card_ui._card_screen_xy(dlg)
+        self.assertIsNotNone(xy)
+        self.assertGreater(xy[0], -500)
+        root.destroy()
+
+    def test_show_open_card_ignores_offscreen_hide_xy(self):
+        import tkinter as tk
+
+        import card_ui
+        import main
+
+        root = tk.Tk()
+        root.withdraw()
+        dlg = main._card_dialog(root, near=(100, 100), width=220, height=120)
+        tk.Label(dlg, text="弹窗", bg=main._CARD_BG, fg=main._CARD_FG).pack()
+        main._reveal_card(dlg, min_w=200, min_h=80, near=(100, 100))
+        here = card_ui._card_screen_xy(dlg)
+        dlg._key_hidden = True
+        dlg._hide_xy = (-20000, 0)
+        card_ui._show_open_card(dlg)
+        self.assertFalse(dlg._key_hidden)
+        stay = card_ui._card_screen_xy(dlg)
+        self.assertIsNotNone(here)
+        self.assertIsNotNone(stay)
+        self.assertGreater(stay[0], -500)
         root.destroy()
 
     def test_card_modal_stops_when_app_requests_quit(self):
