@@ -1209,9 +1209,7 @@ class ScheduleFieldTests(unittest.TestCase):
         host._session_stale = lambda: False
         return host
 
-    def test_empty_pins_with_offwork_shows_countdown_not_idle(self):
-        import main
-
+    def test_empty_pins_with_offwork_shows_standby_not_countdown(self):
         cfg = {
             "schedules": [],
             "pin_order": [],
@@ -1224,9 +1222,10 @@ class ScheduleFieldTests(unittest.TestCase):
         schedules.ensure_fields(cfg)
         host = self._idle_host(cfg)
         title, total, done, idle = host._active_view(datetime(2026, 11, 11, 10, 0, 0))
-        self.assertFalse(idle)
-        self.assertEqual(title, "距离您下班还有")
-        self.assertGreater(total, 0)
+        self.assertTrue(idle)
+        self.assertTrue(host._pin_standby())
+        self.assertEqual(title, "暂无优先日程")
+        self.assertEqual(total, 0)
         host._on_click(1, 1)
         self.assertTrue(host._need_schedule_list)
         self.assertFalse(host._need_dialog)
@@ -1243,6 +1242,7 @@ class ScheduleFieldTests(unittest.TestCase):
         host = self._idle_host(cfg)
         title, total, done, idle = host._active_view(datetime(2026, 11, 11, 10, 0, 0))
         self.assertTrue(idle)
+        self.assertFalse(host._pin_standby())
         self.assertEqual(title, "距离下班")
         host._on_click(1, 1)
         self.assertTrue(host._need_dialog)

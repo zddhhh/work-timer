@@ -696,7 +696,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._maybe_skin_interact(lx, ly)
         schedules.ensure_fields(self.cfg)
         aid = schedules.active_id(self.cfg)
-        # 无优先项或当前是下班：未设下班 → 设置；优先列表被清空但已有下班 → 打开日程列表重设优先
+        # 无优先项：未设下班 →「点我开始」进设置；已设下班的待机 → 打开日程列表选优先
+        # 当前是下班且未设目标 → 同样进设置
         if aid is None or aid == schedules.OFFWORK_ID:
             if not self._has_target():
                 self._need_dialog = True
@@ -1888,6 +1889,11 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         sched["show_tab"]("schedules")
         _park_card(sched["dlg"], fg)
 
+    def _pin_standby(self) -> bool:
+        """优先列表被故意清空：即使设过下班，也不自动开倒计时。"""
+        schedules.ensure_fields(self.cfg)
+        return schedules.active_id(self.cfg) is None and self._has_target()
+
     def _offwork_countdown(self, now: datetime) -> tuple[str, int, bool, bool] | None:
         """已有下班时刻则返回倒计时视图；否则 None（调用方再当空闲）。"""
         off = self._off_hm()
@@ -1903,8 +1909,10 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         schedules.ensure_fields(self.cfg)
         aid = schedules.active_id(self.cfg)
         if aid is None:
-            # 优先列表被清空时，有下班时间就回退显示倒计时，别装成「点我开始」却点不动
-            return self._offwork_countdown(now) or ("距离下班", 0, False, True)
+            # 全不优先：待机提示，不偷偷开下班倒计时
+            if self._has_target():
+                return "暂无优先日程", 0, False, True
+            return "距离下班", 0, False, True
         if aid == schedules.OFFWORK_ID:
             return self._offwork_countdown(now) or ("距离下班", 0, False, True)
         item = schedules.find_schedule(self.cfg, aid)
@@ -1918,8 +1926,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         if idle:
             return 0.0
         aid = schedules.active_id(self.cfg)
-        # 与 _active_view 一致：无优先项时回退下班倒计时
-        if aid is None or aid == schedules.OFFWORK_ID:
+        if aid == schedules.OFFWORK_ID:
             off = self._off_hm()
             if off is None:
                 return 0.0
@@ -2062,15 +2069,17 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             w, h = self._win_w, self._win_h
             phase = time.monotonic()
             title, total, done, idle = self._active_view(now)
+            standby = idle and self._pin_standby()
             self._check_celebrate(schedules.active_id(self.cfg) or "-", title, total, done, idle, phase)
             surface = self._surface if base.adaptive else "dark"
             theme = themes.resolve_for_surface(base, surface)
             sub = ""
             if idle:
-                big = "点我开始"
+                # 全不优先：待机，别写成「点我开始」误导去设下班；也别直接开倒计时。
+                big = "点我选日程" if standby else "点我开始"
                 accent = theme.idle
                 stage = "idle"
-                key = f"idle-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
+                key = f"{'standby' if standby else 'idle'}-{mode}-{theme.id}-{theme.fill}-{surface}-{w}x{h}"
             elif done:
                 big = flex_time.format_remaining(total, mode)
                 accent = theme.done
@@ -2088,11 +2097,14 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             env = self._env_rgb
             if env is not None and ornaments.uses_env(theme.kind):
                 key = f"{key}-e{env[0] // 20}{env[1] // 20}{env[2] // 20}"
-            shown_title = title if not idle else "距离下班"
+            if idle:
+                shown_title = "暂无优先日程" if standby else "距离下班"
+            else:
+                shown_title = title
             if theme.kind == ticker.KIND:
                 signed = self._ticker_seconds(now, total, done, idle)
                 big = ticker.format_clock(signed, idle=idle)
-                shown_title = ticker.header_title(stage, idle=idle)
+                shown_title = "停盘" if standby else ticker.header_title(stage, idle=idle)
                 ticker.observe(phase, activity.live_intensity(self.cfg, now))
             meow_on = theme.kind == meow.KIND
             drinking = meow_on and self._hydrate_showing and kinetic.playing(self._kinetic, phase)
