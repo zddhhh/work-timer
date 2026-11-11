@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 全不优先时待机提示「点我选日程」，不再偷偷开下班倒计时"
+    "- 关于页可打开官网；仓库说明附上官网下载链接"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

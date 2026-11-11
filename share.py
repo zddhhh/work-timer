@@ -28,9 +28,15 @@ def public_download_url(repo: str, version: str, asset: str) -> str:
 
 
 def landing_url(cfg: dict | None = None) -> str:
-    """发给同事的落地页：选系统下载，也可以填邮箱。"""
+    """官网 / 发给同事的落地页：选系统下载，也可以填邮箱。"""
     url = str((cfg or {}).get("subscribe_url") or "").strip()
     return url or DEFAULT_LANDING
+
+
+def open_landing(cfg: dict | None = None) -> None:
+    import webbrowser
+
+    webbrowser.open(landing_url(cfg))
 
 
 def share_text(version: str, url: str) -> str:

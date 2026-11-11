@@ -4438,6 +4438,11 @@ class ShareTests(unittest.TestCase):
         self.assertIn("zddhhh.github.io/worktimer-subscribe", url)
         self.assertIn("选自己的 Windows 版本", text)
         self.assertIn(url, text)
+        self.assertEqual(share.landing_url({}), share.DEFAULT_LANDING)
+        self.assertEqual(
+            share.landing_url({"subscribe_url": "https://example.test/dl/"}),
+            "https://example.test/dl/",
+        )
         other, _body = share.current_share({"subscribe_url": "https://example.test/dl/"})
         self.assertEqual(other, "https://example.test/dl/")
         self.assertIn("Windows 8.1", share.file_share_hint(win7=False))

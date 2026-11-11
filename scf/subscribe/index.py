@@ -371,12 +371,12 @@ def _form(error: str = "", sender: str = "") -> str:
         _log_error(e)
     if sender:
         lead = (
-            f"也可让 {_esc(sender)} 把地址寄到邮箱。请认准这个发件人。"
-            "两类分开寄，互不影响。同一类的同一个版本只寄一次。"
+            f"也可以让 {_esc(sender)} 把下载链接发到邮箱，请认准该发件人。"
+            "两类安装包分开寄送，互不影响；同一类的同一个版本只寄一次。"
         )
     else:
-        lead = "先选自己的系统再下载。也可以填邮箱收链接。"
-    ver = f"<p>最新版本：{_esc(version)}</p>" if version else ""
+        lead = "请先选择系统再下载。也可以填写邮箱接收链接。"
+    ver = f"<p>当前版本 {_esc(version)}</p>" if version else ""
     dl = ""
     if main_url and win7_url:
         dl = (
@@ -388,14 +388,22 @@ def _form(error: str = "", sender: str = "") -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>下载 WorkTimer</title>
 <style>
-body {{ margin:0; font:16px/1.5 "Microsoft YaHei",sans-serif; background:#f6f1e8; color:#3a241c; }}
-main {{ max-width:420px; margin:24px auto; padding:0 16px 32px; }}
-h1 {{ font-size:22px; }}
-label {{ display:block; margin:14px 0; }}
-input[type=email] {{ width:100%; box-sizing:border-box; padding:10px; font-size:16px; }}
-button {{ margin-top:8px; padding:10px 18px; font-size:16px; background:#b02a24; color:#fff; border:0; border-radius:8px; }}
-.err {{ color:#b02a24; }}
+body {{ margin:0; font:16px/1.55 "Microsoft YaHei UI","Microsoft YaHei",sans-serif; color:#12161c; background:#eef2f6; }}
+main {{ width:min(440px,calc(100% - 32px)); margin:0 auto; padding:48px 0 56px; }}
+.brand {{ margin:0; font-size:40px; font-weight:800; letter-spacing:-.04em; }}
+.tag {{ margin:8px 0 0; color:#1f6f6a; font-size:15px; }}
+.panel {{ margin-top:24px; padding:20px; border:1px solid rgba(18,22,28,.12); border-radius:20px; background:#fff; }}
+h1 {{ margin:0 0 8px; font-size:18px; }}
+p {{ color:#66707c; font-size:14px; }}
+a {{ color:#1f6f6a; font-weight:700; }}
+label {{ display:block; margin:12px 0; }}
+input[type=email] {{ width:100%; box-sizing:border-box; padding:11px 12px; border:1px solid rgba(18,22,28,.12); border-radius:12px; font-size:16px; }}
+button {{ width:100%; margin-top:8px; min-height:44px; border:0; border-radius:12px; background:#e56a18; color:#fff; font-size:15px; font-weight:700; cursor:pointer; }}
+.err {{ color:#b42318; }}
 </style></head><body><main>
+<p class="brand">WorkTimer</p>
+<p class="tag">弹性下班计时器</p>
+<section class="panel">
 <h1>选系统，下载安装包</h1>
 {ver}
 <p>{lead}</p>
@@ -404,12 +412,13 @@ button {{ margin-top:8px; padding:10px 18px; font-size:16px; background:#b02a24;
 <form method="post">
 <label>邮箱<br><input type="email" name="email" required placeholder="name@example.com"></label>
 <label>系统</label>
-<label><input type="radio" name="os" value="main" checked> Windows 8.1、10、11</label>
-<label><input type="radio" name="os" value="win7"> Windows 7、8</label>
+<label><input type="radio" name="os" value="main" checked> Windows 8.1、10、11（WorkTimer-Setup.exe）</label>
+<label><input type="radio" name="os" value="win7"> Windows 7、8（WorkTimer-Win7-Setup.exe）</label>
 <label><input type="radio" name="mode" value="once" checked> 只要这一版</label>
 <label><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
 <button type="submit">寄到邮箱</button>
 </form>
+</section>
 </main></body></html>"""
 
 
@@ -417,9 +426,13 @@ def _message_html(title: str, text: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{_esc(title)}</title></head>
-<body style="font:16px/1.5 'Microsoft YaHei',sans-serif;background:#f6f1e8;color:#3a241c;padding:24px">
-<h1>{_esc(title)}</h1><p>{_esc(text)}</p></body></html>"""
+<title>{_esc(title)}</title>
+<style>
+body {{ margin:0; font:16px/1.55 "Microsoft YaHei UI","Microsoft YaHei",sans-serif; color:#12161c; background:#eef2f6; padding:40px 16px; }}
+main {{ width:min(440px,100%); margin:0 auto; padding:20px; border:1px solid rgba(18,22,28,.12); border-radius:20px; background:#fff; }}
+h1 {{ margin:0 0 6px; font-size:18px; }} p {{ margin:0; color:#66707c; font-size:14px; }}
+</style></head>
+<body><main><h1>{_esc(title)}</h1><p>{_esc(text)}</p></main></body></html>"""
 
 
 def _html(status: int, html: str) -> dict:

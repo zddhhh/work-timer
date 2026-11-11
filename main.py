@@ -1514,9 +1514,16 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             text=f"下班倒计时  {APP_VERSION}",
             fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 11),
         ).pack(anchor="w")
+        site = share.landing_url(self.cfg)
         tk.Label(
             body,
-            text=feedback.repo_url(self.cfg),
+            text=f"官网  {site}",
+            fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
+            wraplength=420, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+        tk.Label(
+            body,
+            text=f"仓库  {feedback.repo_url(self.cfg)}",
             fg=_CARD_MUTED, bg=_CARD_BG, font=("Microsoft YaHei UI", 9),
             wraplength=420, justify="left",
         ).pack(anchor="w", pady=(4, 0))
@@ -1580,7 +1587,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 return
             err.set(info)
 
-        _card_btn(bar, "打开官方仓库", lambda: feedback.open_repo(self.cfg)).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "打开官网", lambda: share.open_landing(self.cfg)).pack(side="left", padx=(18, 6))
+        _card_btn(bar, "打开仓库", lambda: feedback.open_repo(self.cfg)).pack(side="left", padx=6)
         _card_btn(bar, "提交反馈", send, accent=True).pack(side="left", padx=6)
         _card_btn(bar, "关闭", dlg.destroy).pack(side="left", padx=6)
         _reveal_card(dlg, min_w=480, min_h=580, near=self._dialog_near())
