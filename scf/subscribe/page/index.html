@@ -132,17 +132,24 @@ body {
   margin: 0;
   font-family: Syne, "Noto Sans SC", sans-serif;
   font-weight: 800;
-  font-size: clamp(34px, 9vw, 52px);
+  /* 单行标题：按屏宽收字号，避免 WorkTimer 被拆成两行 */
+  font-size: clamp(28px, 8.2vw, 52px);
   line-height: 1.05;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
   color: var(--ink);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: clip;
 }
 .brand span {
   background: linear-gradient(115deg, #10141c 0%, #163a38 48%, #c45a12 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+@media (max-width: 380px) {
+  .brand { font-size: clamp(24px, 7.6vw, 34px); letter-spacing: -0.05em; }
 }
 .lead {
   margin: 12px 0 0;
