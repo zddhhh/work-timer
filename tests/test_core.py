@@ -1007,19 +1007,62 @@ class GameDialogTests(unittest.TestCase):
 
         host.win = Win()
         host._worklog_ui = {"live": True, "minimized": False, "stop": False}
+        host._worklog_docked = False
+        host._schedule_list_open = False
 
-        def fake_min(ui):
-            minimized.append(True)
+        def fake_min(ui, *, place_dock=True):
+            minimized.append(place_dock)
             ui["stop"] = True
             ui["minimized"] = True
+            host._worklog_docked = True
 
         host._minimize_worklog = fake_min
         host._hide_key_companions = lambda: None
         host._toggle_key_hide()
         self.assertTrue(host._esc_hidden)
-        self.assertEqual(minimized, [True])
+        # 隐藏前最小化不要先亮贴条，显示后再 place，避免藏着时贴条状态被弄乱。
+        self.assertEqual(minimized, [False])
         self.assertTrue(host._worklog_ui["stop"])
         self.assertTrue(host._worklog_ui["minimized"])
+        self.assertTrue(host._worklog_docked)
+
+    def test_show_after_esc_forces_dock_reshow(self):
+        import main
+
+        shown = []
+
+        class Dock:
+            _shown = True
+            hwnd = 1
+
+            def hide(self):
+                self._shown = False
+
+        class Win:
+            def show(self):
+                return None
+
+            def keep_topmost(self):
+                return None
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.win = Win()
+        host._esc_hidden = True
+        host._last_key = "x"
+        host._force_surface_sample = False
+        host._worklog_docked = True
+        dock = Dock()
+        host._worklog_dock = dock
+
+        def place(**_k):
+            shown.append(dock._shown)
+
+        host._place_worklog_dock = place
+        host._show_after_esc()
+        self.assertFalse(host._esc_hidden)
+        # 进 place 前把 _shown 打成 False，迫使完整 show。
+        self.assertEqual(shown, [False])
+        self.assertFalse(dock._shown)
 
     def test_request_quit_aborts_card_modal_and_worklog(self):
         import tkinter as tk
@@ -3196,9 +3239,12 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertFalse(raised[-1])
             host._update_dialog_open = False
             host.win._popup_open = True
-            parked = (dock.x, dock.y)
+            raised.clear()
             host._place_worklog_dock()
-            self.assertEqual((dock.x, dock.y), parked)
+            # 菜单开着时仍要能重亮贴条，只是不抢前台。
+            self.assertTrue(raised)
+            self.assertFalse(raised[-1])
+            self.assertTrue(dock._shown)
             host.win._popup_open = False
             host._restore_worklog(ui)
             self.assertFalse(ui["minimized"])

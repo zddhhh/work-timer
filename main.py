@@ -1048,6 +1048,10 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._esc_hidden = False
         self._last_key = ""
         self._force_surface_sample = True
+        # 隐藏久了分层贴条可能被系统弄没；强制走完整 show，不能只 follow。
+        dock = getattr(self, "_worklog_dock", None)
+        if getattr(self, "_worklog_docked", False) and dock is not None:
+            dock._shown = False
         self._place_worklog_dock()
 
     def _on_request_show(self) -> None:
@@ -1100,11 +1104,11 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._show_after_esc()
             return
         # 账本模态还在转时只藏窗、不退循环 → 主循环回不去，退出/再开账本都会假死。
-        # 隐藏前先最小化账本，让 stop 把模态打掉；显示后贴条还在，点一下即可恢复。
+        # 隐藏前先最小化账本（只记账、先不亮贴条），显示后再 _place 贴条。
         ui = getattr(self, "_worklog_ui", None)
         if ui is not None and ui.get("live") and not ui.get("minimized"):
             try:
-                self._minimize_worklog(ui)
+                self._minimize_worklog(ui, place_dock=False)
             except Exception:
                 ui["stop"] = True
         # 日程列表同样：藏起来却不退循环，再开会卡在看不见的模态里。

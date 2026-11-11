@@ -1088,9 +1088,8 @@ class WorklogDialogMixin:
             if dock is not None:
                 dock.hide()
             return
-        if win is not None and getattr(win, "_popup_open", False):
-            return
-        back = self._dock_should_stay_back()
+        popup = win is not None and getattr(win, "_popup_open", False)
+        back = self._dock_should_stay_back() or popup
         # 贴条被系统藏掉后 _shown 仍可能是 True；可见性不对就整段重 show。
         alive = (
             dock is not None
@@ -1099,6 +1098,7 @@ class WorklogDialogMixin:
             and layered_win.user32.IsWindow(dock.hwnd)
             and layered_win.user32.IsWindowVisible(dock.hwnd)
         )
+        # 菜单开着时只跟位置、不抢前台；可见性丢了仍要重 show，否则菜单关掉后贴条没了。
         if follow_only and alive:
             dock.follow(self._worklog_card_rect())
             return
@@ -1128,7 +1128,7 @@ class WorklogDialogMixin:
         if dock is not None:
             dock.hide()
 
-    def _minimize_worklog(self, ui: dict) -> None:
+    def _minimize_worklog(self, ui: dict, *, place_dock: bool = True) -> None:
         dlg = ui.get("dlg")
         if dlg is None or ui.get("minimized"):
             return
@@ -1139,7 +1139,9 @@ class WorklogDialogMixin:
         ui["minimized"] = True
         dlg._parked_min = True
         _park_card(dlg, ui.get("fg", 0))
-        self._show_worklog_dock()
+        self._worklog_docked = True
+        if place_dock:
+            self._place_worklog_dock()
         ui["stop"] = True
 
     def _worklog_needs_reveal(self, ui: dict) -> bool:
@@ -1252,22 +1254,24 @@ class WorklogDialogMixin:
         body.pack(side="top", fill="both", expand=True, padx=16)
         top = tk.Frame(body, bg=_CARD_BG)
         top.pack(fill="x", pady=(8, 6))
+        top.columnconfigure(1, weight=1)
         tk.Label(
             top, text="工时账本", fg=_CARD_FG, bg=_CARD_BG, font=("Microsoft YaHei UI", 13, "bold"),
-        ).pack(side="left")
+        ).grid(row=0, column=0, sticky="w")
+        week_var = tk.StringVar()
+        nav = tk.Frame(top, bg=_CARD_BG)
+        nav.grid(row=0, column=1, sticky="e", padx=(0, 10))
         chrome = tk.Frame(
             top, bg=_CHROME_BG, highlightthickness=1, highlightbackground=_FOLD_EDGE,
         )
-        chrome.pack(side="right", padx=(10, 0), pady=1)
+        # grid 固定右列给最小化/关闭，避免窄窗时被周导航盖住或挤没。
+        chrome.grid(row=0, column=2, sticky="e", padx=(10, 0), pady=1)
         min_toggle = _chrome_btn(chrome, "最小化")
         min_toggle.pack(side="left")
         tk.Frame(chrome, bg=_FOLD_EDGE, width=1).pack(side="left", fill="y", pady=4)
         close_lbl = _chrome_btn(chrome, "关闭")
         close_lbl.pack(side="left")
         _arm_chrome(min_toggle, close_lbl)
-        week_var = tk.StringVar()
-        nav = tk.Frame(top, bg=_CARD_BG)
-        nav.pack(side="right", padx=(0, 10))
         scroll_host = tk.Frame(body, bg=_CARD_BG)
         scroll_host.pack(anchor="nw", fill="y", expand=True)
         scroll = _ClipScroll(

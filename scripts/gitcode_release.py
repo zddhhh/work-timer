@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 下班未优先且优先列表空：有时间继续倒计时，点击打开日程列表"
+    "- 修账本最小化贴条隐藏后再显示丢失，标题栏最小化不再被挤没"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com
