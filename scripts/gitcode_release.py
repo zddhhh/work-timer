@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时说明框换行不再裁字"
+    "- 工时说明框过长可框内滚动"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

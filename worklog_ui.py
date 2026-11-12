@@ -36,10 +36,11 @@ from card_ui import (
     _run_card_modal,
 )
 
-# 七天的说明框用同一尺寸。上一行对公司时间（长句可能折两行），下一行说忙闲。
+# 七天的说明框用同一尺寸。字多了框内可滚，右侧留细条；折行宽度要扣掉条宽。
 _SUMMARY_W = 252
 _SUMMARY_H = 78
-_SUMMARY_WRAP = 228
+_SUMMARY_BAR = 12
+_SUMMARY_WRAP = _SUMMARY_W - 24 - _SUMMARY_BAR  # 左右内边距 + 滚动条
 _FOLD_BAR = "#1e2430"
 _FOLD_EDGE = "#2c3444"
 _FOLD_CHIP = "#2c3950"
@@ -407,8 +408,10 @@ def scroll_view(
 class _SlimBar(tk.Canvas):
     """深色细条。系统滚动条在这块深底上会画成一条白杠，还带着上下箭头。"""
 
-    def __init__(self, master: tk.Misc, command) -> None:
-        super().__init__(master, width=12, height=10, bg=_CARD_BG, highlightthickness=0, bd=0)
+    def __init__(self, master: tk.Misc, command, *, bg: str | None = None) -> None:
+        super().__init__(
+            master, width=12, height=10, bg=bg or _CARD_BG, highlightthickness=0, bd=0,
+        )
         self._command = command
         self._first = 0.0
         self._last = 1.0
@@ -746,7 +749,7 @@ class WorklogDialogMixin:
         self._fit_day_copy(slot)
 
     def _fit_day_copy(self, slot: dict) -> None:
-        """说明框每天一样大。字多字少只影响框里的内容，不改变框的尺寸。"""
+        """说明框每天一样大。字多字少只在框内滚动，不改变外框尺寸。"""
         box = slot.get("summary_box")
         if box is None:
             return
@@ -762,6 +765,29 @@ class WorklogDialogMixin:
             current = int(float(str(label.cget("wraplength") or 0)))
             if current != _SUMMARY_WRAP:
                 label.configure(wraplength=_SUMMARY_WRAP)
+        self._sync_summary_scroll(slot)
+
+    def _sync_summary_scroll(self, slot: dict) -> None:
+        """按正文高度刷新说明框滚动范围；装得下时细条不画拇指。"""
+        view = slot.get("summary_view")
+        sheet = slot.get("summary_sheet")
+        win = slot.get("summary_win")
+        if view is None or sheet is None or win is None:
+            return
+        try:
+            view.update_idletasks()
+            sheet.update_idletasks()
+            width = max(1, int(view.winfo_width() or 1))
+            view.itemconfigure(win, width=width)
+            sheet.update_idletasks()
+            height = max(1, int(sheet.winfo_reqheight() or 1))
+            view.configure(scrollregion=(0, 0, width, height))
+            first, last = view.yview()
+            bar = slot.get("summary_bar")
+            if bar is not None:
+                bar.set(first, last)
+        except tk.TclError:
+            pass
 
     def _note_gap_fg(self, arrive: int | None, leave: int | None) -> str:
         vals = [v for v in (arrive, leave) if isinstance(v, int)]
@@ -1750,18 +1776,48 @@ class WorklogDialogMixin:
                 highlightthickness=1, highlightbackground="#3d4b63",
             )
             summary_box.pack_propagate(False)
+            summary_bar_host = tk.Frame(summary_box, width=_SUMMARY_BAR, bg="#161d2b")
+            summary_bar_host.pack_propagate(False)
+            summary_view = tk.Canvas(
+                summary_box, bg="#161d2b", highlightthickness=0, bd=0,
+            )
+            summary_sheet = tk.Frame(summary_view, bg="#161d2b")
             summary = tk.Label(
-                summary_box, text="", fg=_CARD_MUTED, bg="#161d2b",
+                summary_sheet, text="", fg=_CARD_MUTED, bg="#161d2b",
                 font=("Microsoft YaHei UI", 9), anchor="nw", justify="left",
                 wraplength=_SUMMARY_WRAP,
             )
             summary_pace = tk.Label(
-                summary_box, text="", fg="#d5deea", bg="#161d2b",
+                summary_sheet, text="", fg="#d5deea", bg="#161d2b",
                 font=("Microsoft YaHei UI", 9), anchor="nw", justify="left",
                 wraplength=_SUMMARY_WRAP,
             )
             summary.pack(anchor="nw", fill="x", padx=12, pady=(8, 0))
             summary_pace.pack(anchor="nw", fill="x", padx=12, pady=(4, 8))
+            summary_win = summary_view.create_window((0, 0), window=summary_sheet, anchor="nw")
+            summary_bar = _SlimBar(summary_bar_host, summary_view.yview, bg="#161d2b")
+            summary_view.configure(yscrollcommand=summary_bar.set)
+            summary_bar_host.pack(side="right", fill="y")
+            summary_bar.pack(fill="both", expand=True)
+            summary_view.pack(side="left", fill="both", expand=True)
+
+            def on_summary_wheel(event, view=summary_view) -> str:
+                delta = int(event.delta)
+                steps = int(-delta / 120) or (-1 if delta > 0 else 1)
+                view.yview_scroll(steps, "units")
+                return "break"
+
+            for widget in (summary_view, summary_sheet, summary, summary_pace, summary_bar):
+                widget.bind("<MouseWheel>", on_summary_wheel)
+            summary_bind = {"slot": None}
+
+            def on_summary_configure(_event=None, ref=summary_bind) -> None:
+                held = ref.get("slot")
+                if held is not None:
+                    self._sync_summary_scroll(held)
+
+            summary_view.bind("<Configure>", on_summary_configure, add="+")
+            summary_sheet.bind("<Configure>", on_summary_configure, add="+")
             vin = tk.StringVar()
             vout = tk.StringVar()
             ein = tk.Entry(
@@ -1824,6 +1880,8 @@ class WorklogDialogMixin:
                 "vin": vin, "vout": vout, "ein": ein, "eout": eout,
                 "dur": dur, "note_dur": note_dur, "summary": summary,
                 "summary_pace": summary_pace, "summary_box": summary_box,
+                "summary_view": summary_view, "summary_sheet": summary_sheet,
+                "summary_win": summary_win, "summary_bar": summary_bar,
                 "reset": reset,
                 "day": None, "doubt_row": doubt_row, "doubt": doubt,
                 "doubt_drop": doubt_drop, "doubt_keep": doubt_keep,
@@ -1833,6 +1891,7 @@ class WorklogDialogMixin:
                     doubt_row, doubt, doubt_drop, doubt_keep,
                 ),
             }
+            summary_bind["slot"] = slot
 
             def on_doubt(keep: bool, this: dict = slot) -> None:
                 day = this.get("day")
