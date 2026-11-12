@@ -49,6 +49,9 @@ STATE_KEY = "/subscribe/state.json"
 PAGE_URL = "https://zddhhh.github.io/worktimer-subscribe/"
 DAILY_CAP = 40
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,120}\.[^@\s]{1,24}$")
+# 官网累计下载：仓库级统计，缓存一会儿，别每次 meta 都打 GitCode。
+_DL_CACHE: dict = {"at": 0.0, "total": 0}
+_DL_TTL_SEC = 30 * 60
 
 
 def main_handler(event, context):
@@ -503,11 +506,50 @@ def _meta() -> dict:
         }
     except Exception as e:  # noqa: BLE001
         _log_error(e)
+    total = 0
+    try:
+        total = int(_download_total() or 0)
+    except Exception as e:  # noqa: BLE001
+        _log_error(e)
     body = json.dumps(
-        {"version": version, "sender": _sender(), "downloads": downloads},
+        {
+            "version": version,
+            "sender": _sender(),
+            "downloads": downloads,
+            "downloads_total": total,
+        },
         ensure_ascii=False,
     )
     return _json(200, body)
+
+
+def _download_total() -> int:
+    """GitCode 仓库累计下载量（整仓统计，不是单个安装包）。"""
+    now = time.time()
+    cached = int(_DL_CACHE.get("total") or 0)
+    if cached > 0 and now - float(_DL_CACHE.get("at") or 0) < _DL_TTL_SEC:
+        return cached
+    repo = _env("GITCODE_REPO") or "mdslanruo/work-timer"
+    owner, name = repo.strip("/").split("/", 1)
+    url = (
+        f"{API}/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(name)}"
+        f"/download_statistics"
+    )
+    data = _get_json(url, _env("GITCODE_TOKEN"))
+    total = 0
+    if isinstance(data, dict):
+        detail = data.get("download_statistics_detail")
+        if isinstance(detail, list) and detail:
+            first = detail[0] if isinstance(detail[0], dict) else {}
+            total = int(first.get("total_dl_cnt") or 0)
+        if total <= 0:
+            total = int(data.get("download_statistics_history_total") or 0)
+        if total <= 0:
+            total = int(data.get("download_statistics_total") or 0)
+    if total > 0:
+        _DL_CACHE["at"] = now
+        _DL_CACHE["total"] = total
+    return total
 
 
 def _json(status: int, body: str) -> dict:

@@ -46,15 +46,33 @@ class SubscribeTests(unittest.TestCase):
         self.assertIn('id="dl"', page)
         self.assertIn("WorkTimer-Win7-Setup.exe", page)
         self.assertIn("寄到邮箱", page)
+        self.assertIn('id="dl-total"', page)
+        self.assertIn("downloads_total", page)
+        self.assertIn("download_statistics", page)
 
     def test_meta_lists_both_setups(self):
         fn = _fn()
         fn._latest_release = lambda: {"version": "1.4.22", "tag": "v1.4.22"}
         fn._env = lambda name: "mdslanruo/work-timer" if name == "GITCODE_REPO" else ""
+        fn._download_total = lambda: 964
         payload = json.loads(fn._meta()["body"])
         self.assertEqual(payload["version"], "1.4.22")
         self.assertIn("WorkTimer-Setup.exe", payload["downloads"]["main"])
         self.assertIn("WorkTimer-Win7-Setup.exe", payload["downloads"]["win7"])
+        self.assertEqual(payload["downloads_total"], 964)
+
+    def test_download_total_reads_latest_day(self):
+        fn = _fn()
+        fn._DL_CACHE.clear()
+        fn._DL_CACHE.update({"at": 0.0, "total": 0})
+        fn._env = lambda name: "tok" if name == "GITCODE_TOKEN" else "mdslanruo/work-timer"
+        fn._get_json = lambda *_a, **_k: {
+            "download_statistics_detail": [
+                {"pdate": "2026-11-11", "today_dl_cnt": 16, "total_dl_cnt": 964},
+            ],
+        }
+        self.assertEqual(fn._download_total(), 964)
+        self.assertEqual(fn._DL_CACHE["total"], 964)
 
     def test_flow_over_limit_pauses_until_tomorrow(self):
         import smtplib
