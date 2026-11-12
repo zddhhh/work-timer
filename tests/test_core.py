@@ -3279,7 +3279,7 @@ class WorklogScrollTests(unittest.TestCase):
             dlg.update_idletasks()
             self.assertEqual(slot["summary_box"].winfo_reqwidth(), other["summary_box"].winfo_reqwidth())
             self.assertEqual(slot["summary_box"].winfo_reqheight(), other["summary_box"].winfo_reqheight())
-            self.assertGreaterEqual(slot["summary_box"].winfo_reqheight(), 50)
+            self.assertGreaterEqual(slot["summary_box"].winfo_reqheight(), 70)
             self.assertEqual(int(float(str(slot["summary_box"].cget("highlightthickness")))), 1)
             slot["summary"].configure(text="晚到7小时19分，晚走38分，18–20点最忙")
             dlg.update_idletasks()

@@ -36,9 +36,9 @@ from card_ui import (
     _run_card_modal,
 )
 
-# 七天的说明框用同一尺寸。框里固定两行：上一行对公司时间，下一行说忙闲。
+# 七天的说明框用同一尺寸。上一行对公司时间（长句可能折两行），下一行说忙闲。
 _SUMMARY_W = 252
-_SUMMARY_H = 58
+_SUMMARY_H = 78
 _SUMMARY_WRAP = 228
 _FOLD_BAR = "#1e2430"
 _FOLD_EDGE = "#2c3444"
@@ -1761,7 +1761,7 @@ class WorklogDialogMixin:
                 wraplength=_SUMMARY_WRAP,
             )
             summary.pack(anchor="nw", fill="x", padx=12, pady=(8, 0))
-            summary_pace.pack(anchor="nw", fill="x", padx=12, pady=(4, 0))
+            summary_pace.pack(anchor="nw", fill="x", padx=12, pady=(4, 8))
             vin = tk.StringVar()
             vout = tk.StringVar()
             ein = tk.Entry(

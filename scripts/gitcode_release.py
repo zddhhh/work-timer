@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 久藏/最小化后贴条不再被计时器盖住"
+    "- 工时说明框换行不再裁字"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com
