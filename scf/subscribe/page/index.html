@@ -11,7 +11,7 @@
 :root {
   --ink: #10141c;
   --fog: #5f6b7a;
-  --paper: rgba(255, 255, 255, 0.9);
+  --paper: rgba(255, 255, 255, 0.92);
   --line: rgba(16, 20, 28, 0.12);
   --sun: #ff8a3d;
   --sun-deep: #e56a18;
@@ -21,6 +21,7 @@
 * { box-sizing: border-box; }
 html {
   min-height: 100%;
+  scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
@@ -41,6 +42,7 @@ body {
   inset: 0;
   pointer-events: none;
   overflow: hidden;
+  z-index: 0;
 }
 .blob {
   position: absolute;
@@ -103,22 +105,19 @@ body {
 .page {
   position: relative;
   z-index: 1;
+}
+
+.hero-screen {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   width: min(720px, calc(100% - 32px));
   max-width: 100%;
   margin: 0 auto;
-  padding: 56px 0 72px;
+  padding: 48px 0 88px;
 }
-@media (max-width: 860px) {
-  .page { width: min(720px, calc(100% - 24px)); padding: 28px 0 48px; }
-  .clock { opacity: 0.28; width: 90vw; height: 90vw; right: -28vw; top: -18vw; }
-  .blob { opacity: 0.4; }
-  .panel { padding: 18px; border-radius: 22px; }
-  .os label { padding: 12px 14px; }
-  .mail-panel { padding: 14px; }
-  .ver { margin-top: 16px; }
-}
-
-.hero { padding-top: 8px; }
 .kicker {
   margin: 0 0 14px;
   font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
@@ -132,7 +131,6 @@ body {
   margin: 0;
   font-family: Syne, "Noto Sans SC", sans-serif;
   font-weight: 800;
-  /* 单行标题：按屏宽收字号，避免 WorkTimer 被拆成两行 */
   font-size: clamp(28px, 8.2vw, 52px);
   line-height: 1.05;
   letter-spacing: -0.04em;
@@ -140,7 +138,6 @@ body {
   white-space: nowrap;
   max-width: 100%;
   overflow: hidden;
-  text-overflow: clip;
 }
 .brand span {
   background: linear-gradient(115deg, #10141c 0%, #163a38 48%, #c45a12 100%);
@@ -170,7 +167,7 @@ body {
   align-items: center;
   gap: 10px;
   max-width: 100%;
-  margin-top: 20px;
+  margin-top: 22px;
   padding: 8px 14px;
   border-radius: 999px;
   background: rgba(255,255,255,0.55);
@@ -186,74 +183,110 @@ body {
   box-shadow: 0 0 0 5px rgba(15, 118, 110, 0.16);
   font-style: normal;
 }
+.scroll-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--fog);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.scroll-hint span {
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid rgba(16, 20, 28, 0.22);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  animation: bob 1.6s ease-in-out infinite;
+}
+.scroll-hint span::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(5px); }
+}
 
-.panel {
-  margin-top: 22px;
-  padding: 24px;
-  border-radius: 28px;
-  background: var(--paper);
-  border: 1px solid rgba(16, 20, 28, 0.08);
-  box-shadow:
-    0 24px 60px rgba(16, 20, 28, 0.1),
-    inset 0 1px 0 rgba(255,255,255,0.9);
-  backdrop-filter: blur(18px);
-  animation: rise 0.8s ease both;
-  overflow: hidden;
+.download-screen {
+  width: min(920px, calc(100% - 32px));
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 28px 0 72px;
 }
-@keyframes rise {
-  from { opacity: 0; transform: translateY(18px); }
-  to { opacity: 1; transform: none; }
+.download-head {
+  margin: 0 0 18px;
 }
-.panel h1 {
+.download-head h1 {
   margin: 0;
-  color: var(--ink);
-  font-size: clamp(18px, 4.5vw, 22px);
+  font-size: clamp(20px, 4.5vw, 26px);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
-.note {
-  margin: 8px 0 18px;
-  color: #3f4b59;
+.download-head p {
+  margin: 8px 0 0;
+  color: var(--fog);
   font-size: 14px;
   line-height: 1.5;
 }
-.os {
+.channels {
   display: grid;
-  gap: 10px;
-  margin-bottom: 14px;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
 }
-.os label {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 12px;
-  align-items: center;
+.channel {
+  padding: 22px;
+  border-radius: 24px;
+  background: var(--paper);
+  border: 1px solid rgba(16, 20, 28, 0.08);
+  box-shadow: 0 18px 48px rgba(16, 20, 28, 0.08);
+  backdrop-filter: blur(14px);
+}
+.channel.guess {
+  border-color: rgba(229, 106, 24, 0.42);
+  box-shadow:
+    0 18px 48px rgba(16, 20, 28, 0.08),
+    0 0 0 1px rgba(229, 106, 24, 0.16);
+}
+.channel h2 {
   margin: 0;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: #fff;
-  cursor: pointer;
-  transition: transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease;
+  font-size: 18px;
+  font-weight: 700;
 }
-.os label:hover { transform: translateY(-1px); }
-.os label:has(input:checked) {
-  border-color: rgba(229, 106, 24, 0.45);
-  background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(255, 236, 214, 0.65));
-  box-shadow: 0 10px 24px rgba(229, 106, 24, 0.12);
+.channel .file {
+  display: block;
+  margin-top: 6px;
+  color: var(--fog);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
-.os input { grid-row: span 2; accent-color: var(--sun-deep); }
-.os strong { font-size: 15px; overflow-wrap: anywhere; }
-.os span { color: var(--fog); font-size: 12px; overflow-wrap: anywhere; }
-
+.channel .tip {
+  margin: 10px 0 0;
+  color: var(--fog);
+  font-size: 13px;
+}
 .dl {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   min-height: 52px;
+  margin-top: 16px;
   padding: 14px 16px;
   border: 0;
-  border-radius: 18px;
+  border-radius: 16px;
   text-decoration: none;
   text-align: center;
   color: #fff;
@@ -262,13 +295,12 @@ body {
     linear-gradient(180deg, rgba(255,255,255,0.18), transparent 40%),
     linear-gradient(135deg, #ff9a4d 0%, #e56a18 48%, #c24a0f 100%);
   font-family: Syne, "Noto Sans SC", sans-serif;
-  font-size: clamp(15px, 4vw, 17px);
+  font-size: clamp(15px, 3.6vw, 17px);
   font-weight: 700;
-  letter-spacing: 0.01em;
   line-height: 1.3;
   white-space: normal;
-  box-shadow: 0 16px 36px rgba(194, 74, 15, 0.28);
-  transition: transform .18s ease, filter .18s ease, background .18s ease;
+  box-shadow: 0 14px 32px rgba(194, 74, 15, 0.26);
+  transition: transform .18s ease, filter .18s ease;
 }
 .dl:hover { transform: translateY(-2px); filter: brightness(1.05); }
 .dl.off {
@@ -280,35 +312,19 @@ body {
   transform: none;
   filter: none;
 }
-.hint { margin: 12px 4px 0; color: var(--fog); font-size: 13px; }
+.dl.ghost {
+  color: var(--ink);
+  background: #fff;
+  background-image: none;
+  border: 1px solid var(--line);
+  box-shadow: none;
+}
+.dl.ghost:hover { filter: none; background: #fafbfc; }
 
-.mail-panel {
-  margin-top: 18px;
-  padding: 18px;
-  border-radius: 20px;
-  border: 1px solid rgba(16, 20, 28, 0.1);
-  background: rgba(248, 250, 252, 0.95);
+.mail-channel {
+  grid-column: 1 / -1;
+  margin-top: 2px;
 }
-.mail-panel summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  cursor: pointer;
-  list-style: none;
-  font-weight: 700;
-  font-size: 15px;
-}
-.mail-panel summary::-webkit-details-marker { display: none; }
-.mail-panel summary::after {
-  content: "展开";
-  flex: 0 0 auto;
-  color: var(--fog);
-  font-weight: 500;
-  font-size: 13px;
-}
-.mail-panel[open] summary::after { content: "收起"; }
-.mail-body { margin-top: 16px; }
 .mail { margin: 0 0 12px; padding: 0; border: 0; }
 .mail legend {
   padding: 0;
@@ -316,12 +332,18 @@ body {
   color: var(--fog);
   font-size: 13px;
 }
+.mail-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+}
 input[type=email] {
   width: 100%;
   padding: 13px 14px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(255,255,255,0.8);
+  background: rgba(255,255,255,0.88);
   font: 16px "Noto Sans SC", sans-serif;
   color: var(--ink);
 }
@@ -336,7 +358,7 @@ input[type=email]:focus {
   padding: 11px 12px;
   border-radius: 14px;
   border: 1px solid var(--line);
-  background: rgba(255,255,255,0.55);
+  background: rgba(255,255,255,0.7);
   cursor: pointer;
 }
 .modes label:has(input:checked) {
@@ -351,7 +373,7 @@ button {
   padding: 12px 18px;
   border: 1px solid rgba(16, 20, 28, 0.12);
   border-radius: 14px;
-  background: rgba(255,255,255,0.78);
+  background: rgba(255,255,255,0.9);
   color: var(--ink);
   font: 700 15px "Instrument Sans", "Noto Sans SC", sans-serif;
   cursor: pointer;
@@ -359,10 +381,28 @@ button {
 button:hover { background: #fff; }
 button:disabled { opacity: 0.6; cursor: wait; }
 .foot { margin: 12px 2px 0; color: var(--fog); font-size: 12px; }
-#out, #cancel { margin-top: 16px; }
-#out h1, #cancel h1 { font-size: 18px; margin: 0 0 8px; }
-#out p, #cancel p { margin: 0; color: var(--fog); }
-#cancel.panel { margin-top: 0; }
+#out { margin-top: 14px; }
+#out h1 { font-size: 18px; margin: 0 0 8px; }
+#out p { margin: 0; color: var(--fog); }
+.cancel-panel {
+  width: min(720px, calc(100% - 32px));
+  margin: 48px auto 72px;
+  padding: 22px;
+  border-radius: 24px;
+  background: var(--paper);
+  border: 1px solid rgba(16, 20, 28, 0.08);
+}
+.cancel-panel h1 { font-size: 18px; margin: 0 0 8px; }
+.cancel-panel p { margin: 0; color: var(--fog); }
+
+@media (max-width: 720px) {
+  .hero-screen { width: min(720px, calc(100% - 24px)); padding: 36px 0 96px; }
+  .download-screen { width: min(720px, calc(100% - 24px)); padding-bottom: 56px; }
+  .channels { grid-template-columns: 1fr; }
+  .mail-grid { grid-template-columns: 1fr; }
+  .clock { opacity: 0.28; width: 90vw; height: 90vw; right: -28vw; top: -18vw; }
+  .blob { opacity: 0.4; }
+}
 </style>
 </head>
 <body>
@@ -373,38 +413,45 @@ button:disabled { opacity: 0.6; cursor: wait; }
   <div class="clock"></div>
 </div>
 
-<div class="page">
-  <div>
-    <header class="hero">
-      <p class="kicker">Desktop timer</p>
-      <h1 class="brand"><span>WorkTimer</span></h1>
-      <p class="sub">弹性下班计时器</p>
-      <p class="lead">桌面倒计时，下载安装即可用。</p>
-      <p class="ver"><i></i><span id="ver">正在获取版本…</span></p>
-    </header>
+<div class="page" id="signup">
+  <section class="hero-screen">
+    <p class="kicker">Desktop timer</p>
+    <h1 class="brand"><span>WorkTimer</span></h1>
+    <p class="sub">弹性下班计时器</p>
+    <p class="lead">桌面倒计时，下载安装即可用。</p>
+    <p class="ver"><i></i><span id="ver">正在获取版本…</span></p>
+    <a class="scroll-hint" href="#download" aria-label="向下查看下载渠道">
+      <span></span>
+      下载
+    </a>
+  </section>
 
-    <section class="panel" id="signup">
+  <section class="download-screen" id="download">
+    <div class="download-head">
       <h1>选系统，下载安装包</h1>
-      <p class="note">Windows 7 和 Windows 10 的安装包不同，请先选择系统。也可以把下载链接发到邮箱。</p>
-      <form id="f">
-        <div class="os" role="radiogroup" aria-label="系统">
-          <label>
-            <input type="radio" name="os" value="main" checked>
-            <strong>Windows 8.1 / 10 / 11</strong>
-            <span>WorkTimer-Setup.exe</span>
-          </label>
-          <label>
-            <input type="radio" name="os" value="win7">
-            <strong>Windows 7 / 8</strong>
-            <span>WorkTimer-Win7-Setup.exe</span>
-          </label>
-        </div>
-        <a class="dl" id="dl" href="#">下载安装包</a>
-        <p class="hint" id="dl-hint">无需登录，直接下载。</p>
+      <p>Windows 7 和 Windows 10 的安装包不同。按自己的系统选一个渠道即可，也可以把链接发到邮箱。</p>
+    </div>
 
-        <details class="mail-panel">
-          <summary>用邮箱接收下载链接</summary>
-          <div class="mail-body">
+    <div class="channels">
+      <article class="channel" id="ch-main" data-os="main">
+        <h2>Windows 8.1 / 10 / 11</h2>
+        <span class="file">WorkTimer-Setup.exe</span>
+        <a class="dl" id="dl" href="#">下载 Win10 / 11 安装包</a>
+        <p class="tip" id="dl-hint">无需登录，直接下载。</p>
+      </article>
+
+      <article class="channel" id="ch-win7" data-os="win7">
+        <h2>Windows 7 / 8</h2>
+        <span class="file">WorkTimer-Win7-Setup.exe</span>
+        <a class="dl ghost" id="dl-win7" href="#">下载 Win7 / 8 安装包</a>
+        <p class="tip" id="dl-hint-win7">老系统请用这一包。</p>
+      </article>
+
+      <article class="channel mail-channel">
+        <h2>用邮箱接收下载链接</h2>
+        <p class="tip">不想自己找安装包时，把地址寄到邮箱。</p>
+        <form id="f">
+          <div class="mail-grid">
             <fieldset class="mail">
               <legend>邮箱</legend>
               <input type="email" name="email" placeholder="name@example.com" autocomplete="email">
@@ -416,27 +463,31 @@ button:disabled { opacity: 0.6; cursor: wait; }
                 <label><input type="radio" name="mode" value="auto"> 以后每版都寄</label>
               </div>
             </fieldset>
-            <button type="submit">寄到邮箱</button>
-            <p class="foot">发件邮箱：earoot@163.com</p>
           </div>
-        </details>
-      </form>
-      <div id="out"></div>
-    </section>
-
-    <section class="panel" id="cancel" hidden>
-      <h1>取消长期订阅</h1>
-      <p id="cancel-text">正在取消…</p>
-    </section>
-  </div>
+          <input type="hidden" name="os" id="mail-os" value="main">
+          <button type="submit">寄到邮箱</button>
+          <p class="foot">发件邮箱：earoot@163.com</p>
+        </form>
+        <div id="out"></div>
+      </article>
+    </div>
+  </section>
 </div>
+
+<section class="cancel-panel" id="cancel" hidden>
+  <h1>取消长期订阅</h1>
+  <p id="cancel-text">正在取消…</p>
+</section>
 
 <script>
 const API = "https://1407920495-4qprkfktiz.ap-guangzhou.tencentscf.com";
 const REPO = "https://gitcode.com/mdslanruo/work-timer/releases/download";
 const ver = document.getElementById("ver");
 const dl = document.getElementById("dl");
+const dlWin7 = document.getElementById("dl-win7");
 const hint = document.getElementById("dl-hint");
+const hintWin7 = document.getElementById("dl-hint-win7");
+const mailOs = document.getElementById("mail-os");
 let downloads = { main: "", win7: "" };
 
 function guessOs() {
@@ -445,18 +496,15 @@ function guessOs() {
   return "main";
 }
 
-function selectedOs() {
-  const el = document.querySelector('input[name=os]:checked');
-  return (el && el.value) || "main";
-}
-
 function refreshDownload() {
-  const os = selectedOs();
-  const url = downloads[os] || "";
-  dl.href = url || "#";
-  dl.classList.toggle("off", !url);
-  dl.textContent = os === "win7" ? "下载 Win7 / 8 安装包" : "下载 Win10 / 11 安装包";
-  hint.textContent = url ? "无需登录，直接下载。" : "下载地址暂未获取到，请刷新，或改用邮箱接收。";
+  const mainUrl = downloads.main || "";
+  const win7Url = downloads.win7 || "";
+  dl.href = mainUrl || "#";
+  dl.classList.toggle("off", !mainUrl);
+  dlWin7.href = win7Url || "#";
+  dlWin7.classList.toggle("off", !win7Url);
+  hint.textContent = mainUrl ? "无需登录，直接下载。" : "下载地址暂未获取到，请刷新，或改用邮箱接收。";
+  hintWin7.textContent = win7Url ? "老系统请用这一包。" : "下载地址暂未获取到，请刷新，或改用邮箱接收。";
 }
 
 function fallbackDownloads(version) {
@@ -469,10 +517,12 @@ function fallbackDownloads(version) {
 }
 
 const guessed = guessOs();
-document.querySelectorAll('input[name=os]').forEach((el) => {
-  el.checked = el.value === guessed;
-  el.addEventListener("change", refreshDownload);
-});
+document.getElementById(guessed === "win7" ? "ch-win7" : "ch-main").classList.add("guess");
+mailOs.value = guessed;
+if (guessed === "win7") {
+  dl.classList.add("ghost");
+  dlWin7.classList.remove("ghost");
+}
 
 fetch(API + "?meta=1").then((r) => r.text()).then((text) => {
   let version = "";
@@ -529,8 +579,6 @@ document.getElementById("f").addEventListener("submit", async (ev) => {
   const email = (ev.target.email.value || "").trim();
   if (!email) {
     out.innerHTML = "<p>请先填写邮箱。</p>";
-    const details = ev.target.querySelector("details");
-    if (details) details.open = true;
     ev.target.email.focus();
     return;
   }
