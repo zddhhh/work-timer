@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 更新遇坏包会换真正能下的版本，不再卡在 404"
+    "- 修最小化后再点贴条偶发卡死"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

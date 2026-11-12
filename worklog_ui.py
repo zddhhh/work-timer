@@ -293,13 +293,17 @@ class WorklogDock:
         layered_win.user32.SetWindowPos(self.hwnd, None, x, y, 0, 0, layered_win._MOVE_FLAGS)
 
     def bring_front(self, above_hwnd: int = 0) -> None:
-        """钉回最前。计时器 keep_topmost 后同级 TOPMOST 会盖住贴条，点上去没反应。"""
+        """钉回最前。须在计时器 keep_topmost 之后调用，后到的 TOPMOST 会压在计时器上。
+
+        不要对计时器再 SetWindowPos：拖动/几何回调里改它的 Z 序会重入 WndProc，整窗卡死。
+        above_hwnd 保留兼容，忽略。
+        """
+        del above_hwnd
         hwnd = int(self.hwnd or 0)
         if not hwnd or not self._shown:
             return
         if not layered_win.user32.IsWindow(hwnd):
             return
-        flags = layered_win.SWP_NOMOVE | layered_win.SWP_NOSIZE | layered_win.SWP_NOACTIVATE
         layered_win.user32.SetWindowPos(
             hwnd,
             layered_win.HWND_TOPMOST,
@@ -307,12 +311,8 @@ class WorklogDock:
             0,
             0,
             0,
-            flags,
+            layered_win.SWP_NOMOVE | layered_win.SWP_NOSIZE | layered_win.SWP_NOACTIVATE,
         )
-        # 再贴到计时器上面：hWndInsertAfter 是「谁在前面」，把计时器插到贴条后面。
-        other = int(above_hwnd or 0)
-        if other and other != hwnd and layered_win.user32.IsWindow(other):
-            layered_win.user32.SetWindowPos(other, hwnd, 0, 0, 0, 0, flags)
 
     def hide(self) -> None:
         if self.hwnd and self._shown:
@@ -1096,14 +1096,10 @@ class WorklogDialogMixin:
     def _on_worklog_dock_click(self) -> None:
         """贴条点一下只记一笔，主循环再打开账本，避免在鼠标消息里进模态。"""
         self._need_worklog = True
-        # 隐藏/恢复后 minimized 位偶发丢失，屏幕外的账本只被 lift → 看起来像点了没反应。
+        # 点贴条就是要从最小化恢复。这里不能碰 Tk（会在贴条 WndProc 里死锁卡死）。
         ui = getattr(self, "_worklog_ui", None)
         if isinstance(ui, dict) and ui.get("dlg") is not None:
-            try:
-                if self._worklog_needs_reveal(ui):
-                    ui["minimized"] = True
-            except Exception:
-                ui["minimized"] = True
+            ui["minimized"] = True
 
     def _timer_hwnd(self) -> int:
         win = getattr(self, "win", None)
@@ -1121,7 +1117,7 @@ class WorklogDialogMixin:
         dock = getattr(self, "_worklog_dock", None)
         if dock is None or not getattr(dock, "_shown", False):
             return
-        dock.bring_front(above_hwnd=self._timer_hwnd())
+        dock.bring_front()
 
     def _rebuild_worklog_dock(self) -> None:
         """丢掉旧贴条句柄。隐藏久了分层窗偶发还在但不再吃鼠标。"""
@@ -1135,7 +1131,7 @@ class WorklogDialogMixin:
         self._worklog_dock = None
 
     def _follow_worklog_dock(self) -> None:
-        """计时器一挪就跟。发生在鼠标消息里，不能进 Tk。"""
+        """计时器一挪就跟。发生在鼠标消息里，不能进 Tk，也不能改计时器 Z 序。"""
         if not getattr(self, "_worklog_docked", False):
             return
         dock = getattr(self, "_worklog_dock", None)
@@ -1145,8 +1141,6 @@ class WorklogDialogMixin:
         if win is not None and getattr(win, "_popup_open", False):
             return
         dock.follow(self._worklog_card_rect())
-        if not self._dock_should_stay_back():
-            dock.bring_front(above_hwnd=self._timer_hwnd())
 
     def _place_worklog_dock(self, *, follow_only: bool = False) -> None:
         dock = getattr(self, "_worklog_dock", None)
@@ -1172,9 +1166,7 @@ class WorklogDialogMixin:
         # 菜单开着时只跟位置、不抢前台；可见性丢了仍要重 show，否则菜单关掉后贴条没了。
         if follow_only and alive:
             dock.follow(self._worklog_card_rect())
-            # 计时器随时可能 keep_topmost；贴条在卡片内侧时会被盖住，点了像失灵。
-            if not back:
-                dock.bring_front(above_hwnd=self._timer_hwnd())
+            # 拖动消息里只跟位置；Z 序交给主循环 _raise，避免重入计时器 WndProc。
             return
         dock = self._ensure_worklog_dock()
         if dock is None:
@@ -1187,7 +1179,7 @@ class WorklogDialogMixin:
             raise_window=not back,
         )
         if not back:
-            dock.bring_front(above_hwnd=self._timer_hwnd())
+            dock.bring_front()
 
     def _pump_worklog_dock(self) -> None:
         dock = getattr(self, "_worklog_dock", None)

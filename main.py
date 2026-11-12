@@ -2461,6 +2461,9 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     was_resizing = False
                 if was_dragging or moved:
                     self.win.ensure_visible()
+                    self.win.keep_topmost()
+                    self._place_worklog_dock()
+                    self._raise_worklog_dock()
                     self._last_key = ""
                     self._force_surface_sample = True
                     self._persist_pos()

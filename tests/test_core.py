@@ -878,7 +878,7 @@ class GameDialogTests(unittest.TestCase):
         self.assertEqual(shown, [True])
         self.assertEqual(raised, [True])
 
-    def test_dock_click_marks_minimized_when_card_needs_reveal(self):
+    def test_dock_click_marks_minimized_without_probing_tk(self):
         import main
 
         class Dlg:
@@ -887,7 +887,11 @@ class GameDialogTests(unittest.TestCase):
         host = main.WorkTimer.__new__(main.WorkTimer)
         host._need_worklog = False
         host._worklog_ui = {"dlg": Dlg(), "minimized": False}
-        host._worklog_needs_reveal = lambda _ui: True
+
+        def boom(_ui):
+            raise AssertionError("dock click must not probe Tk/reveal")
+
+        host._worklog_needs_reveal = boom
         host._on_worklog_dock_click()
         self.assertTrue(host._need_worklog)
         self.assertTrue(host._worklog_ui["minimized"])
@@ -1118,9 +1122,9 @@ class GameDialogTests(unittest.TestCase):
             "layered_win.user32.IsWindowVisible", return_value=False,
         ):
             host._place_worklog_dock(follow_only=True)
-        self.assertEqual(raised, [True, ("front", 9)])
+        self.assertEqual(raised, [True, ("front", 0)])
 
-    def test_follow_only_brings_alive_dock_front(self):
+    def test_follow_only_moves_alive_dock_without_zorder(self):
         import main
 
         front = []
@@ -1155,7 +1159,7 @@ class GameDialogTests(unittest.TestCase):
             "layered_win.user32.IsWindowVisible", return_value=True,
         ):
             host._place_worklog_dock(follow_only=True)
-        self.assertEqual(front, ["follow", ("front", 9)])
+        self.assertEqual(front, ["follow"])
     def test_request_quit_aborts_card_modal_and_worklog(self):
         import tkinter as tk
 
