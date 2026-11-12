@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -89,21 +90,42 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
     headers = dict(info.get("headers") or {})
     if not upload_url:
         raise SystemExit(f"没有 upload url: {info}")
+    data = exe.read_bytes()
     headers["User-Agent"] = "WorkTimer-Release/1.0"
     headers.setdefault("Content-Type", "application/octet-stream")
-    data = exe.read_bytes()
+    headers["Content-Length"] = str(len(data))
     req = urllib.request.Request(upload_url, data=data, method="PUT", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
-            print("上传成功:", resp.status, resp.read()[:120])
+            body = resp.read()[:200]
+            print("上传成功:", resp.status, body)
     except urllib.error.HTTPError as e:
         raise SystemExit(
             f"上传失败 {e.code}: {e.read().decode('utf-8', errors='replace')}\n也可网页手动上传: {exe}"
         ) from e
+    # 直链必须马上能下；否则 OTA 只会看到 404，弹窗还容易卡死。
+    pub = f"{PUBLIC_DOWNLOAD}/{urllib.parse.quote(tag, safe='')}/{urllib.parse.quote(exe.name, safe='')}"
+    for i in range(8):
+        try:
+            probe = urllib.request.Request(
+                pub,
+                headers={"User-Agent": "WorkTimer-Release/1.0", "Range": "bytes=0-15"},
+            )
+            with urllib.request.urlopen(probe, timeout=30) as resp:
+                got = resp.read(16)
+            if len(got) >= 2:
+                print("直链可用:", pub)
+                return
+        except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}"
+        except Exception as e:  # noqa: BLE001
+            last = str(e)
+        time.sleep(1.5 + i)
+    raise SystemExit(f"上传后直链仍不可用 {pub}：{last}\n也可网页手动上传: {exe}")
 
 
 RELEASE_NOTE = (
-    "- 再修隐藏后账本贴条偶发点不开：显示后重建贴条并压到计时器上"
+    "- 修检查更新失败后弹窗卡死；含贴条点不开修复"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

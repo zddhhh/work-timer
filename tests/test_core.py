@@ -1898,6 +1898,7 @@ class FxTests(unittest.TestCase):
         reset = updater._safe_error(urllib.error.URLError(OSError(10054, "forcibly closed")))
         self.assertEqual(reset, "HTTP 503")
         self.assertEqual(updater.friendly_error("HTTP 429")[1], "不是电脑没网。过几分钟再试一次")
+        self.assertEqual(updater.friendly_error("HTTP Error 404: Not Found")[0], "暂时还没有新版本")
         head, hint = updater.friendly_error("something exploded")
         self.assertEqual(head, "这次没更新成功")
         self.assertNotIn("exploded", hint)

@@ -489,9 +489,9 @@ def friendly_error(msg: str) -> tuple[str, str]:
     low = (msg or "").lower()
     if "还没有上传" in (msg or ""):
         return "新版本还在准备", "过几分钟再试一次"
-    if "http 404" in low:
+    if "404" in low and ("http" in low or "not found" in low or "不存在" in (msg or "")):
         return "暂时还没有新版本", "过一会儿再试试"
-    if "http 401" in low or "http 403" in low:
+    if ("401" in low or "403" in low) and "http" in low:
         return "现在没法更新", "过几分钟再试，还不行就到官网下安装包"
     if is_busy_error(msg):
         return "更新这边有点忙", "不是电脑没网。过几分钟再试一次"

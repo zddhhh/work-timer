@@ -412,7 +412,11 @@ class UpdateDialogMixin:
             if pending is not None:
                 state["pending_dl"] = None
                 start_download(pending)
-                break
+                # 下载失败会回到 idle（「好」），必须继续泵事件；
+                # 以前这里 break，弹窗晾着点不了，像卡死。
+                if not alive() or state["phase"] not in ("ask", "idle"):
+                    break
+                continue
             try:
                 _sync_open_card_hide(dlg, self.win)
                 dlg.update()
