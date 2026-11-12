@@ -281,6 +281,14 @@ def save_cached_check(info: ReleaseInfo, *, checked_at: float | None = None) -> 
         pass
 
 
+def clear_cached_check() -> None:
+    """下载 404 / 装包失效时清掉，避免一直重试坏掉的版本。"""
+    try:
+        _cache_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def silent_check_due(*, now: float | None = None, gap_s: float = SILENT_GAP_S) -> bool:
     """启动静默检查是否该打网。"""
     checked_at, _ = load_cached_check()

@@ -161,6 +161,12 @@ class UpdateDialogMixin:
 
         def fail(msg: str) -> None:
             store.append_log(f"update: {(msg or '')[:180]}")
+            low = (msg or "").lower()
+            # 装包直链 404（如某版上传失败）时丢掉缓存，下次检查会拿到真正能下的版本。
+            if "404" in low:
+                updater.clear_cached_check()
+                self._update_info = None
+                self._update_available = False
             head, hint = updater.friendly_error(msg)
             url = str(self.cfg.get("subscribe_url") or "").strip()
             if url and updater.is_network_error(msg):

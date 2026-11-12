@@ -2422,7 +2422,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     and not self._esc_hidden
                 ):
                     self._update_prompted = True
-                    self._check_update(known=self._update_info)
+                    # 不带 known：避免静默检查到的坏包（如 1.4.44 直链 404）被一直拿来下。
+                    self._check_update()
                 if themes.consume_updated():
                     self._last_key = ""
                     self._force_surface_sample = True
