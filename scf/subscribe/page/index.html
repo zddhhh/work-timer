@@ -148,13 +148,49 @@ body {
 @media (max-width: 380px) {
   .brand { font-size: clamp(24px, 7.6vw, 34px); letter-spacing: -0.05em; }
 }
-.sub {
+.sub-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
   margin: 12px 0 0;
+}
+.sub {
+  margin: 0;
   color: var(--ink);
   font-size: clamp(16px, 4.2vw, 20px);
   font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1.35;
+}
+.ver {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--sea);
+  font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  transform: translateY(-1px);
+}
+.ver i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--sea);
+  box-shadow: 0 0 0 3px rgba(31, 111, 106, 0.14);
+  font-style: normal;
+}
+.ver span {
+  background: linear-gradient(90deg, rgba(31, 111, 106, 0.12), transparent 88%);
+  border-radius: 4px;
+  padding: 1px 7px 1px 2px;
 }
 .lead {
   margin: 10px 0 0;
@@ -163,15 +199,15 @@ body {
   line-height: 1.5;
 }
 .dl-total {
-  margin: 22px 0 0;
+  margin: 36px 0 0;
   display: inline-flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 12px;
   color: var(--fog);
   font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
 }
 .dl-total strong {
   font-family: Syne, "Instrument Sans", "Noto Sans SC", sans-serif;
@@ -184,34 +220,6 @@ body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-}
-.ver {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  max-width: 100%;
-  margin-top: 18px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--sea);
-  font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-.ver i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--sea);
-  box-shadow: 0 0 0 3px rgba(31, 111, 106, 0.14);
-  font-style: normal;
-}
-.ver span {
-  background: linear-gradient(90deg, rgba(31, 111, 106, 0.12), transparent 88%);
-  border-radius: 4px;
-  padding: 2px 8px 2px 2px;
 }
 .scroll-hint {
   position: absolute;
@@ -447,10 +455,12 @@ button:disabled { opacity: 0.6; cursor: wait; }
   <section class="hero-screen">
     <p class="kicker">Desktop timer</p>
     <h1 class="brand"><span>WorkTimer</span></h1>
-    <p class="sub">弹性下班计时器</p>
+    <div class="sub-row">
+      <p class="sub">弹性下班计时器</p>
+      <p class="ver"><i></i><span id="ver">读取版本…</span></p>
+    </div>
     <p class="lead">桌面倒计时，下载安装即可用。</p>
-    <p class="dl-total" id="dl-total" hidden><strong></strong><span>累计下载</span></p>
-    <p class="ver"><i></i><span id="ver">读取版本…</span></p>
+    <p class="dl-total" id="dl-total" hidden><span>累计下载</span><strong></strong></p>
     <a class="scroll-hint" href="#download" aria-label="向下查看下载渠道">
       <span></span>
       下载
