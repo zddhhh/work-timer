@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 关于页可打开官网；仓库说明附上官网下载链接"
+    "- 修隐藏一段时间后最小化账本贴条偶发点不开"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

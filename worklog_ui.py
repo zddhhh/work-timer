@@ -282,6 +282,23 @@ class WorklogDock:
         self.x, self.y = x, y
         layered_win.user32.SetWindowPos(self.hwnd, None, x, y, 0, 0, layered_win._MOVE_FLAGS)
 
+    def bring_front(self) -> None:
+        """钉回最前。计时器 keep_topmost 后同级 TOPMOST 会盖住贴条，点上去没反应。"""
+        hwnd = int(self.hwnd or 0)
+        if not hwnd or not self._shown:
+            return
+        if not layered_win.user32.IsWindow(hwnd):
+            return
+        layered_win.user32.SetWindowPos(
+            hwnd,
+            layered_win.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            layered_win.SWP_NOMOVE | layered_win.SWP_NOSIZE | layered_win.SWP_NOACTIVATE,
+        )
+
     def hide(self) -> None:
         if self.hwnd and self._shown:
             layered_win.user32.SetWindowPos(
@@ -1101,6 +1118,9 @@ class WorklogDialogMixin:
         # 菜单开着时只跟位置、不抢前台；可见性丢了仍要重 show，否则菜单关掉后贴条没了。
         if follow_only and alive:
             dock.follow(self._worklog_card_rect())
+            # 计时器随时可能 keep_topmost；贴条在卡片内侧时会被盖住，点了像失灵。
+            if not back:
+                dock.bring_front()
             return
         dock = self._ensure_worklog_dock()
         if dock is None:
@@ -1110,7 +1130,7 @@ class WorklogDialogMixin:
         fill, outline, ink = self._dock_colors()
         dock.show(
             fill, outline, ink, self._worklog_card_rect(),
-            raise_window=not follow_only and not back,
+            raise_window=not back,
         )
 
     def _pump_worklog_dock(self) -> None:

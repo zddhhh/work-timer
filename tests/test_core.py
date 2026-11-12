@@ -1064,6 +1064,81 @@ class GameDialogTests(unittest.TestCase):
         self.assertEqual(shown, [False])
         self.assertFalse(dock._shown)
 
+    def test_follow_only_raises_dock_when_it_had_to_reshow(self):
+        """隐藏久了贴条 Invisible：follow_only 重建时也要置顶，否则被计时器盖住点不开。"""
+        import main
+
+        raised = []
+
+        class Dock:
+            hwnd = 42
+            _shown = False
+
+            def follow(self, *_a, **_k):
+                raise AssertionError("invisible dock should not follow")
+
+            def bring_front(self):
+                raised.append("front")
+
+            def show(self, *_a, **k):
+                raised.append(bool(k.get("raise_window", True)))
+                self._shown = True
+
+        class Win:
+            _popup_open = False
+            _open_card = None
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.win = Win()
+        host._esc_hidden = False
+        host._worklog_docked = True
+        host._worklog_dock = Dock()
+        host._update_dialog_open = False
+        host._schedule_list_open = False
+        host._dock_colors = lambda: ((1, 2, 3), (4, 5, 6), (7, 8, 9))
+        host._worklog_card_rect = lambda: (10, 20, 100, 40)
+        host._ensure_worklog_dock = lambda: host._worklog_dock
+        with mock.patch("layered_win.user32.IsWindow", return_value=True), mock.patch(
+            "layered_win.user32.IsWindowVisible", return_value=False,
+        ):
+            host._place_worklog_dock(follow_only=True)
+        self.assertEqual(raised, [True])
+
+    def test_follow_only_brings_alive_dock_front(self):
+        import main
+
+        front = []
+
+        class Dock:
+            hwnd = 42
+            _shown = True
+
+            def follow(self, *_a, **_k):
+                front.append("follow")
+
+            def bring_front(self):
+                front.append("front")
+
+            def show(self, *_a, **_k):
+                raise AssertionError("alive dock should follow, not show")
+
+        class Win:
+            _popup_open = False
+            _open_card = None
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.win = Win()
+        host._esc_hidden = False
+        host._worklog_docked = True
+        host._worklog_dock = Dock()
+        host._update_dialog_open = False
+        host._schedule_list_open = False
+        host._worklog_card_rect = lambda: (10, 20, 100, 40)
+        with mock.patch("layered_win.user32.IsWindow", return_value=True), mock.patch(
+            "layered_win.user32.IsWindowVisible", return_value=True,
+        ):
+            host._place_worklog_dock(follow_only=True)
+        self.assertEqual(front, ["follow", "front"])
     def test_request_quit_aborts_card_modal_and_worklog(self):
         import tkinter as tk
 
