@@ -1315,6 +1315,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._worklog_tick()
         self._place_worklog_dock(follow_only=True)
         self._pump_worklog_dock()
+        # pump 里 keep_topmost 会盖住贴条；每帧再抬一次，只动贴条、不改计时器。
+        self._raise_worklog_dock()
         if paint and not self.win.screen_asleep:
             self._paint()
         self._prune_thunder_hits(now_m)
@@ -1331,11 +1333,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._sync_layout_from_window()
                 self._meow.resizing(True, time.monotonic())
                 self._place_worklog_dock(follow_only=True)
+                self._raise_worklog_dock()
                 self._paint()
                 return
             if self.win.dragging:
                 self._card_was_dragging = True
                 self._place_worklog_dock(follow_only=True)
+                self._raise_worklog_dock()
                 return
             if getattr(self, "_card_was_resizing", False) or self.win.just_resized:
                 self._card_was_resizing = False
@@ -1347,9 +1351,13 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._last_key = ""
                 self._force_surface_sample = True
                 self._place_worklog_dock()
+                self._raise_worklog_dock()
             if getattr(self, "_card_was_dragging", False) or self.win.just_moved:
                 self._card_was_dragging = False
                 self.win.ensure_visible()
+                self.win.keep_topmost()
+                self._place_worklog_dock()
+                self._raise_worklog_dock()
                 self._persist_pos()
                 self._last_key = ""
                 self._force_surface_sample = True
@@ -2390,6 +2398,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 self._note_beat()
                 self.win.pump()
                 self._pump_worklog_dock()
+                # 计时器 LBUTTONDOWN / WinEvent 会 keep_topmost 盖住贴条；主循环里再抬回来。
+                self._raise_worklog_dock()
                 self._poll_key_hide()
                 self._tick_trail()
                 if self._esc_hidden:
@@ -2440,6 +2450,8 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     was_resizing = True
                     self._sync_layout_from_window()
                     self._meow.resizing(True, time.monotonic())
+                    self._place_worklog_dock(follow_only=True)
+                    self._raise_worklog_dock()
                     self._paint()
                     time.sleep(0.001)
                     continue
@@ -2447,14 +2459,18 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     # 拖动只搬现成的画面。重画和截屏都要等桌面合成，松手后再补一帧。
                     was_dragging = True
                     self._place_worklog_dock(follow_only=True)
+                    self._raise_worklog_dock()
                     time.sleep(0.001)
                     continue
                 if was_resizing or resized:
                     self._meow.resizing(False, time.monotonic())
                     self.win.ensure_visible()
+                    self.win.keep_topmost()
                     self._sync_layout_from_window()
                     self._persist_size()
                     self._persist_pos()
+                    self._place_worklog_dock()
+                    self._raise_worklog_dock()
                     self._force_surface_sample = True
                     self._last_key = ""
                     last_save = time.monotonic()

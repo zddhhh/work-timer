@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修最小化后再点贴条偶发卡死"
+    "- 久藏/最小化后贴条不再被计时器盖住"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

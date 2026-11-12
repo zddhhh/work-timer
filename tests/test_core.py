@@ -896,6 +896,33 @@ class GameDialogTests(unittest.TestCase):
         self.assertTrue(host._need_worklog)
         self.assertTrue(host._worklog_ui["minimized"])
 
+    def test_raise_dock_after_timer_keep_topmost(self):
+        """计时器 keep_topmost 后必须再抬贴条，否则久藏/最小化后点贴条像失灵。"""
+        import main
+
+        raised = []
+
+        class Dock:
+            hwnd = 42
+            _shown = True
+
+            def bring_front(self, above_hwnd=0):
+                raised.append(int(above_hwnd or 0))
+
+        class Win:
+            hwnd = 9
+            _popup_open = False
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host.win = Win()
+        host._esc_hidden = False
+        host._worklog_docked = True
+        host._worklog_dock = Dock()
+        host._update_dialog_open = False
+        host._schedule_list_open = False
+        host._raise_worklog_dock()
+        self.assertEqual(raised, [0])
+
     def test_hide_key_does_not_unpark_minimized_card(self):
         import tkinter as tk
 
