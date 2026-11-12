@@ -1049,11 +1049,11 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
         self._esc_hidden = False
         self._last_key = ""
         self._force_surface_sample = True
-        # 隐藏久了分层贴条可能被系统弄没；强制走完整 show，不能只 follow。
-        dock = getattr(self, "_worklog_dock", None)
-        if getattr(self, "_worklog_docked", False) and dock is not None:
-            dock._shown = False
+        # 隐藏久了分层贴条偶发「还在但点不动」：直接拆掉重建，再完整 show。
+        if getattr(self, "_worklog_docked", False):
+            self._rebuild_worklog_dock()
         self._place_worklog_dock()
+        self._raise_worklog_dock()
 
     def _on_request_show(self) -> None:
         """快捷方式/再次启动唤起：同步清掉 Ctrl 隐藏状态，避免窗可见但主循环仍挂起。"""
@@ -1065,6 +1065,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
             self._last_key = ""
             self._force_surface_sample = True
             self._place_worklog_dock()
+            self._raise_worklog_dock()
 
     def _hide_key_companions(self) -> None:
         """隐藏键只收「正开着」的卡片和贴条。
@@ -2433,6 +2434,7 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                     self._force_surface_sample = True
                     self._last_key = ""
                     self.win.keep_topmost()
+                    self._raise_worklog_dock()
                 if resizing:
                     was_resizing = True
                     self._sync_layout_from_window()

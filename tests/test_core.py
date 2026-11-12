@@ -851,8 +851,12 @@ class GameDialogTests(unittest.TestCase):
         import main
 
         shown = []
+        raised = []
+        rebuilt = []
 
         class Win:
+            hwnd = 7
+
             def show(self):
                 return None
 
@@ -864,10 +868,29 @@ class GameDialogTests(unittest.TestCase):
         host._esc_hidden = True
         host._last_key = "x"
         host._force_surface_sample = False
+        host._worklog_docked = True
+        host._rebuild_worklog_dock = lambda: rebuilt.append(True)
         host._place_worklog_dock = lambda **_k: shown.append(True)
+        host._raise_worklog_dock = lambda: raised.append(True)
         host._show_after_esc()
         self.assertFalse(host._esc_hidden)
+        self.assertEqual(rebuilt, [True])
         self.assertEqual(shown, [True])
+        self.assertEqual(raised, [True])
+
+    def test_dock_click_marks_minimized_when_card_needs_reveal(self):
+        import main
+
+        class Dlg:
+            pass
+
+        host = main.WorkTimer.__new__(main.WorkTimer)
+        host._need_worklog = False
+        host._worklog_ui = {"dlg": Dlg(), "minimized": False}
+        host._worklog_needs_reveal = lambda _ui: True
+        host._on_worklog_dock_click()
+        self.assertTrue(host._need_worklog)
+        self.assertTrue(host._worklog_ui["minimized"])
 
     def test_hide_key_does_not_unpark_minimized_card(self):
         import tkinter as tk
@@ -1030,13 +1053,8 @@ class GameDialogTests(unittest.TestCase):
         import main
 
         shown = []
-
-        class Dock:
-            _shown = True
-            hwnd = 1
-
-            def hide(self):
-                self._shown = False
+        rebuilt = []
+        raised = []
 
         class Win:
             def show(self):
@@ -1051,18 +1069,15 @@ class GameDialogTests(unittest.TestCase):
         host._last_key = "x"
         host._force_surface_sample = False
         host._worklog_docked = True
-        dock = Dock()
-        host._worklog_dock = dock
-
-        def place(**_k):
-            shown.append(dock._shown)
-
-        host._place_worklog_dock = place
+        host._worklog_dock = object()
+        host._rebuild_worklog_dock = lambda: rebuilt.append(True)
+        host._place_worklog_dock = lambda **_k: shown.append(True)
+        host._raise_worklog_dock = lambda: raised.append(True)
         host._show_after_esc()
         self.assertFalse(host._esc_hidden)
-        # 进 place 前把 _shown 打成 False，迫使完整 show。
-        self.assertEqual(shown, [False])
-        self.assertFalse(dock._shown)
+        self.assertEqual(rebuilt, [True])
+        self.assertEqual(shown, [True])
+        self.assertEqual(raised, [True])
 
     def test_follow_only_raises_dock_when_it_had_to_reshow(self):
         """隐藏久了贴条 Invisible：follow_only 重建时也要置顶，否则被计时器盖住点不开。"""
@@ -1077,14 +1092,15 @@ class GameDialogTests(unittest.TestCase):
             def follow(self, *_a, **_k):
                 raise AssertionError("invisible dock should not follow")
 
-            def bring_front(self):
-                raised.append("front")
+            def bring_front(self, above_hwnd=0):
+                raised.append(("front", int(above_hwnd or 0)))
 
             def show(self, *_a, **k):
                 raised.append(bool(k.get("raise_window", True)))
                 self._shown = True
 
         class Win:
+            hwnd = 9
             _popup_open = False
             _open_card = None
 
@@ -1102,7 +1118,7 @@ class GameDialogTests(unittest.TestCase):
             "layered_win.user32.IsWindowVisible", return_value=False,
         ):
             host._place_worklog_dock(follow_only=True)
-        self.assertEqual(raised, [True])
+        self.assertEqual(raised, [True, ("front", 9)])
 
     def test_follow_only_brings_alive_dock_front(self):
         import main
@@ -1116,13 +1132,14 @@ class GameDialogTests(unittest.TestCase):
             def follow(self, *_a, **_k):
                 front.append("follow")
 
-            def bring_front(self):
-                front.append("front")
+            def bring_front(self, above_hwnd=0):
+                front.append(("front", int(above_hwnd or 0)))
 
             def show(self, *_a, **_k):
                 raise AssertionError("alive dock should follow, not show")
 
         class Win:
+            hwnd = 9
             _popup_open = False
             _open_card = None
 
@@ -1138,7 +1155,7 @@ class GameDialogTests(unittest.TestCase):
             "layered_win.user32.IsWindowVisible", return_value=True,
         ):
             host._place_worklog_dock(follow_only=True)
-        self.assertEqual(front, ["follow", "front"])
+        self.assertEqual(front, ["follow", ("front", 9)])
     def test_request_quit_aborts_card_modal_and_worklog(self):
         import tkinter as tk
 

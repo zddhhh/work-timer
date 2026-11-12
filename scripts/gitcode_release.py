@@ -103,7 +103,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修隐藏一段时间后最小化账本贴条偶发点不开"
+    "- 再修隐藏后账本贴条偶发点不开：显示后重建贴条并压到计时器上"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

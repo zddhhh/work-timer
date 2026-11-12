@@ -146,6 +146,7 @@ class WorklogDock:
         self._sig: tuple | None = None
         self._caption = "工时账本"
         self._on_click = on_click
+        self._click_at = 0.0
         self._wndproc = layered_win.WNDPROC(self._proc)
         self._hinst = layered_win.kernel32.GetModuleHandleW(None)
         self._hdc_screen = 0
@@ -154,16 +155,25 @@ class WorklogDock:
         self._old = 0
         self._bits = None
 
+    def _fire_click(self) -> None:
+        fn = self._on_click
+        if fn is None:
+            return
+        now = time.monotonic()
+        if now - float(self._click_at or 0) < 0.25:
+            return
+        self._click_at = now
+        try:
+            fn()
+        except Exception:
+            pass
+
     def _proc(self, hwnd, msg, wparam, lparam):
         if msg == layered_win.WM_MOUSEACTIVATE:
             return _MA_NOACTIVATE
-        if msg == layered_win.WM_LBUTTONUP:
-            fn = self._on_click
-            if fn is not None:
-                try:
-                    fn()
-                except Exception:
-                    pass
+        # 按下就记一笔：置顶竞态时有时只有 DOWN 落到贴条，UP 已被计时器吃掉。
+        if msg in (layered_win.WM_LBUTTONDOWN, layered_win.WM_LBUTTONUP):
+            self._fire_click()
             return 0
         return layered_win.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -282,13 +292,14 @@ class WorklogDock:
         self.x, self.y = x, y
         layered_win.user32.SetWindowPos(self.hwnd, None, x, y, 0, 0, layered_win._MOVE_FLAGS)
 
-    def bring_front(self) -> None:
+    def bring_front(self, above_hwnd: int = 0) -> None:
         """钉回最前。计时器 keep_topmost 后同级 TOPMOST 会盖住贴条，点上去没反应。"""
         hwnd = int(self.hwnd or 0)
         if not hwnd or not self._shown:
             return
         if not layered_win.user32.IsWindow(hwnd):
             return
+        flags = layered_win.SWP_NOMOVE | layered_win.SWP_NOSIZE | layered_win.SWP_NOACTIVATE
         layered_win.user32.SetWindowPos(
             hwnd,
             layered_win.HWND_TOPMOST,
@@ -296,8 +307,12 @@ class WorklogDock:
             0,
             0,
             0,
-            layered_win.SWP_NOMOVE | layered_win.SWP_NOSIZE | layered_win.SWP_NOACTIVATE,
+            flags,
         )
+        # 再贴到计时器上面：hWndInsertAfter 是「谁在前面」，把计时器插到贴条后面。
+        other = int(above_hwnd or 0)
+        if other and other != hwnd and layered_win.user32.IsWindow(other):
+            layered_win.user32.SetWindowPos(other, hwnd, 0, 0, 0, 0, flags)
 
     def hide(self) -> None:
         if self.hwnd and self._shown:
@@ -1081,6 +1096,43 @@ class WorklogDialogMixin:
     def _on_worklog_dock_click(self) -> None:
         """贴条点一下只记一笔，主循环再打开账本，避免在鼠标消息里进模态。"""
         self._need_worklog = True
+        # 隐藏/恢复后 minimized 位偶发丢失，屏幕外的账本只被 lift → 看起来像点了没反应。
+        ui = getattr(self, "_worklog_ui", None)
+        if isinstance(ui, dict) and ui.get("dlg") is not None:
+            try:
+                if self._worklog_needs_reveal(ui):
+                    ui["minimized"] = True
+            except Exception:
+                ui["minimized"] = True
+
+    def _timer_hwnd(self) -> int:
+        win = getattr(self, "win", None)
+        return int(getattr(win, "hwnd", 0) or 0) if win is not None else 0
+
+    def _raise_worklog_dock(self) -> None:
+        """计时器 keep_topmost 之后立刻把贴条压到它上面。"""
+        if not getattr(self, "_worklog_docked", False) or getattr(self, "_esc_hidden", False):
+            return
+        if self._dock_should_stay_back():
+            return
+        win = getattr(self, "win", None)
+        if win is not None and getattr(win, "_popup_open", False):
+            return
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is None or not getattr(dock, "_shown", False):
+            return
+        dock.bring_front(above_hwnd=self._timer_hwnd())
+
+    def _rebuild_worklog_dock(self) -> None:
+        """丢掉旧贴条句柄。隐藏久了分层窗偶发还在但不再吃鼠标。"""
+        dock = getattr(self, "_worklog_dock", None)
+        if dock is None:
+            return
+        try:
+            dock.destroy()
+        except Exception:
+            pass
+        self._worklog_dock = None
 
     def _follow_worklog_dock(self) -> None:
         """计时器一挪就跟。发生在鼠标消息里，不能进 Tk。"""
@@ -1093,6 +1145,8 @@ class WorklogDialogMixin:
         if win is not None and getattr(win, "_popup_open", False):
             return
         dock.follow(self._worklog_card_rect())
+        if not self._dock_should_stay_back():
+            dock.bring_front(above_hwnd=self._timer_hwnd())
 
     def _place_worklog_dock(self, *, follow_only: bool = False) -> None:
         dock = getattr(self, "_worklog_dock", None)
@@ -1120,7 +1174,7 @@ class WorklogDialogMixin:
             dock.follow(self._worklog_card_rect())
             # 计时器随时可能 keep_topmost；贴条在卡片内侧时会被盖住，点了像失灵。
             if not back:
-                dock.bring_front()
+                dock.bring_front(above_hwnd=self._timer_hwnd())
             return
         dock = self._ensure_worklog_dock()
         if dock is None:
@@ -1132,6 +1186,8 @@ class WorklogDialogMixin:
             fill, outline, ink, self._worklog_card_rect(),
             raise_window=not back,
         )
+        if not back:
+            dock.bring_front(above_hwnd=self._timer_hwnd())
 
     def _pump_worklog_dock(self) -> None:
         dock = getattr(self, "_worklog_dock", None)
