@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import time
 from ctypes import wintypes
 from typing import Callable
 
@@ -72,7 +73,14 @@ WTS_SESSION_LOGON = 0x5
 WTS_SESSION_LOCK = 0x7
 WTS_SESSION_UNLOCK = 0x8
 WM_POWERBROADCAST = 0x0218
+WM_DEVICECHANGE = 0x0219
+PBT_APMPOWERSTATUSCHANGE = 0x000A
 PBT_POWERSETTINGCHANGE = 0x8013
+# 单次 pump 里最多把 Raw Input 交给业务回调的次数。拔插 USB/电源时系统会灌入
+# 大量 WM_INPUT，Python 全解析会把消息泵堵死，隐藏态尤其像卡死。
+_RAW_INPUT_BUDGET = 48
+_RAW_INPUT_STORM_BUDGET = 8
+_RAW_INPUT_STORM_S = 1.5
 DESKTOP_SWITCHDESKTOP = 0x0100
 MA_ACTIVATE = 1
 SW_RESTORE = 9
@@ -545,6 +553,8 @@ class LayeredPetWindow:
         self._off_input = -1
         self._power_notes: list = []
         self._wts = False
+        self._raw_budget = _RAW_INPUT_BUDGET
+        self._raw_storm_until = 0.0
 
         self._hinst = kernel32.GetModuleHandleW(None)
         self._class_name = class_name
@@ -979,7 +989,11 @@ class LayeredPetWindow:
         self.keep_topmost()
 
     def keep_topmost(self) -> None:
-        """钉回最前。ShowWindow 隐藏后再显示，Win11 常会丢掉 WS_EX_TOPMOST。"""
+        """钉回最前。ShowWindow 隐藏后再显示，Win11 常会丢掉 WS_EX_TOPMOST。
+
+        不用 SWP_SHOWWINDOW：拔插电源/USB 时若误调 keep_topmost，SHOWWINDOW 会把
+        已隐藏的窗刷出来，和隐藏键状态打架，看起来像卡死或闪一下。
+        """
         if not self.hwnd or self._closed or self._user_hidden:
             return
         hwnd = self.hwnd
@@ -988,7 +1002,11 @@ class LayeredPetWindow:
         if not (ex & WS_EX_TOPMOST):
             user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW)
             user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
-        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags | SWP_SHOWWINDOW)
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+
+    def note_device_storm(self) -> None:
+        """拔插外设/电源：短时间降低 Raw Input 回调配额。"""
+        self._raw_storm_until = time.monotonic() + _RAW_INPUT_STORM_S
 
     def present_bgra(self, bgra: bytes, alpha_mask: bytes) -> None:
         """只更新画面，不改窗口位置（避免切显示时乱跳）。"""
@@ -1056,11 +1074,26 @@ class LayeredPetWindow:
             elif code in (WTS_SESSION_UNLOCK, WTS_CONSOLE_CONNECT, WTS_REMOTE_CONNECT, WTS_SESSION_LOGON):
                 self._locked = False
             return 0
-        if msg == WM_POWERBROADCAST and int(wparam) == PBT_POWERSETTINGCHANGE:
-            try:
-                self._on_power_setting(lparam)
-            except Exception:
-                self._display_off = False
+        if msg == WM_POWERBROADCAST:
+            code = int(wparam)
+            if code == PBT_APMPOWERSTATUSCHANGE:
+                # 拔插电源线：短时限流 Raw Input，并让节电缓存尽快失效。
+                self.note_device_storm()
+                try:
+                    import power_save
+
+                    power_save.invalidate()
+                except Exception:
+                    pass
+                return 1
+            if code == PBT_POWERSETTINGCHANGE:
+                try:
+                    self._on_power_setting(lparam)
+                except Exception:
+                    self._display_off = False
+                return 1
+        if msg == WM_DEVICECHANGE:
+            self.note_device_storm()
             return 1
         if msg == WM_SYSCOMMAND:
             cmd = int(wparam) & SC_MASK
@@ -1092,7 +1125,9 @@ class LayeredPetWindow:
                 if 0 < n <= 256:
                     buf = (ctypes.c_ubyte * n)()
                     got = user32.GetRawInputData(lparam, RID_INPUT, buf, ctypes.byref(size), header)
-                    if got != 0xFFFFFFFF:
+                    # 配额用尽仍消费缓冲，只是不再进业务回调，避免拔插洪峰卡死。
+                    if got != 0xFFFFFFFF and self._raw_budget > 0:
+                        self._raw_budget -= 1
                         try:
                             fn(bytes(buf))
                         except Exception:
@@ -1433,6 +1468,8 @@ class LayeredPetWindow:
     def pump(self) -> None:
         if not self.hwnd:
             return
+        storm = time.monotonic() < float(self._raw_storm_until or 0)
+        self._raw_budget = _RAW_INPUT_STORM_BUDGET if storm else _RAW_INPUT_BUDGET
         self.release_stuck_pointer()
         msg = MSG()
         while user32.PeekMessageW(ctypes.byref(msg), self.hwnd, 0, 0, PM_REMOVE):

@@ -4834,6 +4834,29 @@ class PaintCostTests(unittest.TestCase):
         finally:
             win.destroy()
 
+    def test_keep_topmost_does_not_unhide_and_device_storm_cuts_budget(self):
+        import layered_win as lw
+        import power_save
+
+        win = lw.LayeredPetWindow(80, 40, class_name="WorkTimerHideStormWnd", visible=True)
+        try:
+            win.hide()
+            self.assertFalse(bool(lw.user32.IsWindowVisible(win.hwnd)))
+            win.keep_topmost()
+            self.assertFalse(bool(lw.user32.IsWindowVisible(win.hwnd)))
+
+            win.note_device_storm()
+            self.assertGreater(win._raw_storm_until, 0)
+            win.pump()
+            self.assertEqual(win._raw_budget, lw._RAW_INPUT_STORM_BUDGET)
+
+            lw.user32.SendMessageW(win.hwnd, lw.WM_POWERBROADCAST, lw.PBT_APMPOWERSTATUSCHANGE, 0)
+            self.assertGreater(win._raw_storm_until, 0)
+            power_save.invalidate()
+            self.assertEqual(power_save._at, 0.0)
+        finally:
+            win.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()

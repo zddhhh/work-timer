@@ -34,6 +34,12 @@ def cap_hz(hz: float, saving: bool, limit: float = BATTERY_HZ) -> float:
     return min(float(hz), float(limit))
 
 
+def invalidate() -> None:
+    """拔插电源后立刻重读，别等缓存两秒。"""
+    global _at
+    _at = 0.0
+
+
 def saving() -> bool:
     """未接电，或 Windows 节电已打开。桌面机报未知时不当成节电。"""
     global _at, _on

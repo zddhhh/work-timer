@@ -2401,17 +2401,33 @@ class WorkTimer(WorklogDialogMixin, ScheduleDialogMixin, UpdateDialogMixin):
                 # 计时器 LBUTTONDOWN / WinEvent 会 keep_topmost 盖住贴条；主循环里再抬回来。
                 self._raise_worklog_dock()
                 self._poll_key_hide()
-                self._tick_trail()
                 if self._esc_hidden:
+                    # 隐藏态别 125Hz 空转：拔插 USB/电源时 Raw Input + settle 会把消息泵堵死。
+                    now_hide = time.monotonic()
+                    if now_hide - float(getattr(self, "_hide_trail_at", 0.0) or 0.0) >= 0.05:
+                        self._hide_trail_at = now_hide
+                        self._tick_trail()
+                    if now_hide - float(getattr(self, "_hide_dock_at", 0.0) or 0.0) >= 0.5:
+                        self._hide_dock_at = now_hide
+                        self._place_worklog_dock()
                     # 单实例 ShowWindow 可能已把 hwnd 显示，但 _esc_hidden 未清 → 主循环空转像卡死
-                    self._place_worklog_dock()
-                    if self.win.hwnd and layered_win.user32.IsWindowVisible(self.win.hwnd):
+                    visible = bool(self.win.hwnd and layered_win.user32.IsWindowVisible(self.win.hwnd))
+                    if visible and not getattr(self.win, "_user_hidden", False):
                         self._show_after_esc()
                     else:
-                        if activity.settle(self.cfg, datetime.now()):
-                            self._activity_dirty = True
-                        time.sleep(0.008)
+                        if visible and getattr(self.win, "_user_hidden", False):
+                            # 拔插/合成器偶发把隐藏窗刷出来：按住隐藏，别当成唤起。
+                            try:
+                                layered_win.user32.ShowWindow(self.win.hwnd, 0)
+                            except Exception:
+                                pass
+                        if now_hide - float(getattr(self, "_hide_settle_at", 0.0) or 0.0) >= 1.0:
+                            self._hide_settle_at = now_hide
+                            if activity.settle(self.cfg, datetime.now()):
+                                self._activity_dirty = True
+                        time.sleep(0.05)
                         continue
+                self._tick_trail()
                 if self._menu_pos is not None:
                     sx, sy = self._menu_pos
                     self._menu_pos = None
