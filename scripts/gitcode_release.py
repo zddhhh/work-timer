@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 小游戏列表分组滚动，浏览器精选十款"
+    "- 工时账本还在记时不再误提示早走"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

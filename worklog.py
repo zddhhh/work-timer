@@ -100,7 +100,7 @@ def fmt_diff(minutes: int | None) -> str:
 
 
 def fmt_note_gap(kind: str, minutes: int | None) -> str:
-    """自填钟点和软件记录的差别。正数是软件更晚。"""
+    """自填钟点和软件记录的差别。正数是软件更晚。离开差只在已可比较时传入。"""
     if minutes is None:
         return ""
     if minutes == 0:
@@ -108,7 +108,8 @@ def fmt_note_gap(kind: str, minutes: int | None) -> str:
     if kind == "in":
         label = "晚到" if minutes > 0 else "早到"
     else:
-        label = "晚走" if minutes > 0 else "早走"
+        # 对的是自填下班，不是「今天请了假早走」那种说法。
+        label = "比自填晚离" if minutes > 0 else "比自填早离"
     return label + fmt_span(abs(int(minutes)))
 
 
@@ -634,12 +635,14 @@ def row(cfg: dict, d: date, *, today: date | None = None) -> dict:
     hold = _clean_hold(item.get("hold"))
     doubt_at = hold["end"] // 60 if hold and hold["asked"] and not hold["drop"] else None
     dur = mo - mi if mi is not None and mo is not None else None
-    # 还没到应下班就用「离开-应下班」，下午会显示成大段早退。过了应下班再显示差额。
+    # 还在记的「走了」只是最近一次操作，不是真的离开。未到应下班/自填下班前
+    # 不要算成「早走」，否则下午账本会一直提示早走了。
     live = d == (today or date.today()) and mo is not None
     show_diff = mo is not None and mt is not None and (not live or mo >= mt)
     diff = (mo - mt) if show_diff else None
     arrive_gap = mi - note_in if mi is not None and note_in is not None else None
-    leave_gap = mo - note_out if mo is not None and note_out is not None else None
+    show_leave_gap = mo is not None and note_out is not None and (not live or mo >= note_out)
+    leave_gap = (mo - note_out) if show_leave_gap else None
     return {
         "date": d,
         "in": mi,

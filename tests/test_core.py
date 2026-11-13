@@ -2384,21 +2384,30 @@ class WorklogTests(unittest.TestCase):
         cfg = {}
         self.prove(cfg, 8, 40, target=(18, 10))
         self.prove(cfg, 14, 0, target=(18, 10))
+        self.assertIsNone(worklog.set_note(cfg, self.D.date(), "8:30", "18:10"))
         live = worklog.row(cfg, self.D.date(), today=self.D.date())
         self.assertTrue(live["live"])
         self.assertIsNone(live["diff"])
+        # 还在记：走了只是最近操作，不能写成「早走 / 比自填早离」
+        self.assertIsNone(live["leave_gap"])
+        self.assertEqual(live["arrive_gap"], 10)
+        self.assertNotIn("早", worklog.day_summary(cfg, self.D.date(), live))
         self.assertEqual(live["dur"], 320)
         self.assertEqual(worklog.summarize([live])["days"], 0)
         done = worklog.row(cfg, self.D.date(), today=self.LATER)
         self.assertFalse(done["live"])
         self.assertEqual(done["diff"], -250)
+        self.assertEqual(done["leave_gap"], -250)
+        self.assertIn("比自填早离", worklog.fmt_note_gap("out", done["leave_gap"]))
         late = worklog.row(cfg, self.D.date(), today=self.D.date())
         # 14:00 还没到 18:10，差额仍隐藏
         self.assertIsNone(late["diff"])
+        self.assertIsNone(late["leave_gap"])
         self.prove(cfg, 18, 30, target=(18, 10))
         overtime = worklog.row(cfg, self.D.date(), today=self.D.date())
         self.assertTrue(overtime["live"])
         self.assertEqual(overtime["diff"], 20)
+        self.assertEqual(overtime["leave_gap"], 20)
 
     def test_span_follows_proven_bursts(self):
         cfg = {}
@@ -2450,7 +2459,7 @@ class WorklogTests(unittest.TestCase):
         self.assertTrue(r["note_custom"])
         self.assertEqual(r["arrive_gap"], 10)
         self.assertEqual(r["leave_gap"], 25)
-        self.assertEqual(worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"]), "晚到10分，晚走25分")
+        self.assertEqual(worklog.fmt_note_compare(r["arrive_gap"], r["leave_gap"]), "晚到10分，比自填晚离25分")
         self.assertIn("早于", worklog.set_note(cfg, self.D.date(), "19:00", "9:00"))
         self.assertIn("看不懂", worklog.set_note(cfg, self.D.date(), "abc", ""))
         self.assertIsNone(worklog.set_note(cfg, self.D.date(), "", ""))
@@ -2474,13 +2483,13 @@ class WorklogTests(unittest.TestCase):
         keys[14] = 8
         cfg["activity"]["days"][self.D.date().isoformat()] = {"keys": 48, "keys_h": keys}
         quiet = worklog.day_summary(cfg, self.D.date(), r)
-        self.assertEqual(quiet, "晚到10分，晚走20分\n11点到13点空着")
+        self.assertEqual(quiet, "晚到10分，比自填晚离20分\n11点到13点空着")
         keys[11] = 30
         keys[12] = 12
         keys[13] = 12
         cfg["activity"]["days"][self.D.date().isoformat()] = {"keys": 102, "keys_h": keys}
         busy = worklog.day_summary(cfg, self.D.date(), r)
-        self.assertIn("晚到10分，晚走20分", busy)
+        self.assertIn("晚到10分，比自填晚离20分", busy)
         self.assertIn("最忙", busy)
         same = dict(r, arrive_gap=0, leave_gap=0)
         self.assertTrue(worklog.day_summary({}, self.D.date(), same).startswith("和公司时间一致"))
@@ -2508,7 +2517,7 @@ class WorklogTests(unittest.TestCase):
         csv_text = worklog.to_csv(cfg, worklog.month_dates(2026, 10))
         lines = csv_text.strip().splitlines()
         self.assertEqual(len(lines), 3)
-        self.assertIn("2026-10-08,周四,9:00,18:30,9小时30分,18:00,晚走30分,8:40,18:10,晚到20分,晚走20分,自动", lines[1])
+        self.assertIn("2026-10-08,周四,9:00,18:30,9小时30分,18:00,晚走30分,8:40,18:10,晚到20分,比自填晚离20分,自动", lines[1])
 
     def test_three_seconds_inside_thirty_sets_the_span(self):
         cfg = {}
@@ -3262,7 +3271,7 @@ class WorklogScrollTests(unittest.TestCase):
             self.assertNotIn("早到", slot["dur"].cget("text"))
             self.assertEqual(slot["note_dur"].cget("text"), "9小时")
             self.assertNotIn("晚走", slot["note_dur"].cget("text"))
-            self.assertEqual(slot["summary"].cget("text"), "晚到10分，晚走20分")
+            self.assertEqual(slot["summary"].cget("text"), "晚到10分，比自填晚离20分")
             self.assertIn("最忙", slot["summary_pace"].cget("text"))
             self.assertNotIn("最忙", slot["summary"].cget("text"))
             self.assertNotIn("今天", slot["date"].cget("text"))
