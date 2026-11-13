@@ -15,20 +15,131 @@ ROWS = LEVELS[0]["rows"]
 COLS = LEVELS[0]["cols"]
 MINES = LEVELS[0]["mines"]
 
-# 浏览器枪战：Fable 5.2 演示 Saltline 的公开镜像页（不打包进安装包，只打开系统浏览器）。
+# 浏览器精选：Fable 5.2 一类单文件/程序化小作。不打包进安装包，只打开系统浏览器。
+# Saltline 用作者镜像；其余走 fable52 可玩页（沙箱页，链接稳一点）。
 SALTLINE_URL = "https://realcodebear.github.io/saltline-fable-5.2/"
+FABLE52_PLAY = "https://fable52.games/play"
+BROWSER_ARCADE_URL = "https://fable52.games/"
 
 GAMES = (
-    {"id": "mines", "name": "扫雷", "blurb": "左键翻开，右键插旗。初级、中级、高级都能选。"},
-    {"id": "golf", "name": "高尔夫", "blurb": "只点不拖：牌面差 1 就能接，点牌堆翻一张。"},
-    {"id": "pool", "name": "台球", "blurb": "按住白球往后拉，松开就打。彩球都进袋就过关。"},
+    {
+        "id": "mines",
+        "name": "扫雷",
+        "blurb": "左键翻开，右键插旗。初级、中级、高级都能选。",
+        "kind": "local",
+        "group": "本机",
+    },
+    {
+        "id": "golf",
+        "name": "高尔夫",
+        "blurb": "只点不拖：牌面差 1 就能接，点牌堆翻一张。",
+        "kind": "local",
+        "group": "本机",
+    },
+    {
+        "id": "pool",
+        "name": "台球",
+        "blurb": "按住白球往后拉，松开就打。彩球都进袋就过关。",
+        "kind": "local",
+        "group": "本机",
+    },
     {
         "id": "saltline",
         "name": "港区射击",
-        "blurb": "雨夜集装箱码头 FPS。用系统浏览器打开，点页面锁定鼠标后开始。",
+        "blurb": "雨夜集装箱码头。点页面锁定鼠标后开始。",
+        "kind": "browser",
+        "group": "浏览器 · 射击",
+        "tag": "FPS",
         "url": SALTLINE_URL,
     },
+    {
+        "id": "sublevel",
+        "name": "地下变电",
+        "blurb": "潮湿走廊 + 反光地面，三波悬浮无人机。体积只有约 128KB。",
+        "kind": "browser",
+        "group": "浏览器 · 射击",
+        "tag": "FPS",
+        "url": f"{FABLE52_PLAY}/sublevel-07-fps-repro",
+    },
+    {
+        "id": "transport",
+        "name": "运输船",
+        "blurb": "经典运输船图，浏览器里和人机混战。",
+        "kind": "browser",
+        "group": "浏览器 · 射击",
+        "tag": "FPS",
+        "url": f"{FABLE52_PLAY}/transport-ship-3d",
+    },
+    {
+        "id": "mothlight",
+        "name": "蛾光竞速",
+        "blurb": "雨夜赛博城穿光门，五个区十二道门。",
+        "kind": "browser",
+        "group": "浏览器 · 其它",
+        "tag": "竞速",
+        "url": f"{FABLE52_PLAY}/mothlight",
+    },
+    {
+        "id": "soccer",
+        "name": "口袋足球",
+        "blurb": "七人制 3D，有裁判、越位和点球。",
+        "kind": "browser",
+        "group": "浏览器 · 其它",
+        "tag": "运动",
+        "url": f"{FABLE52_PLAY}/pocket-soccer-3d",
+    },
+    {
+        "id": "evensong",
+        "name": "晚祷对决",
+        "blurb": "淹水教堂里的灵魂系单 Boss。",
+        "kind": "browser",
+        "group": "浏览器 · 其它",
+        "tag": "动作",
+        "url": f"{FABLE52_PLAY}/evensong",
+    },
+    {
+        "id": "waterkeeps",
+        "name": "水中所留",
+        "blurb": "灯笼小船漂过多重梦境河段，偏氛围。",
+        "kind": "browser",
+        "group": "浏览器 · 其它",
+        "tag": "氛围",
+        "url": f"{FABLE52_PLAY}/what-the-water-keeps",
+    },
+    {
+        "id": "qingyun",
+        "name": "青云御剑",
+        "blurb": "云海上御剑采灵，点亮宗门。",
+        "kind": "browser",
+        "group": "浏览器 · 其它",
+        "tag": "飞行",
+        "url": f"{FABLE52_PLAY}/qingyun-sword-flight",
+    },
+    {
+        "id": "tidebell",
+        "name": "潮钟",
+        "blurb": "驾驶小潜器下潜，唤醒七口潮钟。",
+        "kind": "browser",
+        "group": "浏览器 · 其它",
+        "tag": "探索",
+        "url": f"{FABLE52_PLAY}/tidebell",
+    },
+    {
+        "id": "wusuo",
+        "name": "雾锁山门",
+        "blurb": "雪夜山门武侠动作小品。",
+        "kind": "browser",
+        "group": "浏览器 · 其它",
+        "tag": "武侠",
+        "url": f"{FABLE52_PLAY}/wusuo-shanmen",
+    },
 )
+
+GAME_GROUPS = ("本机", "浏览器 · 射击", "浏览器 · 其它")
+
+
+def games_in_group(group: str) -> list[dict]:
+    return [g for g in GAMES if g.get("group") == group]
 
 
 def open_browser_game(url: str) -> bool:
@@ -251,7 +362,7 @@ def open_games(
     poll_hide=None, live=None,
 ) -> None:
     """右键「小游戏」：先列表。poll_hide 用和卡片一样的隐藏键。live 在弹窗挡住主循环时继续刷新倒计时。"""
-    dlg = dialog(parent, near=near, width=360, height=460)
+    dlg = dialog(parent, near=near, width=400, height=540)
     # 整窗拖拽会把格子上的点击也当成挪窗口
     dlg.unbind("<ButtonPress-1>")
     dlg.unbind("<B1-Motion>")
@@ -275,6 +386,7 @@ def open_games(
 
     def clear() -> None:
         state["tick"] = None
+        dlg.unbind("<MouseWheel>")
         for w in host.winfo_children():
             w.destroy()
 
@@ -293,47 +405,141 @@ def open_games(
         conceal()
         clear()
         title = tk.Label(host, text="小游戏", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
-        title.pack(anchor="w", padx=18, pady=(16, 12))
+        title.pack(anchor="w", padx=18, pady=(14, 2))
         drag_on(title)
-        for game in GAMES:
-            going = (
-                (game["id"] == "mines" and mines_in_progress())
-                or (game["id"] == "golf" and golf_in_progress())
-                or (game["id"] == "pool" and pool_in_progress())
+        tip = tk.Label(
+            host,
+            text="本机免联网；浏览器项会打开系统浏览器，不装进安装包。",
+            fg=muted,
+            bg=bg,
+            font=("Microsoft YaHei UI", 8),
+            wraplength=350,
+            justify="left",
+        )
+        tip.pack(anchor="w", padx=18, pady=(0, 8))
+        drag_on(tip)
+
+        list_w = 360
+        mid = tk.Frame(host, bg=bg)
+        mid.pack(side="top", fill="both", expand=True, padx=18)
+        canvas = tk.Canvas(mid, bg=bg, highlightthickness=0, bd=0, width=list_w, height=380)
+        rows = tk.Frame(canvas, bg=bg)
+        win_id = canvas.create_window((0, 0), window=rows, anchor="nw", width=list_w)
+        canvas.pack(fill="both", expand=True)
+
+        def sync_scroll(_e=None) -> None:
+            width = canvas.winfo_width()
+            if width < 50:
+                width = list_w
+            canvas.itemconfigure(win_id, width=width)
+            canvas.configure(scrollregion=canvas.bbox("all") or (0, 0, width, 0))
+
+        wheel = {"acc": 0.0}
+        canvas.configure(yscrollincrement=1)
+
+        def on_wheel(e) -> str:
+            region = canvas.bbox("all")
+            if not region or region[3] - region[1] <= canvas.winfo_height():
+                wheel["acc"] = 0.0
+                return "break"
+            px = -e.delta / 2
+            if (px > 0) != (wheel["acc"] > 0):
+                wheel["acc"] = 0.0
+            wheel["acc"] += px
+            step = int(wheel["acc"])
+            if step:
+                wheel["acc"] -= step
+                canvas.yview_scroll(step, "units")
+            return "break"
+
+        rows.bind("<Configure>", sync_scroll)
+        canvas.bind("<Configure>", sync_scroll)
+        dlg.bind("<MouseWheel>", on_wheel)
+
+        def launch(gid: str, link: str, blurb_lbl: tk.Label) -> None:
+            if gid == "mines":
+                dlg.after(1, lambda: show_mines(reset=False))
+            elif gid == "golf":
+                dlg.after(1, lambda: show_golf(reset=False))
+            elif gid == "pool":
+                dlg.after(1, lambda: show_pool(reset=False))
+            elif link:
+                ok = open_browser_game(str(link))
+                if ok:
+                    try:
+                        dlg.destroy()
+                    except tk.TclError:
+                        pass
+                else:
+                    blurb_lbl.configure(text="浏览器没打开，检查默认浏览器设置后再试。")
+
+        for group in GAME_GROUPS:
+            items = games_in_group(group)
+            if not items:
+                continue
+            head = tk.Label(
+                rows,
+                text=group,
+                fg=muted,
+                bg=bg,
+                font=("Microsoft YaHei UI", 9, "bold"),
             )
-            row = tk.Frame(host, bg="#222733", cursor="hand2")
-            row.pack(fill="x", padx=18, pady=(0, 8))
-            label = game["name"] + ("  · 继续" if going else "")
-            name = tk.Label(row, text=label, fg=fg, bg="#222733", font=("Microsoft YaHei UI", 12, "bold"))
-            name.pack(anchor="w", padx=12, pady=(10, 0))
-            blurb_text = "点这里接着上一次。" if going else game["blurb"]
-            blurb = tk.Label(row, text=blurb_text, fg=muted, bg="#222733", font=("Microsoft YaHei UI", 9))
-            blurb.pack(anchor="w", padx=12, pady=(2, 10))
+            head.pack(anchor="w", pady=(6 if group != GAME_GROUPS[0] else 0, 4))
+            drag_on(head)
+            for game in items:
+                going = (
+                    (game["id"] == "mines" and mines_in_progress())
+                    or (game["id"] == "golf" and golf_in_progress())
+                    or (game["id"] == "pool" and pool_in_progress())
+                )
+                row = tk.Frame(rows, bg="#222733", cursor="hand2")
+                row.pack(fill="x", pady=(0, 6))
+                top = tk.Frame(row, bg="#222733")
+                top.pack(fill="x", padx=12, pady=(9, 0))
+                label = game["name"] + ("  · 继续" if going else "")
+                name = tk.Label(
+                    top,
+                    text=label,
+                    fg=fg,
+                    bg="#222733",
+                    font=("Microsoft YaHei UI", 11, "bold"),
+                )
+                name.pack(side="left")
+                badge = "本机" if game.get("kind") == "local" else (game.get("tag") or "浏览器")
+                tag = tk.Label(
+                    top,
+                    text=badge,
+                    fg="#9aa3b5",
+                    bg="#2c3344",
+                    font=("Microsoft YaHei UI", 8),
+                    padx=6,
+                    pady=1,
+                )
+                tag.pack(side="right")
+                blurb_text = "点这里接着上一次。" if going else game["blurb"]
+                blurb = tk.Label(
+                    row,
+                    text=blurb_text,
+                    fg=muted,
+                    bg="#222733",
+                    font=("Microsoft YaHei UI", 8),
+                    wraplength=320,
+                    justify="left",
+                )
+                blurb.pack(anchor="w", padx=12, pady=(2, 9))
 
-            def go(_e=None, gid=game["id"], link=game.get("url") or "") -> None:
-                if gid == "mines":
-                    dlg.after(1, lambda: show_mines(reset=False))
-                elif gid == "golf":
-                    dlg.after(1, lambda: show_golf(reset=False))
-                elif gid == "pool":
-                    dlg.after(1, lambda: show_pool(reset=False))
-                elif link:
-                    # 浏览器游戏：不进 Tk 关卡，打开系统浏览器后关掉列表，避免挡倒计时。
-                    ok = open_browser_game(str(link))
-                    if ok:
-                        try:
-                            dlg.destroy()
-                        except tk.TclError:
-                            pass
-                    else:
-                        blurb.configure(text="浏览器没打开，检查默认浏览器设置后再试。")
+                def go(_e=None, gid=game["id"], link=game.get("url") or "", blurb_lbl=blurb) -> None:
+                    launch(gid, str(link), blurb_lbl)
 
-            for w in (row, name, blurb):
-                w.bind("<Button-1>", go)
+                for w in (row, top, name, tag, blurb):
+                    w.bind("<Button-1>", go)
+
         bar = tk.Frame(host, bg=bg)
-        bar.pack(side="bottom", fill="x", pady=(8, 16))
-        button(bar, "关闭", dlg.destroy).pack(side="left", padx=18)
-        reveal(dlg, min_w=320, min_h=220, near=near)
+        bar.pack(side="bottom", fill="x", pady=(6, 14))
+        button(bar, "关闭", dlg.destroy).pack(side="left", padx=(18, 6))
+        button(bar, "更多…", lambda: open_browser_game(BROWSER_ARCADE_URL)).pack(side="left")
+        reveal(dlg, min_w=360, min_h=420, near=near)
+        sync_scroll()
 
     def show_mines(*, reset: bool = False) -> None:
         conceal()

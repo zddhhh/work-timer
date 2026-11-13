@@ -4356,7 +4356,15 @@ class PoolTests(unittest.TestCase):
         import mines
 
         ids = [g["id"] for g in mines.GAMES]
-        self.assertEqual(ids, ["mines", "golf", "pool", "saltline"])
+        self.assertEqual(ids[:3], ["mines", "golf", "pool"])
+        self.assertIn("saltline", ids)
+        self.assertIn("sublevel", ids)
+        self.assertEqual(tuple(mines.GAME_GROUPS), ("本机", "浏览器 · 射击", "浏览器 · 其它"))
+        browser = [g for g in mines.GAMES if g.get("kind") == "browser"]
+        self.assertGreaterEqual(len(browser), 8)
+        for game in browser:
+            self.assertTrue(str(game.get("url") or "").startswith("https://"))
+            self.assertTrue(mines.games_in_group(game["group"]))
 
     def test_saltline_opens_in_browser(self):
         import mines
@@ -4369,6 +4377,9 @@ class PoolTests(unittest.TestCase):
             self.assertEqual(opened.call_args.args[0], game["url"])
         with mock.patch("mines.webbrowser.open", side_effect=OSError("no browser")):
             self.assertFalse(mines.open_browser_game(game["url"]))
+        with mock.patch("mines.webbrowser.open", return_value=True) as opened:
+            self.assertTrue(mines.open_browser_game(mines.BROWSER_ARCADE_URL))
+            opened.assert_called_once_with(mines.BROWSER_ARCADE_URL, new=2)
 
     def test_shoot_collides_and_pockets(self):
         import pool
