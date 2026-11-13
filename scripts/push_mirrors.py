@@ -47,7 +47,8 @@ def main() -> None:
     branch = str(ns.branch).strip() or "main"
     tag = str(ns.tag or "").strip()
 
-    dirty = _run(["git", "status", "--porcelain"])
+    # 只拦已跟踪文件的改动；未跟踪的预览/本地垃圾不挡双推。
+    dirty = _run(["git", "status", "--porcelain", "--untracked-files=no"])
     if dirty:
         raise SystemExit("工作区有未提交改动，先提交或收干净再双推。")
 
