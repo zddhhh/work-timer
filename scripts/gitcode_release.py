@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时说明框过长可框内滚动"
+    "- 小游戏新增港区射击（浏览器打开）"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

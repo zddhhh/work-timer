@@ -4,6 +4,7 @@ from __future__ import annotations
 import random
 import time
 import tkinter as tk
+import webbrowser
 
 LEVELS = (
     {"id": "easy", "name": "初级", "rows": 9, "cols": 9, "mines": 10},
@@ -14,11 +15,31 @@ ROWS = LEVELS[0]["rows"]
 COLS = LEVELS[0]["cols"]
 MINES = LEVELS[0]["mines"]
 
+# 浏览器枪战：Fable 5.2 演示 Saltline 的公开镜像页（不打包进安装包，只打开系统浏览器）。
+SALTLINE_URL = "https://realcodebear.github.io/saltline-fable-5.2/"
+
 GAMES = (
     {"id": "mines", "name": "扫雷", "blurb": "左键翻开，右键插旗。初级、中级、高级都能选。"},
     {"id": "golf", "name": "高尔夫", "blurb": "只点不拖：牌面差 1 就能接，点牌堆翻一张。"},
     {"id": "pool", "name": "台球", "blurb": "按住白球往后拉，松开就打。彩球都进袋就过关。"},
+    {
+        "id": "saltline",
+        "name": "港区射击",
+        "blurb": "雨夜集装箱码头 FPS。用系统浏览器打开，点页面锁定鼠标后开始。",
+        "url": SALTLINE_URL,
+    },
 )
+
+
+def open_browser_game(url: str) -> bool:
+    """打开用户默认浏览器。失败返回 False，由界面提示。"""
+    target = (url or "").strip()
+    if not target:
+        return False
+    try:
+        return bool(webbrowser.open(target, new=2))
+    except Exception:
+        return False
 
 _NUM = {
     1: "#7eb6ff",
@@ -289,13 +310,23 @@ def open_games(
             blurb = tk.Label(row, text=blurb_text, fg=muted, bg="#222733", font=("Microsoft YaHei UI", 9))
             blurb.pack(anchor="w", padx=12, pady=(2, 10))
 
-            def go(_e=None, gid=game["id"]) -> None:
+            def go(_e=None, gid=game["id"], link=game.get("url") or "") -> None:
                 if gid == "mines":
                     dlg.after(1, lambda: show_mines(reset=False))
                 elif gid == "golf":
                     dlg.after(1, lambda: show_golf(reset=False))
                 elif gid == "pool":
                     dlg.after(1, lambda: show_pool(reset=False))
+                elif link:
+                    # 浏览器游戏：不进 Tk 关卡，打开系统浏览器后关掉列表，避免挡倒计时。
+                    ok = open_browser_game(str(link))
+                    if ok:
+                        try:
+                            dlg.destroy()
+                        except tk.TclError:
+                            pass
+                    else:
+                        blurb.configure(text="浏览器没打开，检查默认浏览器设置后再试。")
 
             for w in (row, name, blurb):
                 w.bind("<Button-1>", go)
