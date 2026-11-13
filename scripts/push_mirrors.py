@@ -30,6 +30,14 @@ def _run_ok(args: list[str]) -> None:
     subprocess.check_call(args, cwd=ROOT)
 
 
+def _push(remote: str, ref: str) -> None:
+    """GitHub 从国内偶发 HTTP/2 被重置，对 github remote 强制 HTTP/1.1。"""
+    if remote == GITHUB:
+        _run_ok(["git", "-c", "http.version=HTTP/1.1", "push", remote, ref])
+        return
+    _run_ok(["git", "push", remote, ref])
+
+
 def _remote_url(name: str) -> str:
     try:
         return _run(["git", "remote", "get-url", name])
@@ -73,11 +81,11 @@ def main() -> None:
         return
 
     # GitCode 先，GitHub 镜像在后
-    _run_ok(["git", "push", ORIGIN, branch])
-    _run_ok(["git", "push", GITHUB, branch])
+    _push(ORIGIN, branch)
+    _push(GITHUB, branch)
     if tag:
-        _run_ok(["git", "push", ORIGIN, tag])
-        _run_ok(["git", "push", GITHUB, tag])
+        _push(ORIGIN, tag)
+        _push(GITHUB, tag)
     print("双推完成。Release 安装包请仍用 scripts/gitcode_release.py。")
 
 
