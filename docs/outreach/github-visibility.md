@@ -51,8 +51,8 @@ Track PR URLs here after opening:
 
 | List | Section | PR |
 |---|---|---|
-| [auctors/free-lunch](https://github.com/auctors/free-lunch) | Productivity → Time Tracking | |
-| [0PandaDEV/awesome-windows](https://github.com/0PandaDEV/awesome-windows) | Productivity | |
+| [auctors/free-lunch](https://github.com/auctors/free-lunch) | Productivity → Time Tracking | https://github.com/auctors/free-lunch/pull/70 |
+| [0PandaDEV/awesome-windows](https://github.com/0PandaDEV/awesome-windows) | Productivity | https://github.com/0PandaDEV/awesome-windows/pull/352 |
 
 ## Do not
 
