@@ -4,6 +4,12 @@
 
 官网：https://zddhhh.github.io/worktimer-subscribe/
 
+源码：
+- GitCode（主仓 / 发版 / 安装包）：https://gitcode.com/mdslanruo/work-timer
+- GitHub（镜像，也收 PR）：https://github.com/zddhhh/work-timer
+
+许可证：[MIT](LICENSE)
+
 创建日期：2026-08-28
 
 ## 自己运行
@@ -83,9 +89,14 @@ python main.py
 
 ## 贡献代码
 
-审核和发版只由 `mdslanruo` 做。贡献者是开发者：能在这个仓库拉分支、开合并请求，不能推 `main`，不能合并，不能打标签，也不能发 Release。
+审核和发版只由 `mdslanruo` 做。贡献者不能推 `main`，不能合并，不能打标签，也不能发 Release。
 
-已经加进仓库的人，克隆 `https://gitcode.com/mdslanruo/work-timer.git`。还没加进来的人，先 Fork，再从自己的仓库开合并请求。
+**安装包与自动更新以 GitCode Release 为准**；GitHub 是源码镜像，方便国外访问和提 PR。
+
+| 你在哪 | 怎么交 |
+|---|---|
+| 国内 / 已有 GitCode 开发者权限 | 克隆 GitCode，拉分支开合并请求 → `main` |
+| 国外 / 习惯 GitHub | Fork [zddhhh/work-timer](https://github.com/zddhhh/work-timer)，开 PR → `main` |
 
 ```powershell
 git switch main
@@ -96,13 +107,23 @@ git switch -c feat/简短说明
 git push -u origin feat/简短说明
 ```
 
-然后在网页上开合并请求，目标选 `main`。网页提示冲突时，在自己的分支上 `git fetch origin`，再 `git merge origin/main`，解完、测试通过再推。
+然后在网页上开合并请求 / PR，目标选 `main`。网页提示冲突时，在自己的分支上 `git fetch` 对应远程的 `main`，再 `git merge`，解完、测试通过再推。
+
+维护者合入约定：**先合进 GitCode `main`，再镜像到 GitHub**（避免两仓各合一次分叉）。双推：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\push_mirrors.py
+# 发版打了 tag 时：
+.\.venv\Scripts\python.exe scripts\push_mirrors.py --tag v1.4.50
+```
 
 功能分支不要改 `version.py`、`docs/更新说明.md` 最上面一节、`scripts/gitcode_release.py` 里的 `RELEASE_NOTE`。这三处由 `mdslanruo` 发版时单独提交。本地只要 Python 3.12 的 `.venv` 能跑测试，不用装 Win7 环境、Inno Setup 和 gcc。
 
 `themes.json` 一进 `main` 就会对所有用户换皮，跟代码一起走合并请求。
 
 不要索取或提交 `.gitcode_token`、`update_defaults.secret.json`、`release_mail.secret.json`。
+
+用户反馈请走应用内「关于」提交（进 GitCode Issue）。代码讨论 GitCode / GitHub Issue 都可以。
 
 测试：`.\.venv\Scripts\python.exe -m unittest discover -s tests -v`。待办见 [`docs/优化清单.md`](docs/优化清单.md)。
 

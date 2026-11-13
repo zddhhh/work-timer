@@ -273,6 +273,17 @@ body {
   font-weight: 700;
   letter-spacing: -0.02em;
 }
+.source-links {
+  margin: 14px 0 0;
+  color: var(--fog);
+  font-size: 14px;
+}
+.source-links a {
+  color: var(--sea);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(31, 111, 106, 0.35);
+}
+.source-links a:hover { border-bottom-color: var(--sea); }
 .download-head p {
   margin: 8px 0 0;
   color: var(--fog);
@@ -471,6 +482,7 @@ button:disabled { opacity: 0.6; cursor: wait; }
     <div class="download-head">
       <h1>选系统，下载安装包</h1>
       <p>Windows 7 和 Windows 10 的安装包不同。按自己的系统选一个渠道即可，也可以把链接发到邮箱。</p>
+      <p class="source-links">源码：<a href="https://gitcode.com/mdslanruo/work-timer" rel="noopener">GitCode</a> · <a href="https://github.com/zddhhh/work-timer" rel="noopener">GitHub</a>（安装包与更新以 GitCode Release 为准）</p>
     </div>
 
     <div class="channels">
