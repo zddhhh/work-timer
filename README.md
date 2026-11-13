@@ -1,4 +1,6 @@
-# 下班倒计时
+# 下班倒计时 · WorkTimer
+
+> **English:** Always-on-top Windows countdown for flexible work hours — tap to log arrival, get leave time from a 9.5h flex day. → **[README.en.md](README.en.md)** · [Download](https://zddhhh.github.io/worktimer-subscribe/) · [GitHub](https://github.com/zddhhh/work-timer)
 
 透明桌面小窗：点一下录入今天 **8:30–9:30** 到岗时间，按 9.5 小时弹性算出下班时间，窗口只显示距离下班还有多久。
 
