@@ -109,9 +109,11 @@ git push -u origin feat/简短说明
 
 然后在网页上开合并请求 / PR，目标选 `main`。网页提示冲突时，在自己的分支上 `git fetch` 对应远程的 `main`，再 `git merge`，解完、测试通过再推。
 
-维护者合入约定：**先合进 GitCode `main`，再镜像到 GitHub**（避免两仓各合一次分叉）。双推：
+维护者合入约定：**先合进 GitCode `main`，再镜像到 GitHub**（避免两仓各合一次分叉）。GitHub 上的 PR 不要在网页点 Merge，在本地 `merge` 进 `main` 后双推：
 
 ```powershell
+git switch main
+git merge --ff-only feat/对方分支   # 或先 fetch PR 再合
 .\.venv\Scripts\python.exe scripts\push_mirrors.py
 # 发版打了 tag 时：
 .\.venv\Scripts\python.exe scripts\push_mirrors.py --tag v1.4.50
