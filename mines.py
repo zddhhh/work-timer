@@ -15,11 +15,15 @@ ROWS = LEVELS[0]["rows"]
 COLS = LEVELS[0]["cols"]
 MINES = LEVELS[0]["mines"]
 
-# 浏览器精选：Fable 5.2 一类单文件/程序化小作。不打包进安装包，只打开系统浏览器。
-# Saltline 用作者镜像；其余走 fable52 可玩页（沙箱页，链接稳一点）。
+# 浏览器精选：Fable 5.2 一类单文件/程序化小作与 3D 体验。
+# 不打包进安装包，只打开系统浏览器 → 不占 WorkTimer 内存；吃显卡的是浏览器进程。
+# Saltline 用作者镜像；多数游戏走 fable52；世界/索引走作者页或 awesome 列表。
 SALTLINE_URL = "https://realcodebear.github.io/saltline-fable-5.2/"
 FABLE52_PLAY = "https://fable52.games/play"
 BROWSER_ARCADE_URL = "https://fable52.games/"
+BROWSER_INDEX_URL = "https://github.com/fengyiqicoder/awesome-fable-5.2"
+PORTALS_URL = "https://portals-endless-worlds.netlify.app/"
+MIRROR_EARTH_URL = "https://www.spawn.co/@mattshumer/earth?room=local"
 
 GAMES = (
     {
@@ -133,9 +137,54 @@ GAMES = (
         "tag": "武侠",
         "url": f"{FABLE52_PLAY}/wusuo-shanmen",
     },
+    {
+        "id": "portals",
+        "name": "无尽传送门",
+        "blurb": "几百个程序化世界串着漂，偏氛围逛图。",
+        "kind": "browser",
+        "group": "浏览器 · 体验",
+        "tag": "世界",
+        "url": PORTALS_URL,
+    },
+    {
+        "id": "mirror",
+        "name": "镜像地球",
+        "blurb": "体素地球可走可开可飞；在 Spawn 里开，吃配置。",
+        "kind": "browser",
+        "group": "浏览器 · 体验",
+        "tag": "沙盒",
+        "url": MIRROR_EARTH_URL,
+    },
+    {
+        "id": "pelican",
+        "name": "鹈鹕骑车",
+        "blurb": "海岸线上骑复古车追鱼，轻一点的小品。",
+        "kind": "browser",
+        "group": "浏览器 · 体验",
+        "tag": "小品",
+        "url": f"{FABLE52_PLAY}/pelican-on-a-bike",
+    },
+    {
+        "id": "bayhaven",
+        "name": "湾港纪事",
+        "blurb": "开放世界犯罪题材，作者托管页里玩。",
+        "kind": "browser",
+        "group": "浏览器 · 体验",
+        "tag": "开放",
+        "url": f"{FABLE52_PLAY}/bayhaven",
+    },
+    {
+        "id": "dustfall",
+        "name": "尘落西部",
+        "blurb": "西部开放世界：骑马、狩猎、打牌。",
+        "kind": "browser",
+        "group": "浏览器 · 体验",
+        "tag": "开放",
+        "url": f"{FABLE52_PLAY}/dustfall",
+    },
 )
 
-GAME_GROUPS = ("本机", "浏览器 · 射击", "浏览器 · 其它")
+GAME_GROUPS = ("本机", "浏览器 · 射击", "浏览器 · 其它", "浏览器 · 体验")
 
 
 def games_in_group(group: str) -> list[dict]:
@@ -404,12 +453,12 @@ def open_games(
         _SAVE["page"] = "list"
         conceal()
         clear()
-        title = tk.Label(host, text="小游戏", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
+        title = tk.Label(host, text="小游戏 · 体验", fg=fg, bg=bg, font=("Microsoft YaHei UI", 13, "bold"))
         title.pack(anchor="w", padx=18, pady=(14, 2))
         drag_on(title)
         tip = tk.Label(
             host,
-            text="本机免联网；浏览器项会打开系统浏览器，不装进安装包。",
+            text="本机免联网。浏览器项只开系统浏览器，不进安装包、不占本程序内存；3D 吃的是浏览器显卡。",
             fg=muted,
             bg=bg,
             font=("Microsoft YaHei UI", 8),
@@ -537,7 +586,8 @@ def open_games(
         bar = tk.Frame(host, bg=bg)
         bar.pack(side="bottom", fill="x", pady=(6, 14))
         button(bar, "关闭", dlg.destroy).pack(side="left", padx=(18, 6))
-        button(bar, "更多…", lambda: open_browser_game(BROWSER_ARCADE_URL)).pack(side="left")
+        button(bar, "游戏站", lambda: open_browser_game(BROWSER_ARCADE_URL)).pack(side="left", padx=(0, 6))
+        button(bar, "更多体验", lambda: open_browser_game(BROWSER_INDEX_URL)).pack(side="left")
         reveal(dlg, min_w=360, min_h=420, near=near)
         sync_scroll()
 

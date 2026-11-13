@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 工时账本还在记时不再误提示早走"
+    "- 小游戏增加浏览器体验入口（外链，不占内存）"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com

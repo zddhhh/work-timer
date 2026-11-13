@@ -4368,12 +4368,18 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(ids[:3], ["mines", "golf", "pool"])
         self.assertIn("saltline", ids)
         self.assertIn("sublevel", ids)
-        self.assertEqual(tuple(mines.GAME_GROUPS), ("本机", "浏览器 · 射击", "浏览器 · 其它"))
+        self.assertEqual(
+            tuple(mines.GAME_GROUPS),
+            ("本机", "浏览器 · 射击", "浏览器 · 其它", "浏览器 · 体验"),
+        )
         browser = [g for g in mines.GAMES if g.get("kind") == "browser"]
-        self.assertGreaterEqual(len(browser), 8)
+        self.assertGreaterEqual(len(browser), 12)
+        self.assertIn("portals", [g["id"] for g in browser])
+        self.assertIn("mirror", [g["id"] for g in browser])
         for game in browser:
             self.assertTrue(str(game.get("url") or "").startswith("https://"))
             self.assertTrue(mines.games_in_group(game["group"]))
+        self.assertTrue(str(mines.BROWSER_INDEX_URL).startswith("https://"))
 
     def test_saltline_opens_in_browser(self):
         import mines
