@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>下载 WorkTimer</title>
+<title>WorkTimer · 弹性下班计时器</title>
+<meta name="description" content="点一下记到岗，按公司弹性规则算下班时间。透明置顶小窗，不用注册，装完就能用。">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
@@ -82,7 +83,7 @@ body {
   height: min(62vw, 720px);
   border-radius: 50%;
   pointer-events: none;
-  opacity: 0.55;
+  opacity: 0.45;
   background:
     repeating-conic-gradient(from 0deg, rgba(16,20,28,0.1) 0 1.2deg, transparent 1.2deg 30deg),
     radial-gradient(circle at 50% 50%, transparent 58%, rgba(16,20,28,0.06) 59%, transparent 61%),
@@ -102,171 +103,346 @@ body {
 }
 @keyframes turn { to { transform: rotate(360deg); } }
 
-.page {
-  position: relative;
-  z-index: 1;
-}
+.page { position: relative; z-index: 1; }
 
-.hero-screen {
+/* —— 顶栏 —— */
+.nav {
   position: relative;
-  min-height: 100svh;
+  z-index: 2;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  width: min(720px, calc(100% - 32px));
-  max-width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  width: min(1080px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 48px 0 88px;
+  padding: 24px 0;
 }
-.kicker {
-  margin: 0 0 14px;
-  font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--sea);
-}
-.brand {
-  margin: 0;
+.logo {
   font-family: Syne, "Noto Sans SC", sans-serif;
   font-weight: 800;
-  font-size: clamp(28px, 8.2vw, 52px);
-  line-height: 1.05;
+  font-size: 21px;
   letter-spacing: -0.04em;
-  color: var(--ink);
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
+  text-decoration: none;
 }
-.brand span {
+.logo span {
   background: linear-gradient(115deg, #10141c 0%, #163a38 48%, #c45a12 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
-@media (max-width: 380px) {
-  .brand { font-size: clamp(24px, 7.6vw, 34px); letter-spacing: -0.05em; }
+.nav-links { display: flex; gap: 26px; }
+.nav-links a {
+  color: var(--fog);
+  text-decoration: none;
+  font-size: 14px;
 }
-.sub-row {
+.nav-links a:hover { color: var(--ink); }
+
+/* —— Hero：一句话说清是什么，下面放真实界面 —— */
+.hero-screen {
+  position: relative;
+  width: min(1080px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 64px 0 96px;
+  text-align: center;
+}
+.hero-copy { max-width: 760px; margin: 0 auto; }
+.eyebrow {
+  margin: 0 0 18px;
+  font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sea);
+}
+.hero-title {
+  margin: 0;
+  font-size: clamp(40px, 6.2vw, 72px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+  color: var(--ink);
+}
+.hero-title span {
+  background: linear-gradient(115deg, #10141c 0%, #163a38 48%, #c45a12 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero-support {
+  margin: 22px auto 0;
+  max-width: 36em;
+  color: var(--fog);
+  font-size: 17px;
+  line-height: 1.7;
+  text-wrap: balance;
+}
+.hero-cta {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px 12px;
-  margin: 12px 0 0;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 30px;
 }
-.sub {
-  margin: 0;
-  color: var(--ink);
-  font-size: clamp(16px, 4.2vw, 20px);
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 14px 22px;
+  border-radius: 16px;
+  text-decoration: none;
+  color: #fff;
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.18), transparent 40%),
+    linear-gradient(135deg, #ff9a4d 0%, #e56a18 48%, #c24a0f 100%);
+  font-family: Syne, "Noto Sans SC", sans-serif;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1.35;
+  box-shadow: 0 14px 32px rgba(194, 74, 15, 0.26);
+  transition: transform .18s ease, filter .18s ease;
 }
+.cta:hover { transform: translateY(-2px); filter: brightness(1.05); }
+.cta-ghost {
+  color: var(--ink);
+  background: rgba(255,255,255,0.72);
+  border: 1px solid var(--line);
+  box-shadow: none;
+  background-image: none;
+}
+.cta-ghost:hover { filter: none; background: #fff; }
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 20px;
+  color: var(--fog);
+  font-size: 13px;
+}
+.os-meta { margin: 0; }
 .ver {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
   color: var(--sea);
   font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  line-height: 1.35;
-  transform: translateY(-1px);
 }
 .ver i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+  width: 5px; height: 5px; border-radius: 50%;
   background: var(--sea);
   box-shadow: 0 0 0 3px rgba(31, 111, 106, 0.14);
   font-style: normal;
 }
-.ver span {
-  background: linear-gradient(90deg, rgba(31, 111, 106, 0.12), transparent 88%);
-  border-radius: 4px;
-  padding: 1px 7px 1px 2px;
-}
-.lead {
-  margin: 10px 0 0;
-  color: var(--fog);
-  font-size: 15px;
-  line-height: 1.5;
-}
 .dl-total {
-  margin: 36px 0 0;
+  margin: 0;
   display: inline-flex;
   align-items: baseline;
-  gap: 12px;
-  color: var(--fog);
-  font-family: "Instrument Sans", "Noto Sans SC", sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-}
-.dl-total strong {
-  font-family: Syne, "Instrument Sans", "Noto Sans SC", sans-serif;
-  font-size: clamp(34px, 8vw, 48px);
-  font-weight: 800;
-  letter-spacing: -0.05em;
-  font-variant-numeric: tabular-nums;
-  line-height: 0.92;
-  background: linear-gradient(115deg, #10141c 0%, #163a38 55%, #c45a12 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-.scroll-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 28px;
-  transform: translateX(-50%);
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
   gap: 8px;
   color: var(--fog);
-  text-decoration: none;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.08em;
 }
-.scroll-hint span {
-  width: 28px;
-  height: 28px;
-  border: 1.5px solid rgba(16, 20, 28, 0.22);
-  border-radius: 50%;
+.dl-total strong {
+  font-family: Syne, "Instrument Sans", sans-serif;
+  font-size: 20px;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+
+.hero-stage {
+  position: relative;
+  width: min(980px, 100%);
+  min-height: 420px;
+  margin: 52px auto 0;
   display: grid;
   place-items: center;
-  animation: bob 1.6s ease-in-out infinite;
+  animation: rise 0.9s ease both;
 }
-.scroll-hint span::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid var(--ink);
-  border-bottom: 2px solid var(--ink);
-  transform: rotate(45deg) translate(-1px, -1px);
+.hero-stage figcaption {
+  position: absolute;
+  left: 0; right: 0; bottom: 14px;
+  z-index: 3;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  letter-spacing: 0.02em;
 }
-@keyframes bob {
+@keyframes rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.desk {
+  position: absolute;
+  inset: 0;
+  border-radius: 30px;
+  background:
+    radial-gradient(ellipse at 78% 6%, rgba(255, 150, 84, 0.42), transparent 55%),
+    radial-gradient(ellipse at 6% 100%, rgba(47, 150, 168, 0.32), transparent 55%),
+    linear-gradient(155deg, #2b3a52 0%, #151d2b 55%, #0b1017 100%);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.10),
+    0 32px 72px rgba(16, 20, 28, 0.38);
+  overflow: hidden;
+}
+.hero-card {
+  position: relative;
+  z-index: 2;
+  width: min(420px, 78%);
+  height: auto;
+  filter: drop-shadow(0 24px 44px rgba(0, 0, 0, 0.58));
+  animation: floaty 5.5s ease-in-out infinite;
+}
+.hero-glow {
+  position: absolute;
+  z-index: 1;
+  width: 62%;
+  height: 32%;
+  left: 19%;
+  top: 44%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(255, 156, 84, 0.28), transparent 70%);
+  filter: blur(22px);
+  pointer-events: none;
+}
+@keyframes floaty {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(5px); }
+  50% { transform: translateY(-10px); }
+}
+/* —— 能力三段 —— */
+.story {
+  width: min(920px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 16px;
+}
+.story-block {
+  padding: 36px 0 28px;
+  border-top: 1px solid rgba(16, 20, 28, 0.08);
+}
+.story-block h2 {
+  margin: 0;
+  font-size: clamp(22px, 3.5vw, 28px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.story-block p {
+  margin: 10px 0 0;
+  max-width: 36em;
+  color: var(--fog);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* —— 长什么样：真卡片 + 场景托底 —— */
+.look {
+  width: min(960px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 12px 0 48px;
+}
+.look h2 {
+  margin: 0 0 6px;
+  font-size: clamp(22px, 3.5vw, 28px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+.look > p {
+  margin: 0 0 22px;
+  color: var(--fog);
+  font-size: 15px;
+}
+.gallery {
+  display: grid;
+  gap: 16px;
+}
+.scene {
+  position: relative;
+  min-height: 220px;
+  padding: 28px 24px 24px;
+  border-radius: 24px;
+  border: 1px solid rgba(16,20,28,0.08);
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 18px;
+  align-items: center;
+}
+.scene.frost {
+  background:
+    radial-gradient(ellipse at 78% 30%, rgba(120, 170, 255, 0.28), transparent 50%),
+    linear-gradient(135deg, #1a2230 0%, #0f141c 100%);
+  color: #eef2f7;
+}
+.scene.night {
+  background:
+    radial-gradient(ellipse at 20% 80%, rgba(255, 138, 61, 0.22), transparent 45%),
+    linear-gradient(145deg, #171b26 0%, #0c1018 100%);
+  color: #eef2f7;
+}
+.scene.warm {
+  background:
+    radial-gradient(ellipse at 70% 70%, rgba(255, 180, 120, 0.35), transparent 48%),
+    linear-gradient(160deg, #2a221c 0%, #14100e 100%);
+  color: #f7f1ea;
+}
+.scene .copy h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.scene .copy p {
+  margin: 8px 0 0;
+  max-width: 28em;
+  opacity: 0.72;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.scene .stage {
+  position: relative;
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+}
+.scene .stage img {
+  width: min(280px, 100%);
+  height: auto;
+  filter: drop-shadow(0 18px 28px rgba(0, 0, 0, 0.45));
+}
+.scene.stack .stage {
+  height: 160px;
+}
+.scene.stack .stage img {
+  position: absolute;
+  width: min(240px, 78%);
+}
+.scene.stack .stage img:nth-child(1) {
+  transform: translate(-28px, 18px) rotate(-6deg);
+  z-index: 1;
+  opacity: 0.88;
+}
+.scene.stack .stage img:nth-child(2) {
+  transform: translate(8px, -6px) rotate(3deg);
+  z-index: 2;
+}
+.scene.stack .stage img:nth-child(3) {
+  transform: translate(36px, 22px) rotate(7deg);
+  z-index: 1;
+  opacity: 0.9;
+  width: min(220px, 70%);
 }
 
 .download-screen {
   width: min(920px, calc(100% - 32px));
   max-width: 100%;
   margin: 0 auto;
-  padding: 28px 0 72px;
+  padding: 28px 0 48px;
 }
-.download-head {
-  margin: 0 0 18px;
-}
+.download-head { margin: 0 0 18px; }
 .download-head h1 {
   margin: 0;
   font-size: clamp(20px, 4.5vw, 26px);
@@ -370,10 +546,7 @@ body {
 }
 .dl.ghost:hover { filter: none; background: #fafbfc; }
 
-.mail-channel {
-  grid-column: 1 / -1;
-  margin-top: 2px;
-}
+.mail-channel { grid-column: 1 / -1; margin-top: 2px; }
 .mail { margin: 0 0 12px; padding: 0; border: 0; }
 .mail legend {
   padding: 0;
@@ -433,6 +606,16 @@ button:disabled { opacity: 0.6; cursor: wait; }
 #out { margin-top: 14px; }
 #out h1 { font-size: 18px; margin: 0 0 8px; }
 #out p { margin: 0; color: var(--fog); }
+
+.site-foot {
+  width: min(920px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 8px 0 56px;
+  color: var(--fog);
+  font-size: 13px;
+}
+.site-foot a { color: var(--sea); text-decoration: none; }
+
 .cancel-panel {
   width: min(720px, calc(100% - 32px));
   margin: 48px auto 72px;
@@ -444,9 +627,15 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .cancel-panel h1 { font-size: 18px; margin: 0 0 8px; }
 .cancel-panel p { margin: 0; color: var(--fog); }
 
-@media (max-width: 720px) {
-  .hero-screen { width: min(720px, calc(100% - 24px)); padding: 36px 0 96px; }
-  .download-screen { width: min(720px, calc(100% - 24px)); padding-bottom: 56px; }
+@media (max-width: 860px) {
+  .hero-screen { padding: 40px 0 72px; }
+  .hero-stage { min-height: 300px; margin-top: 36px; }
+  .hero-card { width: min(360px, 82%); }
+  .nav-links { gap: 16px; font-size: 13px; }
+  .hero-support { font-size: 16px; }
+  .eyebrow { letter-spacing: 0.12em; }
+  .scene { grid-template-columns: 1fr; padding: 22px 18px 20px; }
+  .scene .stage { order: -1; min-height: 120px; }
   .channels { grid-template-columns: 1fr; }
   .mail-grid { grid-template-columns: 1fr; }
   .clock { opacity: 0.28; width: 90vw; height: 90vw; right: -28vw; top: -18vw; }
@@ -463,25 +652,95 @@ button:disabled { opacity: 0.6; cursor: wait; }
 </div>
 
 <div class="page" id="signup">
-  <section class="hero-screen">
-    <p class="kicker">Desktop timer</p>
-    <h1 class="brand"><span>WorkTimer</span></h1>
-    <div class="sub-row">
-      <p class="sub">弹性下班计时器</p>
-      <p class="ver"><i></i><span id="ver">读取版本…</span></p>
+  <header class="nav">
+    <a class="logo" href="#top"><span>WorkTimer</span></a>
+    <nav class="nav-links">
+      <a href="#story">功能</a>
+      <a href="#look">外观</a>
+      <a href="#download">下载</a>
+      <a href="https://github.com/zddhhh/work-timer" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <section class="hero-screen" id="top">
+    <div class="hero-copy">
+      <p class="eyebrow">Windows 桌面小工具 · 免费开源</p>
+      <h1 class="hero-title">桌面上的<br><span>下班倒计时</span></h1>
+      <p class="hero-support">上班点一下，填上今天几点到岗。8:45 到岗，下班就是 18:15，倒计时一直挂在桌面上。</p>
+      <div class="hero-cta">
+        <a class="cta" href="#download">下载安装包</a>
+        <a class="cta cta-ghost" href="#mail">用邮箱接收</a>
+      </div>
+      <div class="meta-row">
+        <p class="ver"><i></i><span id="ver">读取版本…</span></p>
+        <p class="dl-total" id="dl-total" hidden><span>累计下载</span><strong></strong></p>
+        <p class="os-meta">Windows 10 / 11 · Windows 7 / 8</p>
+      </div>
     </div>
-    <p class="lead">桌面倒计时，下载安装即可用。</p>
-    <p class="dl-total" id="dl-total" hidden><span>累计下载</span><strong></strong></p>
-    <a class="scroll-hint" href="#download" aria-label="向下查看下载渠道">
-      <span></span>
-      下载
-    </a>
+    <figure class="hero-stage">
+      <div class="desk"></div>
+      <div class="hero-glow"></div>
+      <img class="hero-card" src="shots/night.png" width="560" height="208" alt="WorkTimer 桌面置顶倒计时卡片">
+      <figcaption>程序实际界面 ·「午夜」外观</figcaption>
+    </figure>
+  </section>
+
+  <section class="story" id="story">
+    <article class="story-block">
+      <h2>一天只需点一次</h2>
+      <p>第一次打开时点一下卡片，填上今天几点到岗，8:30 到 9:30 之间都可以。之后隐藏窗口、拖到别的位置，都不影响计时；第二天打开会重新开始。</p>
+    </article>
+    <article class="story-block">
+      <h2>没有账号，数据只在本机</h2>
+      <p>不用注册，也不用登录。手工填的下班时间、工时账本和键鼠统计都只保存在这台电脑上。代码用 MIT 协议开源，可以自己下载来检查。</p>
+    </article>
+    <article class="story-block">
+      <h2>工时账本自动记</h2>
+      <p>来了和走了按当天第一次、最后一次操作记录，按周、按月汇总，也能导出本月 CSV。想额外看键盘和鼠标用了多少，可以单独打开统计；默认不记。</p>
+    </article>
+  </section>
+
+  <section class="look">
+    <h2>换一套外观，还是同一个程序</h2>
+    <p>下面都是程序里实际渲染的样子，不是设计稿。</p>
+    <div class="gallery">
+      <article class="scene frost">
+        <div class="copy">
+          <h3>平时就浮在桌面上</h3>
+          <p>始终置顶，拖到顺手的位置会记住。右键可以改成只显示分钟或秒。</p>
+        </div>
+        <div class="stage">
+          <img src="shots/timer.png" width="560" height="208" alt="霜雾主题置顶倒计时">
+        </div>
+      </article>
+      <article class="scene night">
+        <div class="copy">
+          <h3>今天的状态也在这里</h3>
+          <p>打开统计后，卡片上会显示今天的键盘、鼠标和滚轮次数。数据只留在本机，随时可以关掉。</p>
+        </div>
+        <div class="stage">
+          <img src="shots/tally.png" width="560" height="208" alt="带键鼠统计的午夜主题卡片">
+        </div>
+      </article>
+      <article class="scene warm stack">
+        <div class="copy">
+          <h3>十几种外观</h3>
+          <p>淡影、霜雾、暖光、墨金……右键就能换；中秋、国庆前后还有限定款。</p>
+        </div>
+        <div class="stage">
+          <img src="shots/timer.png" width="560" height="208" alt="霜雾外观">
+          <img src="shots/warm.png" width="560" height="208" alt="暖光外观">
+          <img src="shots/hero.png" width="560" height="208" alt="淡影外观">
+        </div>
+      </article>
+    </div>
   </section>
 
   <section class="download-screen" id="download">
     <div class="download-head">
-      <h1>选系统，下载安装包</h1>
-      <p>Windows 7 和 Windows 10 的安装包不同。按自己的系统选一个渠道即可，也可以把链接发到邮箱。</p>
+      <h1>下载 WorkTimer</h1>
+      <p>Windows 8.1 / 10 / 11 用主安装包，Windows 7 / 8 用 Win7 包，按系统挑一个就行。</p>
+      <p>选系统，下载安装包；链接打不开的话，填个邮箱，我们把下载链接寄给你。</p>
       <p class="source-links">源码：<a href="https://gitcode.com/mdslanruo/work-timer" rel="noopener">GitCode</a> · <a href="https://github.com/zddhhh/work-timer" rel="noopener">GitHub</a>（安装包与更新以 GitCode Release 为准）</p>
     </div>
 
@@ -489,20 +748,20 @@ button:disabled { opacity: 0.6; cursor: wait; }
       <article class="channel" id="ch-main" data-os="main">
         <h2>Windows 8.1 / 10 / 11</h2>
         <span class="file">WorkTimer-Setup.exe</span>
-        <a class="dl" id="dl" href="#">下载 Win10 / 11 安装包</a>
+        <a class="dl" id="dl" href="#">下载 64 位安装包</a>
         <p class="tip" id="dl-hint">无需登录，直接下载。</p>
       </article>
 
       <article class="channel" id="ch-win7" data-os="win7">
         <h2>Windows 7 / 8</h2>
         <span class="file">WorkTimer-Win7-Setup.exe</span>
-        <a class="dl ghost" id="dl-win7" href="#">下载 Win7 / 8 安装包</a>
+        <a class="dl ghost" id="dl-win7" href="#">下载 Win7 安装包</a>
         <p class="tip" id="dl-hint-win7">老系统请用这一包。</p>
       </article>
 
-      <article class="channel mail-channel">
+      <article class="channel mail-channel" id="mail">
         <h2>用邮箱接收下载链接</h2>
-        <p class="tip">不想自己找安装包时，把地址寄到邮箱。</p>
+        <p class="tip">填个邮箱，我们把下载链接寄过去。</p>
         <form id="f">
           <div class="mail-grid">
             <fieldset class="mail">
@@ -525,6 +784,12 @@ button:disabled { opacity: 0.6; cursor: wait; }
       </article>
     </div>
   </section>
+
+  <footer class="site-foot">
+    WorkTimer · MIT 开源 · 源码在
+    <a href="https://gitcode.com/mdslanruo/work-timer" rel="noopener">GitCode</a> /
+    <a href="https://github.com/zddhhh/work-timer" rel="noopener">GitHub</a>
+  </footer>
 </div>
 
 <section class="cancel-panel" id="cancel" hidden>
