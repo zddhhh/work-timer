@@ -125,7 +125,7 @@ def upload_asset(tok: str, tag: str, exe: Path) -> None:
 
 
 RELEASE_NOTE = (
-    "- 修拔插电源/USB 时隐藏态易卡死"
+    "- 工时账本键盘热力图去掉黄绿段，改成深蓝→靛紫→品红→珊瑚"
 )
 
 # 订阅页同站：客户端优先读这里，不打 api.gitcode.com
