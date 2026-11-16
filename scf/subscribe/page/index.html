@@ -134,6 +134,7 @@ body {
   color: var(--fog);
   text-decoration: none;
   font-size: 14px;
+  white-space: nowrap;
 }
 .nav-links a:hover { color: var(--ink); }
 
@@ -627,6 +628,21 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .cancel-panel h1 { font-size: 18px; margin: 0 0 8px; }
 .cancel-panel p { margin: 0; color: var(--fog); }
 
+@media (max-width: 400px) {
+  .nav { padding: 18px 0; }
+  .logo { font-size: 19px; }
+  .nav-links { gap: 10px; font-size: 12px; }
+  .hero-title { font-size: clamp(34px, 11vw, 40px); }
+  .hero-cta .cta { min-height: 48px; padding: 12px 18px; }
+  .meta-row { gap: 6px 10px; font-size: 12px; }
+}
+/* 320 这类窄屏：导航分两行，别让「功能 / 外观」竖着折字 */
+@media (max-width: 340px) {
+  .nav { flex-wrap: wrap; justify-content: center; gap: 6px 14px; padding: 16px 0 10px; }
+  .logo { flex: 0 0 100%; text-align: center; font-size: 20px; }
+  .nav-links { width: 100%; justify-content: center; gap: 18px; font-size: 13px; }
+}
+
 @media (max-width: 860px) {
   .hero-screen { padding: 40px 0 72px; }
   .hero-stage { min-height: 300px; margin-top: 36px; }
@@ -700,7 +716,7 @@ button:disabled { opacity: 0.6; cursor: wait; }
     </article>
   </section>
 
-  <section class="look">
+  <section class="look" id="look">
     <h2>换一套外观，还是同一个程序</h2>
     <p>下面都是程序里实际渲染的样子，不是设计稿。</p>
     <div class="gallery">
