@@ -152,6 +152,17 @@ $env:GITCODE_TOKEN = Get-Content .gitcode_token -Raw
 
 然后打包。这个文件不进 git。令牌仍可能从 exe 里被拆出来刷 Issue，所以权限一定要收窄，并设过期时间。
 
+## 发官网
+
+官网是 GitHub Pages 的 `zddhhh/worktimer-subscribe`，页面源文件在 `scf/subscribe/page/index.html`，真卡片图在 `scf/subscribe/page/shots/`。改完先双推源码，再单独发官网：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\push_mirrors.py
+.\.venv\Scripts\python.exe scripts\deploy_pages_site.py
+```
+
+`deploy_pages_site.py` 把 `index.html` 和 `shots/*.png` 合成一个提交推到 Pages 仓库，并等线上刷新；`latest.json` 仍由发版脚本维护。预览可以先跑 `--dry-run`。
+
 ## 在线换皮（不用发新版本）
 
 `1.0.7` 起皮肤读仓库根目录的 [`themes.json`](themes.json)。改颜色/加一套（最多 16 套）推到 `main` 后，用户启动或右键「刷新在线外观」就会换上。可用 `kind`：`ghost` / `glass` / `frost` / `neon` / `terminal` / `aurora` / `inkgold` / `warmglow` / `midautumn` / `nationalday` / `neonflow` / `inkpulse`。`adaptive` + `on_light` 可调自适应两套色；全新画法才需要发版。
